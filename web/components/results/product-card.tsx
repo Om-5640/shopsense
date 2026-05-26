@@ -1,0 +1,514 @@
+'use client'
+
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Star,
+  Check,
+  Sparkles,
+  ShoppingCart,
+  ImageOff,
+  MessageSquare,
+  ThumbsUp,
+  ThumbsDown,
+  Users,
+  AlertTriangle,
+  Quote,
+  LayoutGrid,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { cn } from '@/lib/utils'
+
+interface Complaint {
+  text: string
+  confidence: 'confirmed' | 'reported' | 'single' | string
+}
+
+interface CrossSubredditSignal {
+  signal: 'consistent' | 'split' | 'single_source'
+  explanation: string
+  context_note: string
+}
+
+interface Product {
+  id: string
+  rank: number
+  name: string
+  score: number
+  price: number
+  currency: string
+  store: string
+  storeUrl?: string
+  originalPrice?: number
+  rating?: number
+  reviewCount?: number
+  alternativePrices?: { store: string; price: number; url?: string }[]
+  highSignal?: boolean
+  purchased?: boolean
+  criteriaScores: Record<string, { score: number; evidence?: string }>
+  pros?: string[]
+  cons?: string[]
+  fitReason?: string
+  imageUrl?: string
+  // Community data
+  mentionCount?: number
+  positiveMentions?: number
+  negativeMentions?: number
+  distinctRecommenders?: number
+  praise?: string[]
+  complaints?: Complaint[]
+  representativeQuote?: string
+  sources?: string[]
+  crossSubredditSignal?: CrossSubredditSignal | null
+}
+
+interface ProductCardProps {
+  product: Product
+  isSelected: boolean
+  onToggleSelect: () => void
+  onMarkPurchased: () => void
+}
+
+function confidenceBadge(c: string) {
+  if (c === 'confirmed') return 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+  if (c === 'reported') return 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+  return 'bg-white/[0.08] text-[#A1A1AA] border-white/[0.12]'
+}
+
+function confidenceLabel(c: string) {
+  if (c === 'confirmed') return 'confirmed'
+  if (c === 'reported') return 'reported'
+  return 'single mention'
+}
+
+export function ProductCard({
+  product,
+  isSelected,
+  onToggleSelect,
+  onMarkPurchased,
+}: ProductCardProps) {
+  const [showScores, setShowScores] = useState(false)
+  const [showPeopleSay, setShowPeopleSay] = useState(false)
+  const [showFitReason, setShowFitReason] = useState(false)
+
+  const discount =
+    product.originalPrice && product.originalPrice > product.price && product.price > 0
+      ? Math.round((1 - product.price / product.originalPrice) * 100)
+      : null
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-emerald-400'
+    if (score >= 50) return 'text-amber-400'
+    return 'text-rose-400'
+  }
+
+  const getScoreBarColor = (score: number) => {
+    if (score >= 80) return 'from-emerald-500 to-teal-400'
+    if (score >= 50) return 'from-amber-500 to-orange-400'
+    return 'from-rose-500 to-red-400'
+  }
+
+  const total = (product.positiveMentions ?? 0) + (product.negativeMentions ?? 0)
+  const posRatio = total > 0 ? (product.positiveMentions ?? 0) / total : 0
+  const hasCommunityData =
+    (product.mentionCount ?? 0) > 0 ||
+    (product.praise?.length ?? 0) > 0 ||
+    (product.complaints?.length ?? 0) > 0
+
+  const hasPeopleSay =
+    (product.praise?.length ?? 0) > 0 ||
+    (product.complaints?.length ?? 0) > 0 ||
+    !!product.representativeQuote
+
+  // Format source labels (reddit:Bedding → r/Bedding, review:wirecutter.com → wirecutter.com)
+  const formattedSources = (product.sources ?? []).map((s) => {
+    if (s.startsWith('reddit:')) return `r/${s.slice(7)}`
+    if (s.startsWith('review:')) return s.slice(7)
+    return s
+  }).slice(0, 6)
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className={cn(
+        'relative rounded-2xl border bg-white/[0.02] p-6 transition-all duration-300',
+        isSelected
+          ? 'border-violet-500/50 shadow-glow-sm'
+          : 'border-white/[0.06] hover:border-white/[0.12]',
+      )}
+    >
+      {/* Rank Badge */}
+      <div className="absolute -left-3 top-6">
+        <div
+          className={cn(
+            'w-10 h-10 rounded-xl flex items-center justify-center font-mono text-lg font-bold',
+            product.rank === 1
+              ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/30'
+              : product.rank <= 3
+              ? 'bg-gradient-to-br from-violet-600 to-violet-500 text-white shadow-lg shadow-violet-500/30'
+              : 'bg-white/[0.08] text-[#A1A1AA]',
+          )}
+        >
+          #{product.rank}
+        </div>
+      </div>
+
+      {/* Selection checkbox */}
+      <div className="absolute top-4 right-4">
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={() => onToggleSelect()}
+          className="w-5 h-5 border-white/20 data-[state=checked]:bg-violet-500 data-[state=checked]:border-violet-500"
+        />
+      </div>
+
+      {/* Header */}
+      <div className="ml-6 mb-4">
+        <div className="flex items-start gap-4 pr-8">
+          {product.imageUrl ? (
+            <img
+              src={product.imageUrl}
+              alt={product.name}
+              className="w-16 h-16 rounded-xl object-contain bg-white/[0.04] border border-white/[0.06] shrink-0"
+              onError={(e) => {
+                ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+              }}
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center shrink-0">
+              <ImageOff className="w-6 h-6 text-[#52525B]" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-xl font-semibold text-[#FAFAFA] mb-2">{product.name}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              {product.highSignal && (
+                <Badge className="bg-violet-500/20 text-violet-300 border-violet-500/30">
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  HIGH SIGNAL
+                </Badge>
+              )}
+              {product.purchased && (
+                <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                  <Check className="w-3 h-3 mr-1" />
+                  You bought this
+                </Badge>
+              )}
+              {product.crossSubredditSignal?.signal === 'split' && (
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30">
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  Mixed community signal
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Score Bar */}
+      <div className="ml-6 mb-4">
+        <div className="flex items-center gap-4">
+          <div className="flex-1 h-3 bg-white/[0.06] rounded-full overflow-hidden">
+            <motion.div
+              className={`h-full bg-gradient-to-r ${getScoreBarColor(product.score)} rounded-full`}
+              initial={{ width: 0 }}
+              animate={{ width: `${product.score}%` }}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+            />
+          </div>
+          <span className={`font-mono text-2xl font-bold ${getScoreColor(product.score)}`}>
+            {product.score}%
+          </span>
+        </div>
+      </div>
+
+      {/* Community Signal Row */}
+      {hasCommunityData && (
+        <div className="ml-6 mb-4 flex items-center gap-4 flex-wrap">
+          {(product.mentionCount ?? 0) > 0 && (
+            <div className="flex items-center gap-1.5 text-sm text-[#A1A1AA]">
+              <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
+              <span className="text-[#FAFAFA] font-medium">{product.mentionCount}</span>
+              <span>mentions</span>
+            </div>
+          )}
+          {(product.distinctRecommenders ?? 0) > 0 && (
+            <div className="flex items-center gap-1.5 text-sm text-[#A1A1AA]">
+              <Users className="w-3.5 h-3.5 text-violet-400" />
+              <span className="text-[#FAFAFA] font-medium">{product.distinctRecommenders}</span>
+              <span>recommenders</span>
+            </div>
+          )}
+          {total > 0 && (
+            <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-1 text-emerald-400">
+                <ThumbsUp className="w-3.5 h-3.5" />
+                <span className="font-medium">{product.positiveMentions}</span>
+              </div>
+              <div className="flex items-center gap-1 text-rose-400">
+                <ThumbsDown className="w-3.5 h-3.5" />
+                <span className="font-medium">{product.negativeMentions}</span>
+              </div>
+              {/* Sentiment bar */}
+              <div className="w-16 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: `${posRatio * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Representative Quote */}
+      {product.representativeQuote && (
+        <div className="ml-6 mb-4 flex gap-2">
+          <Quote className="w-4 h-4 text-violet-400/60 shrink-0 mt-0.5" />
+          <p className="text-sm text-[#A1A1AA] italic leading-relaxed">
+            "{product.representativeQuote}"
+          </p>
+        </div>
+      )}
+
+      {/* Sources */}
+      {formattedSources.length > 0 && (
+        <div className="ml-6 mb-4 flex items-center gap-1.5 flex-wrap">
+          <LayoutGrid className="w-3 h-3 text-[#52525B] shrink-0" />
+          {formattedSources.map((src) => (
+            <span
+              key={src}
+              className="text-xs px-1.5 py-0.5 rounded-md bg-white/[0.05] text-[#71717A] border border-white/[0.06]"
+            >
+              {src}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Cross-subreddit split warning */}
+      {product.crossSubredditSignal?.signal === 'split' && product.crossSubredditSignal.explanation && (
+        <div className="ml-6 mb-4 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <p className="text-xs text-amber-300/80 leading-relaxed">
+            <span className="font-medium text-amber-300">Community split:</span>{' '}
+            {product.crossSubredditSignal.explanation}
+          </p>
+          {product.crossSubredditSignal.context_note && (
+            <p className="text-xs text-[#A1A1AA] mt-1">{product.crossSubredditSignal.context_note}</p>
+          )}
+        </div>
+      )}
+
+      {/* Price & Store */}
+      <div className="ml-6 mb-4">
+        <div className="flex items-baseline gap-2 mb-1">
+          {product.price > 0 ? (
+            <>
+              <span className="text-2xl font-bold text-[#FAFAFA]">
+                {product.currency}{product.price.toLocaleString()}
+              </span>
+              {product.originalPrice && product.originalPrice > product.price && (
+                <span className="text-sm text-[#71717A] line-through">
+                  {product.currency}{product.originalPrice.toLocaleString()}
+                </span>
+              )}
+              {discount && discount > 0 && (
+                <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-400 border-0">
+                  {discount}% off
+                </Badge>
+              )}
+            </>
+          ) : (
+            <span className="text-sm text-[#71717A] italic">Price unavailable</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-sm text-[#A1A1AA]">
+          <span>on {product.store}</span>
+          {product.rating && (
+            <>
+              <span className="text-[#71717A]">•</span>
+              <span className="flex items-center gap-1">
+                <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                {product.rating} ({product.reviewCount?.toLocaleString()})
+              </span>
+            </>
+          )}
+        </div>
+        {product.alternativePrices && product.alternativePrices.length > 0 && (
+          <div className="mt-2 text-sm text-[#71717A]">
+            Also:{' '}
+            {product.alternativePrices.map((alt, i) => (
+              <span key={alt.store}>
+                {i > 0 && ' • '}
+                {alt.store} {product.currency}{alt.price.toLocaleString()}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Expandable sections */}
+      <div className="ml-6 space-y-1">
+
+        {/* What people say */}
+        {hasPeopleSay && (
+          <>
+            <button
+              onClick={() => setShowPeopleSay(!showPeopleSay)}
+              className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-[#FAFAFA] transition-colors py-1"
+            >
+              {showPeopleSay ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              What people say
+            </button>
+            <AnimatePresence>
+              {showPeopleSay && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pl-4 py-3 space-y-3">
+                    {(product.praise?.length ?? 0) > 0 && (
+                      <div className="space-y-1.5">
+                        {product.praise!.slice(0, 4).map((p, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                              <Check className="w-2.5 h-2.5 text-emerald-400" />
+                            </div>
+                            <span className="text-sm text-[#A1A1AA]">{p}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(product.complaints?.length ?? 0) > 0 && (
+                      <div className="space-y-1.5">
+                        {product.complaints!.slice(0, 4).map((c, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <div className="w-4 h-4 rounded-full bg-rose-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                              <span className="text-rose-400 text-xs font-bold leading-none">✕</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm text-[#A1A1AA]">{c.text}</span>
+                              {c.confidence && c.confidence !== 'single' && (
+                                <span className={cn(
+                                  'ml-2 text-xs px-1.5 py-0.5 rounded-md border inline-block',
+                                  confidenceBadge(c.confidence),
+                                )}>
+                                  {confidenceLabel(c.confidence)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+
+        {/* How it scored */}
+        <button
+          onClick={() => setShowScores(!showScores)}
+          className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-[#FAFAFA] transition-colors py-1"
+        >
+          {showScores ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          How it scored
+        </button>
+        <AnimatePresence>
+          {showScores && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="pl-4 py-3 space-y-3">
+                {Object.entries(product.criteriaScores).map(([criterion, data]) => (
+                  <div key={criterion}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-sm text-[#A1A1AA]">{criterion}</span>
+                      <span
+                        className={cn(
+                          'font-mono text-sm font-medium',
+                          data.score >= 8
+                            ? 'text-emerald-400'
+                            : data.score >= 5
+                            ? 'text-amber-400'
+                            : 'text-rose-400',
+                        )}
+                      >
+                        {data.score}/10
+                      </span>
+                    </div>
+                    {data.evidence && data.evidence !== 'no direct data found' && (
+                      <p className="text-xs text-[#52525B] leading-relaxed">{data.evidence}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Why this fits you */}
+        {product.fitReason && (
+          <>
+            <button
+              onClick={() => setShowFitReason(!showFitReason)}
+              className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-[#FAFAFA] transition-colors py-1"
+            >
+              {showFitReason ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              Why this fits you
+            </button>
+            <AnimatePresence>
+              {showFitReason && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pl-4 py-3">
+                    <p className="text-sm text-[#A1A1AA] leading-relaxed">{product.fitReason}</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="ml-6 mt-5 flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onMarkPurchased}
+          className="text-[#A1A1AA] hover:text-[#FAFAFA]"
+        >
+          <ShoppingCart className="w-4 h-4 mr-1.5" />
+          I bought this
+        </Button>
+        <Button size="sm" className="bg-violet-600 hover:bg-violet-500" asChild>
+          <a href={product.storeUrl || '#'} target="_blank" rel="noopener noreferrer">
+            Open on {product.store}
+            <ExternalLink className="w-4 h-4 ml-1.5" />
+          </a>
+        </Button>
+      </div>
+    </motion.div>
+  )
+}
