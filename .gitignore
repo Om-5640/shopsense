@@ -3,10 +3,14 @@
 .env.local
 .env.*.local
 *.env
+# Stale pre-v9 example file superseded by .env.example
+env.example
 
 # ── Database ────────────────────────────────────────────────────────────────────
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
@@ -35,6 +39,7 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-lock.yaml
 
 # ── IDE & tool metadata ──────────────────────────────────────────────────────────
 .vscode/

@@ -52,6 +52,29 @@ POST /api/search
         │   ├── Returns: {products[], materials[], summary}
         │   └── analysis_normalizer coerces any malformed LLM output
         │
+        ├─ Stage 4b: mention_pipeline.run_mention_pipeline(threads, base_registry)
+        │   ├── alias_resolver.coref_pass(products, threads, llm_client)
+        │   │   └── LLM coreference: discovers aliases ("CMF Buds" → "CMF Buds Pro 2")
+        │   │       and exclusions ("Buds Air 7" must not count inside "Buds Air 7 Pro")
+        │   │       Builds ProductInfo registry with canonical names + aliases
+        │   │
+        │   ├── mention_counter.build_automaton(registry)
+        │   │   └── Aho-Corasick automaton over all canonical names + aliases
+        │   │       O(n) single-pass over each text; word-boundary enforced;
+        │   │       overlapping spans deduped (longer match wins)
+        │   │
+        │   ├── mention_counter.count_across_threads(threads, registry, automaton)
+        │   │   ├── Title + body: thread-level count (no sentiment)
+        │   │   ├── Each comment: counted individually
+        │   │   └── Exclusion pass: 30-char window check prevents sub-product count leaks
+        │   │
+        │   ├── sentiment_analyser.analyse_comment() — per comment that has a mention
+        │   │   └── Hard cap: MAX_SENTIMENT_CALLS = 50 per session (prevents runaway cost)
+        │   │
+        │   └── Returns: {canonical_name: MentionResult}
+        │       MentionResult: total_mentions, distinct_threads, distinct_comments,
+        │                      positive, negative, neutral, sentiment_score, sentiment_records
+        │
         ├─ Stage 5: scorer.score_all_products(products, rubric, research_text)
         │   ├── SCORING_MODE=fast  → pure heuristic (instant)
         │   ├── SCORING_MODE=hybrid → LLM top-10, heuristic rest

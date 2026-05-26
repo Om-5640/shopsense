@@ -22,7 +22,6 @@ from agents import run_agent
 from llm_clients import GroqQuotaExhausted
 
 # Parallel batch scoring — no per-call sleep needed
-PRODUCTS_PER_BATCH = 4     # 4 products × 2500 chars each ≈ fits any provider's context
 MAX_SCORING_WORKERS = 4    # One concurrent call per provider in the pool
 
 # Scoring mode: "llm" (full), "hybrid" (LLM for top 10, fast for rest), "fast" (heuristic only)
@@ -165,7 +164,7 @@ Example: "lasted 2 years" implies durability; "comfortable for 8 hours" implies 
 
     pct = (weighted_total / max_possible * 100) if max_possible > 0 else 0
 
-    return {
+    result = {
         "name": product.get("name", "?"),
         "signal_strength": product.get("signal_strength", "?"),
         "scores": final_scores,
@@ -173,6 +172,9 @@ Example: "lasted 2 years" implies durability; "comfortable for 8 hours" implies 
         "max_possible": round(max_possible, 1),
         "percentage": round(pct, 1),
     }
+    for field in _COMMUNITY_FIELDS:
+        result[field] = product.get(field)
+    return result
 
 
 def _format_product(p: dict) -> str:
@@ -297,6 +299,14 @@ Score each product against every criterion. Return one entry per product in the 
     return results
 
 
+_COMMUNITY_FIELDS = (
+    "mention_count", "distinct_recommenders", "positive_mentions", "negative_mentions",
+    "praise", "complaints", "representative_quote", "sources",
+    "sentiment_score", "dominant_sentiment", "sentiment_records",
+    "cross_subreddit_signal",
+)
+
+
 def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
     """Build final scored product dict from raw LLM scores. Shared by batch and single."""
     by_name = {s.get("criterion"): s for s in raw_scores if isinstance(s, dict)}
@@ -327,7 +337,7 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
         })
 
     pct = (weighted_total / max_possible * 100) if max_possible > 0 else 0
-    return {
+    result = {
         "name": product.get("name", "?"),
         "signal_strength": product.get("signal_strength", "?"),
         "scores": final_scores,
@@ -335,6 +345,10 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
         "max_possible": round(max_possible, 1),
         "percentage": round(pct, 1),
     }
+    # Pass through community + v9 fields so mention counts / sentiment data survive scoring
+    for field in _COMMUNITY_FIELDS:
+        result[field] = product.get(field)
+    return result
 
 
 def score_all_products(

@@ -32,13 +32,16 @@ Run with:
 """
 
 import sys
+import os
 import json
 import asyncio
 import uuid
 from pathlib import Path
 from typing import AsyncGenerator, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -52,22 +55,66 @@ for _p in [str(_API_DIR), str(_ROOT)]:
 
 from db import init_db, create_search, update_search, get_search, list_searches
 from db import get_profile, save_profile_db
-from pipeline_runner import create_session, start_pipeline, get_session
+import logging as _logging
+from pipeline_runner import create_session, start_pipeline, get_session, cleanup_old_sessions
 
-app = FastAPI(title="Shopping Research Agent v7", version="7.0.0")
+_logger = _logging.getLogger(__name__)
+
+
+async def _session_cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(3600)  # every hour
+        try:
+            removed = cleanup_old_sessions()
+            if removed:
+                _logger.info("[session_cleanup] removed %d stale sessions", removed)
+        except Exception:
+            pass
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    init_db()
+    cleanup_task = asyncio.create_task(_session_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Shopping Research Agent v7", version="7.0.0", lifespan=lifespan)
+
+_CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +405,7 @@ def get_memory_context(q: str = Query(""), category: str = Query("")) -> dict:
         }
     except Exception as exc:
         # Memory unavailable — not fatal
-        print(f"[api/memory] context failed (non-fatal): {exc}")
+        _logger.warning("[api/memory] context fetch failed (non-fatal): %s", exc)
         return {"signals": [], "profile_summary": "", "has_memory": False}
 
 

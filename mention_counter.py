@@ -207,6 +207,9 @@ def count_mentions_in_text(
 
 # ── Cross-thread aggregator ────────────────────────────────────────────────────
 
+MAX_SENTIMENT_CALLS = 50  # hard cap per search session to prevent runaway LLM costs
+
+
 def count_across_threads(
     threads: list[dict],
     registry: dict,
@@ -225,11 +228,12 @@ def count_across_threads(
     LLM call budget:
       - 0 calls for title/body (pure Aho-Corasick)
       - 0 calls for comments with no product mention
-      - 1 call per comment that contains ≥1 product mention (when run_sentiment=True)
+      - ≤ MAX_SENTIMENT_CALLS calls total for sentiment (capped to prevent runaway costs)
 
     Returns { canonical_name: MentionResult }
     """
     results: dict[str, MentionResult] = {}
+    sentiment_calls_made = 0
 
     def _get_or_create(canonical: str) -> MentionResult:
         if canonical not in results:
@@ -250,8 +254,9 @@ def count_across_threads(
 
         # Merge title + body into thread-level counts
         thread_counts: dict[str, int] = {}
-        for canonical, cnt in {**title_counts, **body_counts}.items():
-            thread_counts[canonical] = thread_counts.get(canonical, 0) + cnt
+        for counts in (title_counts, body_counts):
+            for canonical, cnt in counts.items():
+                thread_counts[canonical] = thread_counts.get(canonical, 0) + cnt
 
         for canonical, cnt in thread_counts.items():
             mr = _get_or_create(canonical)
@@ -285,12 +290,14 @@ def count_across_threads(
                 mr.per_thread[thread_url] += cnt
 
             # Sentiment analysis — only for comments that have confirmed mentions
-            if run_sentiment and llm_client is not None:
+            # Hard cap: stop after MAX_SENTIMENT_CALLS to avoid runaway LLM costs
+            if run_sentiment and llm_client is not None and sentiment_calls_made < MAX_SENTIMENT_CALLS:
                 try:
                     from sentiment_analyser import analyse_comment
                     sentiment_map = analyse_comment(
                         comment_body, products_in_comment, llm_client
                     )
+                    sentiment_calls_made += 1
                     for canonical, score_obj in sentiment_map.items():
                         if canonical not in results:
                             continue

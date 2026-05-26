@@ -12,11 +12,14 @@ selection are handled by separate REST endpoints BEFORE this runs.
 import sys
 import hashlib
 import json
+import logging
 import threading
 import queue
 import time
 from pathlib import Path
 from typing import Optional, Callable
+
+_logger = logging.getLogger(__name__)
 
 # Ensure the project root is importable from within api/
 _ROOT = Path(__file__).parent.parent
@@ -63,13 +66,15 @@ def get_session(search_id: str) -> Optional["PipelineSession"]:
 
 
 def cleanup_old_sessions(max_age_hours: int = 6) -> int:
-    """Remove sessions older than max_age_hours. Call periodically to prevent memory leak."""
+    """Remove done/error sessions older than max_age_hours, and hung running sessions older than 2×."""
     cutoff = time.time() - max_age_hours * 3600
+    running_cutoff = time.time() - max_age_hours * 2 * 3600
     removed = 0
     with _sessions_lock:
         to_remove = [
             sid for sid, s in _sessions.items()
-            if s.status in ("done", "error") and hasattr(s, "_created_at") and s._created_at < cutoff
+            if (s.status in ("done", "error") and s._created_at < cutoff)
+            or (s.status == "running" and s._created_at < running_cutoff)
         ]
         for sid in to_remove:
             del _sessions[sid]
@@ -333,27 +338,34 @@ def _execute_pipeline(
     try:
         from mention_pipeline import run_pipeline as run_mention_pipeline
         from agents import run_agent as _agent_caller
+        from alias_resolver import ProductInfo as _ProductInfo
+
+        # Seed the registry with analysis-discovered products so the mention
+        # counter always tries to find them — even if coref returns {} (which
+        # happens when Reddit thread titles are vague / brand-free).
+        _base_registry = {}
+        for ap in products:
+            _pname = ap.get("name", "").strip()
+            if _pname:
+                _base_registry[_pname.lower()] = _ProductInfo(canonical_name=_pname)
 
         mention_results = run_mention_pipeline(
             threads=reddit_threads,
             llm_client=_agent_caller,
+            base_registry=_base_registry,
             run_sentiment=True,
         )
+
+        # Build a lowercase lookup so case-drift between the LLM coref output
+        # ("Realme Buds Air 7") and the analyser product name never causes a miss.
+        mention_lower = {k.lower(): v for k, v in mention_results.items()}
 
         overwritten = 0
         for product in products:
             pname_lower = product.get("name", "").lower().strip()
 
-            # Try exact lowercase match first
-            mr = mention_results.get(pname_lower)
-
-            # Fuzzy fallback: match on first 6 characters (handles minor name drift)
-            if not mr:
-                for key, val in mention_results.items():
-                    if len(pname_lower) >= 6 and len(key) >= 6:
-                        if pname_lower[:6] == key[:6]:
-                            mr = val
-                            break
+            # Try exact case-insensitive match first
+            mr = mention_lower.get(pname_lower)
 
             if mr:
                 product["mention_count"] = mr.total_mentions
@@ -461,7 +473,7 @@ def _execute_pipeline(
     # Phase 7: Log total pipeline time
     _total_elapsed = round(time.time() - _pipeline_start, 1)
     _timing_summary = ", ".join(f"{k}={v}s" for k, v in _stage_timings.items())
-    print(f"[pipeline] TOTAL {_total_elapsed}s | {_timing_summary}")
+    _logger.info("[pipeline] TOTAL %ss | %s", _total_elapsed, _timing_summary)
     session.emit_log(f"Pipeline complete in {_total_elapsed}s")
 
     # Persist to DB

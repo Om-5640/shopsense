@@ -222,10 +222,11 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
                         idx = chunk_idx[j]
                         results[idx] = vec
                         cache.set(_CACHE_TYPE, _key(chunk[j]), vec)
-                # Remove successfully embedded items from uncached lists
+                # Remove successfully embedded items from uncached lists, keeping both in sync
                 succeeded = {chunk_idx[j] for j, emb in enumerate(resp.json().get("embeddings", [])) if emb.get("values")}
-                uncached_idx = [i for i in uncached_idx if i not in succeeded]
-                uncached_texts = [uncached_texts[k] for k, orig_i in enumerate(uncached_idx) if orig_i not in succeeded]
+                surviving = [(idx, txt) for idx, txt in zip(uncached_idx, uncached_texts) if idx not in succeeded]
+                uncached_idx = [p[0] for p in surviving]
+                uncached_texts = [p[1] for p in surviving]
                 continue
             except Exception as exc:
                 print(f"[embeddings] Gemini batch failed: {exc}")

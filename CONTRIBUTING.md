@@ -33,13 +33,12 @@ uvicorn main:app --reload --port 8000
 
 ```bash
 cd web
-npm install
+pnpm install
 
 # Create local env
-echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' > .env.local
-echo 'DATABASE_URL="file:./prisma/shopping.db"' >> .env.local
+cp .env.example .env.local   # then edit NEXT_PUBLIC_API_URL=http://localhost:8000
 
-npm run dev
+pnpm dev
 ```
 
 ---
@@ -59,7 +58,7 @@ cd api && uvicorn main:app --port 8000
 cd web && npx tsc --noEmit
 
 # 4. Lint
-cd web && npm run lint
+cd web && pnpm lint
 ```
 
 If you're adding a significant feature, please add a test to `tests/` (create the directory if needed).

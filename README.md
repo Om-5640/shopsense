@@ -132,8 +132,8 @@ uvicorn main:app --reload --port 8000
 ```bash
 cd web
 cp .env.example .env.local   # sets NEXT_PUBLIC_API_URL=http://localhost:8000
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).

@@ -226,9 +226,12 @@ For each uncovered criterion above, assign a weight 0-10 based on category impor
     inferred_map = {w.get("name"): w for w in inferred if isinstance(w, dict)}
     updated_count = 0
     for c in rubric["weighted_criteria"]:
-        if c["name"] in inferred_map and "not addressed" in c.get("rationale", "").lower() or \
-           c["name"] in inferred_map and "Default weight" in c.get("rationale", "") or \
-           c["name"] in inferred_map and "neutral" in c.get("rationale", "").lower():
+        _rat = c.get("rationale", "").lower()
+        if c["name"] in inferred_map and (
+            "not addressed" in _rat
+            or "default weight" in _rat
+            or "neutral" in _rat
+        ):
             new_w = inferred_map[c["name"]]
             if isinstance(new_w.get("weight"), (int, float)):
                 c["weight"] = max(0, min(10, int(new_w["weight"])))

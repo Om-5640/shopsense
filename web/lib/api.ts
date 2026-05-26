@@ -161,20 +161,21 @@ export async function getProvidersStatus(): Promise<{
     last_error?: string | null
   }>
 }> {
-  const health = await getHealth()
-  // Backend returns a dict like {groq: {configured, alive}, ...}
-  // Transform it to the array the UI expects
-  const raw: Record<string, { configured: boolean; alive: boolean }> =
-    health.providers ?? {}
+  const { data } = await client.get('/api/providers/status')
+  // Backend returns {providers: {groq: {configured, session_alive, circuit_blocked, ...}, ...}}
+  const raw: Record<string, { configured: boolean; session_alive: boolean; circuit_blocked: boolean }> =
+    data.providers ?? {}
   const providers = Object.entries(raw).map(([id, info]) => ({
     id,
     name: _PROVIDER_LABELS[id]?.name ?? id,
     model: _PROVIDER_LABELS[id]?.model ?? 'unknown',
-    status: (info.configured && info.alive
+    status: (!info.configured
+      ? 'inactive'
+      : info.circuit_blocked
+      ? 'error'
+      : info.session_alive
       ? 'active'
-      : info.configured
-      ? 'quota'
-      : 'inactive') as 'active' | 'quota' | 'inactive' | 'error',
+      : 'quota') as 'active' | 'quota' | 'inactive' | 'error',
     last_error: null,
   }))
   return { providers }
