@@ -83,7 +83,7 @@ interface ProductCardProps {
   product: Product
   isSelected: boolean
   onToggleSelect: () => void
-  onMarkPurchased: () => void
+  onTogglePurchased: () => void
 }
 
 function confidenceBadge(c: string) {
@@ -161,7 +161,7 @@ export function ProductCard({
   product,
   isSelected,
   onToggleSelect,
-  onMarkPurchased,
+  onTogglePurchased,
 }: ProductCardProps) {
   const [showScores, setShowScores] = useState(false)
   const [showPeopleSay, setShowPeopleSay] = useState(false)
@@ -680,11 +680,14 @@ export function ProductCard({
         <Button
           variant="ghost"
           size="sm"
-          onClick={onMarkPurchased}
-          className="text-[#A1A1AA] hover:text-[#FAFAFA]"
+          onClick={onTogglePurchased}
+          className={cn(
+            'text-[#A1A1AA] hover:text-[#FAFAFA]',
+            product.purchased && 'text-emerald-300 hover:text-emerald-200',
+          )}
         >
-          <ShoppingCart className="w-4 h-4 mr-1.5" />
-          I bought this
+          {product.purchased ? <Check className="w-4 h-4 mr-1.5" /> : <ShoppingCart className="w-4 h-4 mr-1.5" />}
+          {product.purchased ? 'Bought' : 'I bought this'}
         </Button>
         <Button size="sm" className="bg-violet-600 hover:bg-violet-500" asChild>
           <a href={product.storeUrl || '#'} target="_blank" rel="noopener noreferrer">

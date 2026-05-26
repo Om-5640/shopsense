@@ -99,7 +99,7 @@ export default function MemoryPage() {
       ])
       setPreferences(signals.filter((s) => s.signalType === 'preference' || s.signalType === 'purchase'))
       setAvoided(signals.filter((s) => s.signalType === 'rejection' || s.signalType === 'complaint'))
-      setProducts(prods)
+      setProducts(prods.filter((product) => product.status !== 'considered'))
     } catch {
       toast.error('Could not load memory')
     } finally {
@@ -253,7 +253,7 @@ export default function MemoryPage() {
 
               <TabsContent value="products">
                 {products.length === 0 ? (
-                  <EmptyState icon={ShoppingBag} title="No products tracked" description="Products you interact with — purchased, rejected, or considered — will be saved here" />
+                  <EmptyState icon={ShoppingBag} title="No products tracked" description="Purchased, rejected, or returned products will be saved here" />
                 ) : (
                   <div className="space-y-3">
                     <AnimatePresence mode="popLayout">
@@ -468,7 +468,7 @@ function ProductMemoryCard({ product }: { product: ProductMemory }) {
           </div>
           <h4 className="font-medium text-[#FAFAFA] text-sm mb-1 truncate">{product.productName}</h4>
           <div className="flex items-center gap-3 text-xs text-[#71717A]">
-            {product.ourScore !== undefined && (
+            {typeof product.ourScore === 'number' && Number.isFinite(product.ourScore) && (
               <span className="text-emerald-400 font-mono">{Math.round(product.ourScore)}% match</span>
             )}
             <span>{formatDistanceToNow(new Date(product.createdAt), { addSuffix: true })}</span>

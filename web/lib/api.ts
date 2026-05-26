@@ -226,6 +226,10 @@ export async function updateProductStatus(
   })
 }
 
+export async function deleteProductMemory(productName: string): Promise<void> {
+  await client.delete(`/api/memory/products/${encodeURIComponent(productName)}`)
+}
+
 export async function recordPurchase(
   productName: string,
   category: string,

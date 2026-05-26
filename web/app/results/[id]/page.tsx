@@ -20,7 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
-import { getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
+import { deleteProductMemory, getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
 import { useResultsStore, useAppStore, deriveSidebarCriteria } from '@/lib/store'
 import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord } from '@/lib/types'
 import { fmtRelative } from '@/lib/utils'
@@ -37,6 +37,10 @@ function toCurrencySymbol(currency: string) {
 
 function bestRetailer(p: ScoredProduct): RetailerPrice | undefined {
   return p.price?.retailers?.find((r) => !r.is_search) ?? p.price?.retailers?.[0]
+}
+
+function productClientKey(p: ScoredProduct, index: number) {
+  return p.clientKey ?? `${p.name}::${index}`
 }
 
 function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id: string; label: string }[], analysisMap: Record<string, AnalysisProduct> = {}) {
@@ -152,10 +156,11 @@ export default function ResultsPage() {
             analysisMap[ap.name.toLowerCase()] = ap
           }
           // Merge community fields into scored products
-          const mergedProducts = result.scoredProducts.map((sp) => {
+          const mergedProducts = result.scoredProducts.map((sp, index) => {
             const ap = analysisMap[sp.name.toLowerCase()] ?? {}
             return {
               ...sp,
+              clientKey: productClientKey(sp, index),
               mention_count: ap.mention_count ?? sp.mention_count,
               distinct_recommenders: ap.distinct_recommenders ?? sp.distinct_recommenders,
               positive_mentions: ap.positive_mentions ?? sp.positive_mentions,
@@ -245,19 +250,28 @@ export default function ResultsPage() {
     toast.success('Weights saved')
   }, [])
 
-  const handleMarkPurchased = useCallback(
-    async (productName: string) => {
+  const handleTogglePurchased = useCallback(
+    async (productName: string, isPurchased: boolean, score: number) => {
       if (!searchMeta) return
       try {
-        await recordPurchase(productName, searchMeta.category)
-        toast.success('Marked as purchased!')
+        if (isPurchased) {
+          await deleteProductMemory(productName)
+        } else {
+          await recordPurchase(productName, searchMeta.category, undefined, score)
+        }
+        toast.success(isPurchased ? 'Purchase mark removed' : 'Marked as purchased!')
         useResultsStore.setState((state) => ({
           products: state.products.map((p) =>
-            p.name === productName ? { ...p, memory: { status: 'purchased' } } : p,
+            p.name === productName
+              ? {
+                  ...p,
+                  memory: isPurchased ? null : { ...(p.memory ?? {}), status: 'purchased', ourScore: score },
+                }
+              : p,
           ),
         }))
       } catch {
-        toast.error('Could not record purchase')
+        toast.error(isPurchased ? 'Could not remove purchase mark' : 'Could not record purchase')
       }
     },
     [searchMeta],
@@ -475,7 +489,7 @@ export default function ResultsPage() {
                 <AnimatePresence mode="popLayout">
                   {displayProducts.map((product, idx) => (
                     <motion.div
-                      key={product.name}
+                      key={productClientKey(product, idx)}
                       layout
                       transition={{ duration: 0.18, ease: 'easeOut' }}
                       initial={{ opacity: 0, y: 12 }}
@@ -486,7 +500,7 @@ export default function ResultsPage() {
                         product={toProductCardProps(product, idx + 1, sidebarCriteria)}
                         isSelected={compareSet.has(product.name)}
                         onToggleSelect={() => toggleCompare(product.name)}
-                        onMarkPurchased={() => handleMarkPurchased(product.name)}
+                        onTogglePurchased={() => handleTogglePurchased(product.name, product.memory?.status === 'purchased', product.percentage)}
                       />
                     </motion.div>
                   ))}

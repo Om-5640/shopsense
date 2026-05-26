@@ -259,6 +259,14 @@ def list_product_memories(limit: int = 100) -> list[dict]:
         return []
 
 
+def delete_product_memory(product_name: str) -> bool:
+    try:
+        from db import delete_product_memory as _delete
+        return _delete(product_name)
+    except Exception:
+        return False
+
+
 def delete_signal(signal_id: str) -> bool:
     try:
         from db import delete_signal as _delete

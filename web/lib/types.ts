@@ -85,6 +85,7 @@ export interface AnalysisProduct {
 }
 
 export interface ScoredProduct {
+  clientKey?: string
   name: string
   signal_strength: 'high' | 'medium' | 'low' | string
   scores: Score[]
@@ -226,7 +227,7 @@ export interface ProductMemory {
   productName: string
   category: string
   status: 'considered' | 'rejected' | 'purchased' | 'returned'
-  ourScore?: number
+  ourScore?: number | null
   userFeedback?: string
   createdAt: string
 }

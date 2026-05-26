@@ -487,6 +487,16 @@ def update_product_status(product_name: str, req: ProductStatusRequest) -> dict:
         raise HTTPException(500, f"Save failed: {exc}")
 
 
+@app.delete("/api/memory/products/{product_name:path}")
+def forget_product_memory(product_name: str) -> dict:
+    try:
+        from memory import delete_product_memory
+        deleted = delete_product_memory(product_name)
+        return {"deleted": deleted, "product": product_name}
+    except Exception as exc:
+        raise HTTPException(500, f"Delete failed: {exc}")
+
+
 @app.post("/api/memory/bought")
 def record_purchase(req: BoughtRequest) -> dict:
     """Record that the user bought a product. Also creates a UserSignal from their feedback."""
