@@ -325,6 +325,55 @@ def _execute_pipeline(
         session.emit_log(f"[cross_validate] non-fatal: {cv_err}")
     session.emit("stage_done", {"stage": "cross_validate"})
 
+    # ---- Stage 4.7: Precise mention counting + per-comment sentiment ----
+    session.emit("stage_start", {
+        "stage": "mention_counting",
+        "label": "Counting Mentions (Precise)",
+    })
+    try:
+        from mention_pipeline import run_pipeline as run_mention_pipeline
+        from agents import run_agent as _agent_caller
+
+        mention_results = run_mention_pipeline(
+            threads=reddit_threads,
+            llm_client=_agent_caller,
+            run_sentiment=True,
+        )
+
+        overwritten = 0
+        for product in products:
+            pname_lower = product.get("name", "").lower().strip()
+
+            # Try exact lowercase match first
+            mr = mention_results.get(pname_lower)
+
+            # Fuzzy fallback: match on first 6 characters (handles minor name drift)
+            if not mr:
+                for key, val in mention_results.items():
+                    if len(pname_lower) >= 6 and len(key) >= 6:
+                        if pname_lower[:6] == key[:6]:
+                            mr = val
+                            break
+
+            if mr:
+                product["mention_count"] = mr.total_mentions
+                product["distinct_recommenders"] = mr.distinct_threads
+                product["positive_mentions"] = mr.positive
+                product["negative_mentions"] = mr.negative
+                # New fields — additive alongside existing ones
+                product["sentiment_score"] = round(mr.sentiment_score, 3)
+                product["dominant_sentiment"] = mr.dominant_sentiment
+                product["sentiment_records"] = mr.sentiment_records[:20]
+                overwritten += 1
+
+        session.emit_log(
+            f"[mention_pipeline] precise counts applied to {overwritten}/{len(products)} products"
+        )
+    except Exception as mp_err:
+        session.emit_log(f"[mention_pipeline] non-fatal: {mp_err}")
+        # Products keep their LLM-estimated counts — pipeline continues unaffected
+    session.emit("stage_done", {"stage": "mention_counting"})
+
     # ---- Stage 5: Per-product scoring ----
     _t0 = time.time()
     session.emit("stage_start", {

@@ -60,6 +60,13 @@ export interface ProductComplaint {
   confidence: 'confirmed' | 'reported' | 'single' | string
 }
 
+export interface SentimentRecord {
+  comment_text: string
+  sentiment: 'positive' | 'negative' | 'neutral'
+  confidence: number
+  reason: string
+}
+
 export interface AnalysisProduct {
   name: string
   mention_count?: number
@@ -71,6 +78,10 @@ export interface AnalysisProduct {
   representative_quote?: string
   sources?: string[]
   signal_strength?: string
+  // v9: precise mention pipeline fields
+  sentiment_score?: number
+  dominant_sentiment?: string
+  sentiment_records?: SentimentRecord[]
 }
 
 export interface ScoredProduct {
@@ -95,6 +106,10 @@ export interface ScoredProduct {
   // v7
   cross_subreddit_signal?: CrossSubredditSignal | null
   memory?: ProductMemoryStatus | null
+  // v9: precise mention pipeline fields
+  sentiment_score?: number | null
+  dominant_sentiment?: string | null
+  sentiment_records?: SentimentRecord[]
 }
 
 export interface SearchResult {

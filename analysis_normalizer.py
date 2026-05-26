@@ -163,6 +163,10 @@ def _normalize_item(item, is_product: bool = False) -> dict | None:
         normalized["signal_strength"] = signal
         # v7: cross-subreddit signal (set to None until cross_validate.py runs)
         normalized["cross_subreddit_signal"] = item.get("cross_subreddit_signal", None)
+        # Preserve fields requested in EXTRACT_PROMPT_TEMPLATE that were previously dropped
+        normalized["positive_mentions"] = _safe_int(item.get("positive_mentions"), 0)
+        normalized["negative_mentions"] = _safe_int(item.get("negative_mentions"), 0)
+        normalized["representative_quote"] = _safe_str(item.get("representative_quote", ""))
     else:
         # Materials carry example products
         normalized["example_products"] = [

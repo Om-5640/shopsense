@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Quote,
   LayoutGrid,
+  Minus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +34,13 @@ interface CrossSubredditSignal {
   signal: 'consistent' | 'split' | 'single_source'
   explanation: string
   context_note: string
+}
+
+interface SentimentRecord {
+  comment_text: string
+  sentiment: 'positive' | 'negative' | 'neutral'
+  confidence: number
+  reason: string
 }
 
 interface Product {
@@ -65,6 +73,10 @@ interface Product {
   representativeQuote?: string
   sources?: string[]
   crossSubredditSignal?: CrossSubredditSignal | null
+  // v9: precise sentiment pipeline
+  sentimentScore?: number | null
+  dominantSentiment?: string | null
+  sentimentRecords?: SentimentRecord[]
 }
 
 interface ProductCardProps {
@@ -86,6 +98,65 @@ function confidenceLabel(c: string) {
   return 'single mention'
 }
 
+function SentimentIcon({ sentiment, size = 'sm' }: { sentiment: string; size?: 'sm' | 'xs' }) {
+  const cls = size === 'sm' ? 'w-4 h-4' : 'w-3 h-3'
+  if (sentiment === 'positive') return <ThumbsUp className={cn(cls, 'text-emerald-400')} />
+  if (sentiment === 'negative') return <ThumbsDown className={cn(cls, 'text-rose-400')} />
+  return <Minus className={cn(cls, 'text-[#71717A]')} />
+}
+
+function SentimentBar({ sentimentScore, dominantSentiment }: { sentimentScore: number; dominantSentiment: string }) {
+  // Map -1.0..+1.0 to 0%..100% for indicator position
+  const pct = ((sentimentScore + 1) / 2) * 100
+
+  const indicatorColor =
+    dominantSentiment === 'positive'
+      ? 'bg-emerald-400 shadow-emerald-400/40'
+      : dominantSentiment === 'negative'
+      ? 'bg-rose-400 shadow-rose-400/40'
+      : 'bg-amber-400 shadow-amber-400/40'
+
+  const labelColor =
+    dominantSentiment === 'positive'
+      ? 'text-emerald-400'
+      : dominantSentiment === 'negative'
+      ? 'text-rose-400'
+      : 'text-amber-400'
+
+  return (
+    <div className="space-y-1.5">
+      {/* Bar */}
+      <div className="relative h-2 rounded-full overflow-visible bg-white/[0.06]">
+        {/* Negative half */}
+        <div className="absolute left-0 top-0 h-full w-1/2 rounded-l-full bg-gradient-to-r from-rose-500/50 to-rose-500/10" />
+        {/* Positive half */}
+        <div className="absolute right-0 top-0 h-full w-1/2 rounded-r-full bg-gradient-to-r from-emerald-500/10 to-emerald-500/50" />
+        {/* Center divider */}
+        <div className="absolute left-1/2 top-0 h-full w-px bg-white/20 -translate-x-px" />
+        {/* Indicator pill */}
+        <motion.div
+          className={cn(
+            'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full shadow-lg',
+            indicatorColor,
+          )}
+          style={{ left: `${pct}%` }}
+          initial={{ left: '50%' }}
+          animate={{ left: `${pct}%` }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+        />
+      </div>
+      {/* Label */}
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-[#52525B]">negative</span>
+        <span className={cn('font-medium capitalize', labelColor)}>
+          {dominantSentiment} &middot; {sentimentScore >= 0 ? '+' : ''}{sentimentScore.toFixed(2)}
+        </span>
+        <span className="text-[#52525B]">positive</span>
+      </div>
+    </div>
+  )
+}
+
 export function ProductCard({
   product,
   isSelected,
@@ -95,6 +166,8 @@ export function ProductCard({
   const [showScores, setShowScores] = useState(false)
   const [showPeopleSay, setShowPeopleSay] = useState(false)
   const [showFitReason, setShowFitReason] = useState(false)
+  const [showSentiment, setShowSentiment] = useState(false)
+  const [showMoreSentiment, setShowMoreSentiment] = useState(false)
 
   const discount =
     product.originalPrice && product.originalPrice > product.price && product.price > 0
@@ -124,6 +197,18 @@ export function ProductCard({
     (product.praise?.length ?? 0) > 0 ||
     (product.complaints?.length ?? 0) > 0 ||
     !!product.representativeQuote
+
+  // Community Sentiment section visibility
+  const sentimentTotal =
+    (product.positiveMentions ?? 0) + (product.negativeMentions ?? 0)
+  const hasSentimentBar =
+    product.sentimentScore != null && product.dominantSentiment != null
+  const hasSentimentRecords = (product.sentimentRecords?.length ?? 0) > 0
+  const showSentimentSection = hasSentimentBar || sentimentTotal > 0 || hasSentimentRecords
+
+  // Displayed sentiment records (first 5, then show-more)
+  const allRecords = product.sentimentRecords ?? []
+  const visibleRecords = showMoreSentiment ? allRecords : allRecords.slice(0, 5)
 
   // Format source labels (reddit:Bedding → r/Bedding, review:wirecutter.com → wirecutter.com)
   const formattedSources = (product.sources ?? []).map((s) => {
@@ -258,7 +343,7 @@ export function ProductCard({
                 <ThumbsDown className="w-3.5 h-3.5" />
                 <span className="font-medium">{product.negativeMentions}</span>
               </div>
-              {/* Sentiment bar */}
+              {/* Mini sentiment bar */}
               <div className="w-16 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-emerald-500 rounded-full"
@@ -270,12 +355,111 @@ export function ProductCard({
         </div>
       )}
 
+      {/* ── Community Sentiment Section (v9) ──────────────────────────────── */}
+      {showSentimentSection && (
+        <div className="ml-6 mb-4 space-y-3">
+          {/* Sentiment Score Bar */}
+          {hasSentimentBar && (
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <SentimentBar
+                sentimentScore={product.sentimentScore!}
+                dominantSentiment={product.dominantSentiment!}
+              />
+            </div>
+          )}
+
+          {/* Breakdown pills */}
+          {sentimentTotal > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {(product.positiveMentions ?? 0) > 0 && (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-300">
+                  <ThumbsUp className="w-3 h-3" />
+                  Positive: {product.positiveMentions}
+                </span>
+              )}
+              {(product.negativeMentions ?? 0) > 0 && (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-rose-500/15 text-rose-300">
+                  <ThumbsDown className="w-3 h-3" />
+                  Negative: {product.negativeMentions}
+                </span>
+              )}
+              {product.sentimentRecords && product.sentimentRecords.filter(r => r.sentiment === 'neutral').length > 0 && (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-white/[0.06] text-[#A1A1AA]">
+                  <Minus className="w-3 h-3" />
+                  Neutral: {product.sentimentRecords.filter(r => r.sentiment === 'neutral').length}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Collapsible comment records */}
+          {hasSentimentRecords && (
+            <>
+              <button
+                onClick={() => setShowSentiment(!showSentiment)}
+                className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-[#FAFAFA] transition-colors py-0.5"
+              >
+                {showSentiment ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                What people are saying
+                <span className="text-xs text-[#52525B]">({allRecords.length} comments)</span>
+              </button>
+              <AnimatePresence>
+                {showSentiment && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pl-4 py-2 space-y-3">
+                      {visibleRecords.map((record, i) => (
+                        <div key={i} className="flex items-start gap-2.5">
+                          <div className="shrink-0 mt-0.5">
+                            <SentimentIcon sentiment={record.sentiment} size="sm" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm text-[#A1A1AA] leading-relaxed line-clamp-2">
+                                &ldquo;{record.comment_text.slice(0, 200)}{record.comment_text.length > 200 ? '…' : ''}&rdquo;
+                              </p>
+                              <span className="text-xs text-[#52525B] shrink-0">
+                                {Math.round(record.confidence * 100)}%
+                              </span>
+                            </div>
+                            {record.reason && (
+                              <p className="text-xs text-[#52525B] italic mt-0.5 leading-snug">
+                                {record.reason}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      {allRecords.length > 5 && (
+                        <button
+                          onClick={() => setShowMoreSentiment(!showMoreSentiment)}
+                          className="text-xs text-violet-400 hover:text-violet-300 transition-colors py-1"
+                        >
+                          {showMoreSentiment
+                            ? 'Show less'
+                            : `Show ${allRecords.length - 5} more comments`}
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Representative Quote */}
       {product.representativeQuote && (
         <div className="ml-6 mb-4 flex gap-2">
           <Quote className="w-4 h-4 text-violet-400/60 shrink-0 mt-0.5" />
           <p className="text-sm text-[#A1A1AA] italic leading-relaxed">
-            "{product.representativeQuote}"
+            &ldquo;{product.representativeQuote}&rdquo;
           </p>
         </div>
       )}
@@ -359,7 +543,7 @@ export function ProductCard({
       {/* Expandable sections */}
       <div className="ml-6 space-y-1">
 
-        {/* What people say */}
+        {/* What people say (praise + complaints) */}
         {hasPeopleSay && (
           <>
             <button

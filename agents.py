@@ -131,6 +131,15 @@ AGENTS = {
         "json_mode": True,
         "description": "Extract durable user preference signals from interview Q&A",
     },
+    # ---- v9 agents ----
+    "sentiment_analyser": {
+        "provider": "groq",
+        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
+        "temperature": 0.1,
+        "max_tokens": 512,
+        "json_mode": True,
+        "description": "Score sentiment per product per comment (called only when product confirmed present)",
+    },
 }
 
 

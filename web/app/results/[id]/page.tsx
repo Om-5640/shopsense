@@ -22,7 +22,7 @@ import {
 import { toast } from 'sonner'
 import { getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
 import { useResultsStore, useAppStore, deriveSidebarCriteria } from '@/lib/store'
-import type { ScoredProduct, RetailerPrice, AnalysisProduct } from '@/lib/types'
+import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord } from '@/lib/types'
 import { fmtRelative } from '@/lib/utils'
 
 // ─── Adapters ─────────────────────────────────────────────────────────────────
@@ -92,6 +92,10 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     representativeQuote: ap.representative_quote ?? p.representative_quote,
     sources: ap.sources ?? p.sources ?? [],
     crossSubredditSignal: p.cross_subreddit_signal ?? null,
+    // v9: precise sentiment pipeline
+    sentimentScore: ap.sentiment_score ?? p.sentiment_score ?? null,
+    dominantSentiment: ap.dominant_sentiment ?? p.dominant_sentiment ?? null,
+    sentimentRecords: (ap.sentiment_records ?? p.sentiment_records ?? []) as SentimentRecord[],
   }
 }
 
@@ -160,6 +164,10 @@ export default function ResultsPage() {
               complaints: ap.complaints ?? sp.complaints,
               representative_quote: ap.representative_quote ?? sp.representative_quote,
               sources: ap.sources ?? sp.sources,
+              // v9: precise sentiment pipeline fields
+              sentiment_score: ap.sentiment_score ?? sp.sentiment_score ?? null,
+              dominant_sentiment: ap.dominant_sentiment ?? sp.dominant_sentiment ?? null,
+              sentiment_records: (ap.sentiment_records ?? sp.sentiment_records ?? []) as SentimentRecord[],
             }
           })
           initResults({

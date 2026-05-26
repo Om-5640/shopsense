@@ -10,3 +10,6 @@ praw>=7.7
 
 # v7: Postgres + pgvector support (optional — falls back to SQLite if not installed)
 psycopg2-binary>=2.9
+
+# v9: Precise mention counting (Aho-Corasick multi-pattern scan)
+pyahocorasick>=2.0.0
