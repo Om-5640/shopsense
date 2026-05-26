@@ -3,11 +3,14 @@ Simple file-based cache with 7-day expiry.
 Caches by SHA256 of (cache_type, key).
 """
 
+import logging
 import os
 import json
 import time
 import hashlib
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
@@ -45,4 +48,4 @@ def set(cache_type: str, key: str, value):
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "value": value}, f)
     except Exception as e:
-        print(f"[cache] write failed (non-fatal): {e}")
+        _logger.warning("[cache] write failed (non-fatal): %s", e)

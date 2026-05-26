@@ -6,6 +6,12 @@ All notable changes to ShopSense are documented here.
 
 ## [Unreleased]
 
+### Changed
+- `agents.py`, `rubric.py`, `embeddings.py`, `analysis_normalizer.py`, `cache.py`: replaced all operational `print()` calls with `logging.getLogger(__name__)` calls (`_logger.warning` / `_logger.info`); CLI display output in `rubric.py` (`display_rubric`, `edit_weights`) intentionally left as `print()`
+
+### Added
+- `ROADMAP.md`: v10 roadmap covering 9 themes — automated test suite, Redis cache, structured error reporting, export/sharing, user auth, LLM evals, multi-region improvements, price tracking, and PWA support
+
 ---
 
 ## [9.1.0] — 2026-05-26 — Audit & Hardening Pass

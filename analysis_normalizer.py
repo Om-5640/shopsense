@@ -35,6 +35,11 @@ Canonical shape:
 """
 
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
 def _safe_str(value, default: str = "") -> str:
     """Coerce ANY value to a string. Dict→bulleted, list→joined, None→default."""
     if value is None:
@@ -213,7 +218,7 @@ def normalize_analysis(raw: dict | None) -> dict:
     if not products and summary:
         rescued = _extract_products_from_summary(summary)
         if rescued:
-            print(f"[normalizer] structured products empty - rescued {len(rescued)} from summary text")
+            _logger.info("[normalizer] structured products empty - rescued %d from summary text", len(rescued))
             products = rescued
 
     return {

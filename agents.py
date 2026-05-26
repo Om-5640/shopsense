@@ -17,8 +17,11 @@ USAGE:
 """
 
 import itertools
+import logging
 import os
 import threading
+
+_logger = logging.getLogger(__name__)
 
 from llm_clients import (
     call_groq, call_gemini, call_mistral, call_cerebras, call_openrouter,
@@ -158,7 +161,7 @@ def mark_provider_dead(provider: str) -> None:
     with _dead_lock:
         if provider not in _dead_providers:
             _dead_providers.add(provider)
-            print(f"  [provider:{provider}] marked dead for this session (will be skipped)")
+            _logger.warning("[provider:%s] marked dead for this session (will be skipped)", provider)
 
 
 def is_provider_dead(provider: str) -> bool:
@@ -246,15 +249,15 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
             mark_provider_dead("groq")
             last_err = e
             if i < len(available) - 1:
-                print(f"  [{agent_name}] groq quota exhausted, trying {available[i + 1]}")
+                _logger.warning("[%s] groq quota exhausted, trying %s", agent_name, available[i + 1])
         except ProviderAuthError as e:
             # Auth failure = permanently bad key; mark dead for entire session
             mark_provider_dead(provider)
             last_err = e
             if i < len(available) - 1:
-                print(f"  [{agent_name}] {provider} auth failed, trying {available[i + 1]}")
+                _logger.warning("[%s] %s auth failed, trying %s", agent_name, provider, available[i + 1])
             else:
-                print(f"  [{agent_name}] {provider} auth failed (no more providers)")
+                _logger.warning("[%s] %s auth failed (no more providers)", agent_name, provider)
         except Exception as e:
             last_err = e
             err_type = type(e).__name__
@@ -262,9 +265,9 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
             if "quota" in err_str or "exhausted" in err_str:
                 mark_provider_dead(provider)
             if i < len(available) - 1:
-                print(f"  [{agent_name}] {provider} failed ({err_type}), trying {available[i + 1]}")
+                _logger.warning("[%s] %s failed (%s), trying %s", agent_name, provider, err_type, available[i + 1])
             else:
-                print(f"  [{agent_name}] all providers failed (last: {provider}/{err_type})")
+                _logger.warning("[%s] all providers failed (last: %s/%s)", agent_name, provider, err_type)
     raise last_err
 
 

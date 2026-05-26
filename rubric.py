@@ -8,10 +8,13 @@ Stored at rubrics/<category>.json so it can be reused/edited.
 """
 
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from agents import run_agent
 from category import category_to_filename
+
+_logger = logging.getLogger(__name__)
 
 
 RUBRICS_DIR = Path(__file__).parent / "rubrics"
@@ -103,7 +106,7 @@ Build the weighted rubric."""
         data = _try_repair_json(raw)
         weighted = data.get("weighted_criteria", [])
     except Exception:
-        print("[rubric] JSON parse failed, using defaults")
+        _logger.warning("[rubric] JSON parse failed, using defaults")
         weighted = [_default_weight(c) for c in criteria]
 
     # Validate: every criterion must be present
@@ -190,7 +193,7 @@ def fill_criterion_gaps(rubric: dict, category: str, profile: dict, research_sum
     if not defaulted:
         return rubric  # nothing to fill
 
-    print(f"[rubric] inferring weights for {len(defaulted)} unaddressed criteria...")
+    _logger.info("[rubric] inferring weights for %d unaddressed criteria...", len(defaulted))
 
     # Build prompt
     defaulted_text = "\n".join(
@@ -219,7 +222,7 @@ For each uncovered criterion above, assign a weight 0-10 based on category impor
         data = safe_json_loads(raw)
         inferred = data.get("inferred_weights", []) if isinstance(data, dict) else []
     except Exception as e:
-        print(f"[rubric] gap-fill failed ({e}), keeping defaults")
+        _logger.warning("[rubric] gap-fill failed (%s), keeping defaults", e)
         return rubric
 
     # Apply inferred weights
@@ -239,7 +242,7 @@ For each uncovered criterion above, assign a weight 0-10 based on category impor
                 updated_count += 1
 
     if updated_count:
-        print(f"[rubric] inferred weights applied to {updated_count} criteria")
+        _logger.info("[rubric] inferred weights applied to %d criteria", updated_count)
         save_rubric(rubric.get("category", ""), rubric)
     return rubric
 

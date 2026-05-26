@@ -11,11 +11,14 @@ Caches by SHA256 of input text — repeated embeddings cost nothing.
 Falls back gracefully; returns None only if every provider fails.
 """
 
+import logging
 import os
 import hashlib
 import requests
 from typing import Optional
 from dotenv import load_dotenv
+
+_logger = logging.getLogger(__name__)
 
 import cache
 
@@ -63,7 +66,7 @@ def _embed_gemini(text: str) -> Optional[list[float]]:
         resp.raise_for_status()
         return resp.json()["embedding"]["values"]
     except Exception as exc:
-        print(f"[embeddings] Gemini failed: {exc}")
+        _logger.warning("[embeddings] Gemini failed: %s", exc)
         return None
 
 
@@ -85,7 +88,7 @@ def _embed_cohere(text: str) -> Optional[list[float]]:
         vecs = resp.json().get("embeddings", [])
         return vecs[0] if vecs else None
     except Exception as exc:
-        print(f"[embeddings] Cohere failed: {exc}")
+        _logger.warning("[embeddings] Cohere failed: %s", exc)
         return None
 
 
@@ -110,7 +113,7 @@ def _embed_huggingface(text: str) -> Optional[list[float]]:
             return result[0]
         return None
     except Exception as exc:
-        print(f"[embeddings] HuggingFace failed: {exc}")
+        _logger.warning("[embeddings] HuggingFace failed: %s", exc)
         return None
 
 
@@ -128,14 +131,14 @@ def _embed_local(text: str) -> Optional[list[float]]:
         with _local_model_lock:
             if _local_model is None:
                 from sentence_transformers import SentenceTransformer
-                print("[embeddings] loading local sentence-transformers model (one-time)...")
+                _logger.info("[embeddings] loading local sentence-transformers model (one-time)...")
                 _local_model = SentenceTransformer("all-MiniLM-L6-v2")
         vec = _local_model.encode(text[:_MAX_TEXT_CHARS], show_progress_bar=False)
         return vec.tolist()
     except ImportError:
         return None  # sentence-transformers not installed
     except Exception as exc:
-        print(f"[embeddings] local model failed: {exc}")
+        _logger.warning("[embeddings] local model failed: %s", exc)
         return None
 
 
@@ -164,7 +167,7 @@ def embed(text: str) -> Optional[list[float]]:
             cache.set(_CACHE_TYPE, ck, vec)
             return vec
 
-    print("[embeddings] all providers failed — returning None")
+    _logger.warning("[embeddings] all providers failed — returning None")
     return None
 
 
@@ -229,7 +232,7 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
                 uncached_texts = [p[1] for p in surviving]
                 continue
             except Exception as exc:
-                print(f"[embeddings] Gemini batch failed: {exc}")
+                _logger.warning("[embeddings] Gemini batch failed: %s", exc)
                 break
 
     # Fall back to serial embed() for anything still uncached
