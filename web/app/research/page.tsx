@@ -38,6 +38,7 @@ import {
   summarizeInterview,
   generateRubric,
   startSearch,
+  cancelSearch,
   saveProfile,
   getProfile,
   getMemoryContext,
@@ -161,6 +162,8 @@ function ResearchPageContent() {
     Array<{ id: string; subreddit: string; title: string; score: number; status: 'pending' | 'fetching' | 'complete'; commentCount?: number }>
   >([])
 
+  const [activeSearchId, setActiveSearchId] = useState<string | null>(null)
+  const [stopping, setStopping] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const sseCleanupRef = useRef<(() => void) | null>(null)
   const profileRef = useRef<Record<string, unknown> | null>(null)
@@ -354,6 +357,9 @@ function ResearchPageContent() {
         qa_history: qaHistory,
         primary_noun: primaryNoun || category.split('/').pop() || '',
       })
+      setActiveSearchId(search_id)
+      // Persist so the user can rejoin from history/home if they navigate away
+      try { localStorage.setItem('shopsense_active_search', JSON.stringify({ id: search_id, query, ts: Date.now() })) } catch { /* ignore */ }
       sseCleanupRef.current = connectSSE(search_id, {
         onStageStart(stage) {
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
@@ -395,11 +401,30 @@ function ResearchPageContent() {
         },
         onDone() {
           setPhase('done')
+          try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
           router.push(`/results/${search_id}`)
         },
       })
     } catch (e) {
       handleError(`Failed to start search: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // ── Stop / cancel handler ─────────────────────────────────────────────────
+  async function handleStop() {
+    if (!activeSearchId || stopping) return
+    setStopping(true)
+    try {
+      sseCleanupRef.current?.()
+      await cancelSearch(activeSearchId)
+      try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
+      toast.info('Research stopped.')
+      setPhase('error')
+      setError(`Research stopped. Partial results may be available at /results/${activeSearchId}`)
+    } catch {
+      toast.error('Could not stop research — try again.')
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -450,21 +475,35 @@ function ResearchPageContent() {
   // ── Right panel content ───────────────────────────────────────────────────
   const renderContent = () => {
     if (phase === 'error') {
+      const isStopped = error?.includes('stopped')
       return (
         <motion.div
           key="error"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl bg-rose-500/5 border border-rose-500/20 p-8"
+          className={`rounded-2xl border p-8 ${isStopped ? 'bg-amber-500/5 border-amber-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}
         >
           <div className="flex items-center gap-3 mb-3">
-            <AlertCircle className="w-5 h-5 text-rose-400" />
-            <h3 className="text-lg font-semibold text-rose-400">Something went wrong</h3>
+            <AlertCircle className={`w-5 h-5 ${isStopped ? 'text-amber-400' : 'text-rose-400'}`} />
+            <h3 className={`text-lg font-semibold ${isStopped ? 'text-amber-400' : 'text-rose-400'}`}>
+              {isStopped ? 'Research stopped' : 'Something went wrong'}
+            </h3>
           </div>
-          <p className="text-[#A1A1AA] mb-6">{error}</p>
-          <Button variant="ghost" onClick={() => router.push('/')} className="text-[#A1A1AA]">
-            ← Try a different query
-          </Button>
+          <p className="text-[#A1A1AA] mb-6">{isStopped ? 'The pipeline was stopped before completing.' : error}</p>
+          <div className="flex flex-wrap gap-3">
+            {isStopped && activeSearchId && (
+              <Button
+                variant="ghost"
+                onClick={() => router.push(`/results/${activeSearchId}`)}
+                className="text-amber-300 hover:text-amber-200 border border-amber-500/20 hover:border-amber-500/40"
+              >
+                View partial results →
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => router.push('/')} className="text-[#A1A1AA]">
+              ← New search
+            </Button>
+          </div>
         </motion.div>
       )
     }
@@ -642,12 +681,31 @@ function ResearchPageContent() {
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.2 }}
+          className="space-y-4"
         >
           {showReddit && redditThreads.length > 0 ? (
             <RedditFetchGrid threads={redditThreads} />
           ) : (
             <AnalyzerAnimation />
           )}
+          <div className="flex justify-end pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleStop}
+              disabled={stopping}
+              className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 transition-all"
+            >
+              {stopping ? (
+                <>
+                  <div className="w-3.5 h-3.5 border border-rose-400 border-t-transparent rounded-full animate-spin mr-2" />
+                  Stopping…
+                </>
+              ) : (
+                'Stop Research'
+              )}
+            </Button>
+          </div>
         </motion.div>
       )
     }

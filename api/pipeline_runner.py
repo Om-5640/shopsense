@@ -37,13 +37,18 @@ class PipelineSession:
         self.search_id = search_id
         self.query = query
         self.events: queue.Queue = queue.Queue()
-        self.status = "pending"   # pending | running | done | error
+        self.status = "pending"   # pending | running | done | error | cancelled
         self.result: Optional[dict] = None
         self.error: Optional[str] = None
         self._created_at = time.time()
+        self._cancelled = False
+        # All events emitted so far — lets reconnected clients catch up
+        self._event_log: list[dict] = []
 
     def emit(self, event_type: str, data: dict) -> None:
-        self.events.put({"type": event_type, "data": data})
+        item = {"type": event_type, "data": data}
+        self._event_log.append(item)
+        self.events.put(item)
 
     def emit_log(self, message: str) -> None:
         self.emit("log", {"message": message})
@@ -51,6 +56,12 @@ class PipelineSession:
     def finish(self) -> None:
         """Signal that the SSE stream is over."""
         self.events.put(None)
+
+    def cancel(self) -> None:
+        """Request cancellation. The pipeline thread checks this between stages."""
+        self._cancelled = True
+        self.status = "cancelled"
+        self.finish()
 
 
 def create_session(search_id: str, query: str) -> "PipelineSession":
@@ -63,6 +74,16 @@ def create_session(search_id: str, query: str) -> "PipelineSession":
 def get_session(search_id: str) -> Optional["PipelineSession"]:
     with _sessions_lock:
         return _sessions.get(search_id)
+
+
+def cancel_session(search_id: str) -> bool:
+    """Cancel a running session. Returns True if the session existed."""
+    with _sessions_lock:
+        session = _sessions.get(search_id)
+    if session:
+        session.cancel()
+        return True
+    return False
 
 
 def cleanup_old_sessions(max_age_hours: int = 6) -> int:
@@ -180,6 +201,11 @@ def _build_research_text(analysis: dict, sources: list) -> str:
     return "\n".join(parts)
 
 
+def _check_cancelled(session: "PipelineSession") -> None:
+    if session._cancelled:
+        raise RuntimeError("Research stopped by user.")
+
+
 def _execute_pipeline(
     session: "PipelineSession",
     category: str,
@@ -241,6 +267,7 @@ def _execute_pipeline(
         "count": len(reddit_threads),
         "elapsed_s": _stage_timings["reddit_fetch"],
     })
+    _check_cancelled(session)
 
     # ---- Stage 2: Review fetch ----
     review_pages: list = []
@@ -257,6 +284,7 @@ def _execute_pipeline(
             "count": len(review_pages),
             "elapsed_s": _stage_timings["review_fetch"],
         })
+        _check_cancelled(session)
 
     if not reddit_threads and not review_pages:
         session.emit("error", {"message": "No sources fetched. Try a different query."})
@@ -287,6 +315,7 @@ def _execute_pipeline(
         "count": len(thread_summaries),
         "elapsed_s": _stage_timings["summarize"],
     })
+    _check_cancelled(session)
 
     # ---- Stage 4: Main analysis aggregation ----
     _t0 = time.time()
@@ -306,6 +335,7 @@ def _execute_pipeline(
         "materials_found": len(materials),
         "elapsed_s": _stage_timings["analyze"],
     })
+    _check_cancelled(session)
 
     if not products:
         session.emit("error", {"message": "No specific products found in research."})

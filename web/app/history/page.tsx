@@ -13,6 +13,7 @@ import {
   Filter,
   MapPin,
   PackageSearch,
+  Radio,
 } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
@@ -51,12 +52,28 @@ export default function HistoryPage() {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [history, setHistory] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(true)
+  const [activeSearch, setActiveSearch] = useState<{ id: string; query: string } | null>(null)
 
   useEffect(() => {
     listSearches(100)
       .then(setHistory)
       .catch(() => toast.error('Could not load history'))
       .finally(() => setLoading(false))
+  }, [])
+
+  // Check localStorage for an ongoing search the user may have navigated away from
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('shopsense_active_search')
+      if (!raw) return
+      const parsed = JSON.parse(raw) as { id: string; query: string; ts: number }
+      // Only show if started within the last 2 hours
+      if (Date.now() - parsed.ts < 2 * 60 * 60 * 1000) {
+        setActiveSearch({ id: parsed.id, query: parsed.query })
+      } else {
+        localStorage.removeItem('shopsense_active_search')
+      }
+    } catch { /* ignore */ }
   }, [])
 
   const categories = [...new Set(history.map((h) => h.category))]
@@ -92,6 +109,30 @@ export default function HistoryPage() {
 
       <main className="flex-1 relative z-10">
         <div className="max-w-5xl mx-auto px-4 py-8">
+          {/* Active research banner */}
+          {activeSearch && (
+            <motion.div
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-violet-500/30 bg-violet-500/5 px-5 py-4"
+            >
+              <div className="flex items-center gap-3">
+                <Radio className="w-4 h-4 text-violet-400 animate-pulse" />
+                <div>
+                  <p className="text-sm font-medium text-violet-300">Research in progress</p>
+                  <p className="text-xs text-[#71717A] truncate max-w-[260px]">{activeSearch.query}</p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => router.push(`/research/watch/${activeSearch.id}`)}
+                className="bg-violet-600 hover:bg-violet-500 shrink-0"
+              >
+                Watch Live
+              </Button>
+            </motion.div>
+          )}
+
           {/* Page header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
@@ -171,8 +212,14 @@ export default function HistoryPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ delay: index * 0.04 }}
-                    className="group relative rounded-2xl bg-white/[0.02] border border-white/[0.06] p-5 hover:border-violet-500/30 hover:shadow-premium transition-all duration-300"
+                    className={`group relative rounded-2xl bg-white/[0.02] border p-5 hover:shadow-premium transition-all duration-300 ${item.status === 'running' ? 'border-violet-500/30 bg-violet-500/[0.02]' : 'border-white/[0.06] hover:border-violet-500/30'}`}
                   >
+                    {item.status === 'running' && (
+                      <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                        <span className="text-xs text-violet-400">Live</span>
+                      </div>
+                    )}
                     <h3 className="text-[#FAFAFA] font-medium pr-8 mb-3 line-clamp-2">
                       {item.query}
                     </h3>
@@ -208,15 +255,27 @@ export default function HistoryPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => router.push(`/results/${item.id}`)}
-                        className="flex-1 text-[#A1A1AA] hover:text-[#FAFAFA]"
-                      >
-                        Open
-                        <ArrowRight className="w-4 h-4 ml-1" />
-                      </Button>
+                      {item.status === 'running' ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => router.push(`/research/watch/${item.id}`)}
+                          className="flex-1 text-violet-300 hover:text-violet-200 border border-violet-500/20"
+                        >
+                          <Radio className="w-3.5 h-3.5 mr-1.5 animate-pulse" />
+                          Watch Live
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => router.push(`/results/${item.id}`)}
+                          className="flex-1 text-[#A1A1AA] hover:text-[#FAFAFA]"
+                        >
+                          Open
+                          <ArrowRight className="w-4 h-4 ml-1" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"

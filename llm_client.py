@@ -438,7 +438,8 @@ RESEARCH TEXT (extract specific product names from this):
 List the specific products mentioned (brand + model). Return JSON only."""
 
     try:
-        raw = run_agent("main_analyzer", user_prompt=simple_prompt, system=SIMPLE_SYSTEM)
+        from agents import run_agent as _run_agent
+        raw = _run_agent("main_analyzer", user_prompt=simple_prompt, system=SIMPLE_SYSTEM)
         parsed = _try_repair_json(raw)
         normalized = normalize_analysis(parsed)
         return normalized.get("products", [])

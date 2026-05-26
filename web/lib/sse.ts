@@ -13,9 +13,10 @@ export interface SSEHandlers {
   onDone: (searchId: string) => void
 }
 
-export function connectSSE(searchId: string, handlers: SSEHandlers): () => void {
+export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = false): () => void {
   const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-  const es = new EventSource(`${BASE}/api/search/${searchId}/stream`)
+  const url = `${BASE}/api/search/${searchId}/stream${reconnect ? '?reconnect=true' : ''}`
+  const es = new EventSource(url)
 
   es.onmessage = (evt) => {
     if (evt.data === '[DONE]') {

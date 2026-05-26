@@ -110,6 +110,11 @@ export async function getSearchResult(id: string): Promise<SearchResult> {
   return _parseSearch(data)
 }
 
+export async function cancelSearch(id: string): Promise<{ cancelled: boolean }> {
+  const { data } = await client.post(`/api/search/${id}/cancel`)
+  return data
+}
+
 export async function listSearches(limit = 50, offset = 0): Promise<SearchResult[]> {
   const { data } = await client.get('/api/searches', { params: { limit, offset } })
   return (data.searches as SearchResult[]).map(_parseSearch)

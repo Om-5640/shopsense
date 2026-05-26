@@ -56,7 +56,7 @@ for _p in [str(_API_DIR), str(_ROOT)]:
 from db import init_db, create_search, update_search, get_search, list_searches
 from db import get_profile, save_profile_db
 import logging as _logging
-from pipeline_runner import create_session, start_pipeline, get_session, cleanup_old_sessions
+from pipeline_runner import create_session, start_pipeline, get_session, cancel_session, cleanup_old_sessions
 
 _logger = _logging.getLogger(__name__)
 
@@ -296,13 +296,31 @@ def start_search(req: SearchRequest) -> dict:
 
 
 @app.get("/api/search/{search_id}/stream")
-async def stream_search(search_id: str) -> StreamingResponse:
+async def stream_search(search_id: str, reconnect: bool = Query(False)) -> StreamingResponse:
     session = get_session(search_id)
     if not session:
+        # Session may have finished and been evicted — tell the client to fetch results
+        row = get_search(search_id)
+        if row and row.get("status") == "done":
+            async def _already_done():
+                yield f"data: {json.dumps({'type': 'done', 'data': {'search_id': search_id, 'from_cache': False}})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_already_done(), media_type="text/event-stream",
+                                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         raise HTTPException(404, "Search session not found. It may have expired.")
 
     async def event_generator() -> AsyncGenerator[str, None]:
         loop = asyncio.get_event_loop()
+
+        # Reconnect: replay the event log so the client catches up on missed events
+        if reconnect and session._event_log:
+            for item in list(session._event_log):
+                yield f"data: {json.dumps(item)}\n\n"
+            # If session already finished, close immediately
+            if session.status in ("done", "error", "cancelled"):
+                yield "data: [DONE]\n\n"
+                return
+
         while True:
             try:
                 item = await loop.run_in_executor(None, _drain_with_timeout, session)
@@ -336,6 +354,17 @@ def get_search_result(search_id: str) -> dict:
     if not row:
         raise HTTPException(404, "Search not found")
     return row
+
+
+@app.post("/api/search/{search_id}/cancel")
+def cancel_search_endpoint(search_id: str) -> dict:
+    """Stop a running pipeline. Idempotent — safe to call even if already done."""
+    cancelled = cancel_session(search_id)
+    try:
+        update_search(search_id, status="cancelled")
+    except Exception:
+        pass
+    return {"cancelled": cancelled, "search_id": search_id}
 
 
 @app.get("/api/searches")
