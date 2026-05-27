@@ -200,8 +200,19 @@ def summarize_user_profile(current_category: Optional[str] = None) -> str:
     if not signals:
         return ""
 
-    strong = [s for s in signals if s.get("strength") == "strong"]
-    moderate = [s for s in signals if s.get("strength") == "moderate"]
+    def category_applies(signal_category: str) -> bool:
+        hint = (signal_category or "any").lower()
+        cat = (current_category or "").lower()
+        if hint == "any" or not cat:
+            return True
+        return hint == cat or cat.startswith(f"{hint}/") or cat.startswith(f"{hint}-")
+
+    relevant = [s for s in signals if category_applies(s.get("category", ""))]
+    if not relevant:
+        return ""
+
+    strong = [s for s in relevant if s.get("strength") == "strong"]
+    moderate = [s for s in relevant if s.get("strength") == "moderate"]
 
     lines = ["Remembered user preferences (from past searches):"]
     for s in strong[:8]:

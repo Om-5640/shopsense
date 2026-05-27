@@ -76,6 +76,7 @@ type Phase =
   | 'detecting'
   | 'disambiguation'
   | 'region'
+  | 'profile_choice'
   | 'interview'
   | 'rubric_building'
   | 'rubric_confirm'
@@ -100,6 +101,7 @@ function stageStatus(phase: Phase, stageId: string): StageStatus {
     detecting:      'detecting',
     disambiguation: 'detecting',
     region:         'detecting',
+    profile_choice: 'interview',
     interview:      'interview',
     rubric_building:'rubric',
     rubric_confirm: 'rubric',
@@ -116,6 +118,11 @@ function stageStatus(phase: Phase, stageId: string): StageStatus {
 }
 
 // ─── Main content ─────────────────────────────────────────────────────────────
+
+function categoryLabel(cat: string) {
+  if (!cat) return 'this category'
+  return cat.charAt(0).toUpperCase() + cat.slice(1).replace(/[-/]/g, ' > ')
+}
 
 function ResearchPageContent() {
   const router = useRouter()
@@ -149,6 +156,7 @@ function ResearchPageContent() {
   const [waiting, setWaiting] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null)
   const [memCtx, setMemCtx] = useState<MemoryContext | null>(null)
+  const [savedProfile, setSavedProfile] = useState<Record<string, unknown> | null>(null)
 
   // Rubric state
   const [rubric, setRubric] = useState<Rubric | null>(null)
@@ -167,6 +175,13 @@ function ResearchPageContent() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const sseCleanupRef = useRef<(() => void) | null>(null)
   const profileRef = useRef<Record<string, unknown> | null>(null)
+  const pendingProfileSetupRef = useRef<{
+    cat: string
+    reg: string
+    pNoun: string
+    criteria: Criterion[]
+    preQA: QAEntry[]
+  } | null>(null)
   const hasInitRef = useRef(false)
 
   // Redirect if no query
@@ -212,9 +227,9 @@ function ResearchPageContent() {
 
       if (existing) {
         // Skip interview — build rubric directly from saved profile
-        profileRef.current = existing
-        setQaHistory(existing.interview ?? [])
-        await buildRubric(cat, crit, existing, reg)
+        pendingProfileSetupRef.current = { cat, reg, pNoun, criteria: crit, preQA }
+        setSavedProfile(existing)
+        setPhase('profile_choice')
       } else {
         // Start interview — seed with any pre-answered QA from disambiguation
         if (preQA.length > 0) setQaHistory(preQA)
@@ -227,6 +242,36 @@ function ResearchPageContent() {
   }, [query])
 
   // ── Ask next interview question ────────────────────────────────────────────
+  async function handleUseSavedProfile() {
+    const setup = pendingProfileSetupRef.current
+    if (!setup || !savedProfile) return
+    const profile: Record<string, unknown> = {
+      ...savedProfile,
+      category: setup.cat,
+      primary_noun: setup.pNoun || setup.cat.split('/').pop() || '',
+    }
+    setSavedProfile(null)
+    pendingProfileSetupRef.current = null
+    profileRef.current = profile
+    setQaHistory((profile.interview as QAEntry[] | undefined) ?? [])
+    setMessages([])
+    await buildRubric(setup.cat, setup.criteria, profile, setup.reg)
+  }
+
+  async function handleStartFreshInterview() {
+    const setup = pendingProfileSetupRef.current
+    if (!setup) return
+    setSavedProfile(null)
+    pendingProfileSetupRef.current = null
+    profileRef.current = null
+    setQaHistory(setup.preQA)
+    setMessages([])
+    setCurrentQuestion(null)
+    setCurrentQ(setup.preQA.length)
+    setPhase('interview')
+    await askNextQuestion(setup.cat, setup.criteria, setup.preQA, setup.preQA.length + 1)
+  }
+
   async function askNextQuestion(cat: string, crit: Criterion[], history: QAEntry[], qNum: number) {
     setWaiting(true)
     try {
@@ -294,7 +339,14 @@ function ResearchPageContent() {
     setWaiting(true)
     try {
       const { preferences_summary } = await summarizeInterview(cat, history)
-      const prof = { interview: history, preferences_summary, region }
+      const prof = {
+        category: cat,
+        primary_noun: primaryNoun || cat.split('/').pop() || '',
+        source_query: query,
+        interview: history,
+        preferences_summary,
+        region,
+      }
       profileRef.current = prof
       await saveProfile(cat, prof)
       await buildRubric(cat, crit, prof, region)
@@ -599,6 +651,52 @@ function ResearchPageContent() {
                 {r.label}
               </button>
             ))}
+          </div>
+        </motion.div>
+      )
+    }
+
+    if (phase === 'profile_choice' && savedProfile) {
+      const savedAnswers = Array.isArray(savedProfile.interview) ? savedProfile.interview.length : 0
+      const savedSummary =
+        typeof savedProfile.preferences_summary === 'string'
+          ? savedProfile.preferences_summary
+          : 'Saved answers are available for this category.'
+
+      return (
+        <motion.div
+          key="profile_choice"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-8"
+        >
+          <h3 className="text-lg font-semibold text-[#FAFAFA] mb-2">Use your saved answers?</h3>
+          <p className="text-[#A1A1AA] mb-5">
+            I found previous feedback for {categoryLabel(category || pendingProfileSetupRef.current?.cat || 'this category')}.
+            You can reuse it or answer fresh questions for this search.
+          </p>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-[#FAFAFA]">Saved feedback</span>
+              <Badge variant="outline" className="border-white/[0.1] text-[#A1A1AA]">
+                {savedAnswers} answers
+              </Badge>
+            </div>
+            <p className="text-sm text-[#A1A1AA] line-clamp-4 whitespace-pre-line">{savedSummary}</p>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Button onClick={handleUseSavedProfile} className="h-12 bg-violet-600 hover:bg-violet-500">
+              <Check className="w-4 h-4 mr-2" />
+              Use saved feedback
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={handleStartFreshInterview}
+              className="h-12 border border-white/[0.08] text-[#FAFAFA] hover:bg-white/[0.05]"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              Answer again
+            </Button>
           </div>
         </motion.div>
       )

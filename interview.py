@@ -89,6 +89,26 @@ CATEGORY_QUESTION_TEMPLATES: dict[str, list[str]] = {
         "Budget range?",
         "Any connectivity requirements (USB-C PD, HDMI 2.1)?",
     ],
+    "electronics/keyboard-mechanical": [
+        "What will you use it for most - typing, coding, gaming, or a mix?",
+        "Which layout do you prefer - full-size, TKL, 75%, 65%, or compact?",
+        "Switch preference - linear, tactile, clicky, or not sure yet?",
+        "Do you need wireless/Bluetooth, or is wired fine?",
+        "How important is noise level - quiet enough for shared spaces, or any sound is okay?",
+        "Do you care about hot-swappable switches or customizability?",
+        "Any must-have features like RGB, macro keys, knob, or software support?",
+        "What's your budget range?",
+    ],
+    "electronics/keyboard": [
+        "What will you use it for most - typing, coding, gaming, or a mix?",
+        "Do you specifically want mechanical switches, low-profile keys, or a quieter membrane/scissor keyboard?",
+        "Which layout do you prefer - full-size, TKL, 75%, 65%, or compact?",
+        "Do you need wireless/Bluetooth, or is wired fine?",
+        "How important is noise level - quiet enough for shared spaces, or any sound is okay?",
+        "Any must-have features like RGB, macro keys, knob, or software support?",
+        "Do you need compatibility with Windows, macOS, iPad, or multiple devices?",
+        "What's your budget range?",
+    ],
     "bedding/mattress": [
         "What's your primary sleeping position — side, back, stomach, or combo?",
         "Do you sleep hot or cold?",
@@ -148,9 +168,10 @@ def _get_template_questions(category: str) -> list[str]:
     # Exact match first
     if cat in CATEGORY_QUESTION_TEMPLATES:
         return list(CATEGORY_QUESTION_TEMPLATES[cat])
-    # Prefix match
+    # Specific-prefix match only. Avoid matching broad domains like
+    # electronics/* to whichever electronics template appears first.
     for key, questions in CATEGORY_QUESTION_TEMPLATES.items():
-        if cat.startswith(key) or key.startswith(cat.split("/")[0]):
+        if cat.startswith(f"{key}/") or cat.startswith(f"{key}-"):
             return list(questions)
     return []
 

@@ -87,6 +87,11 @@ def detect_category(query: str) -> dict:
     Cached so repeat queries are free.
     """
     cache_key = query.lower().strip()
+    rule_based = _rule_based_result(cache_key)
+    if rule_based is not None:
+        cache.set("category", cache_key, rule_based)
+        return rule_based
+
     cached = cache.get("category", cache_key)
     if cached is not None:
         return cached
@@ -161,6 +166,42 @@ def _fallback_result() -> dict:
         "needs_disambiguation": False,
         "options": [],
     }
+
+
+def _rule_based_result(query: str) -> dict | None:
+    """High-confidence fixes for common product nouns that must not drift."""
+    if re.search(r"\bkeyboard(s)?\b", query):
+        if re.search(r"\bmechanical\b|\bhot[-\s]?swappable\b|\bswitch(?:es)?\b", query):
+            return {
+                "category": "electronics/keyboard-mechanical",
+                "primary_noun": "mechanical keyboard",
+                "confidence": "high",
+                "needs_disambiguation": False,
+                "options": [],
+            }
+
+        return {
+            "category": "electronics/keyboard",
+            "primary_noun": "keyboard",
+            "confidence": "medium",
+            "needs_disambiguation": True,
+            "options": [
+                {
+                    "slug": "electronics/keyboard-mechanical",
+                    "label": "Mechanical keyboard for typing, coding, or gaming",
+                },
+                {
+                    "slug": "electronics/keyboard-wireless",
+                    "label": "Wireless productivity keyboard for office or multi-device use",
+                },
+                {
+                    "slug": "electronics/keyboard-ergonomic",
+                    "label": "Ergonomic keyboard for comfort and wrist posture",
+                },
+            ],
+        }
+
+    return None
 
 
 def category_to_filename(category: str) -> str:
