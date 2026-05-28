@@ -11,11 +11,14 @@ Improvements over v1:
 
 import os
 import json
+import logging
 import time
 import re
 import requests
 from typing import Any
 from dotenv import load_dotenv
+
+_logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -198,6 +201,12 @@ def format_sources_for_prompt(sources: list[dict], char_budget: int) -> str:
     full = "\n".join(sections)
     if len(full) <= char_budget:
         return full
+
+    # R-03: Warn when sources are truncated so we can diagnose missed data
+    _logger.warning(
+        "[R03] source text truncated: %d chars → %d chars budget (%d sources)",
+        len(full), char_budget, len(sources),
+    )
 
     # Trim each source proportionally
     per_source = char_budget // max(len(sources), 1)

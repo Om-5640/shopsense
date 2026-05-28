@@ -86,6 +86,11 @@ export function RubricConfirmation({
             <p className="text-xs text-[#71717A] mt-3 line-clamp-2">
               {criterion.rationale}
             </p>
+            {criterion.weight <= 2 && (
+              <p className="text-xs text-amber-500/80 mt-2">
+                Low weight — this factor will be nearly ignored in scoring
+              </p>
+            )}
           </motion.div>
         ))}
       </div>

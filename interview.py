@@ -20,7 +20,7 @@ PROFILES_DIR.mkdir(exist_ok=True)
 
 # Dynamic interview: ask until coverage is good or hard cap reached
 MAX_QUESTIONS = 14          # safety cap, never exceed
-MIN_QUESTIONS = 8           # always ask at least this many
+MIN_QUESTIONS = 3           # always ask at least this many
 COVERAGE_TARGET = 0.90      # stop when 90% of criteria addressed
 
 
@@ -375,6 +375,15 @@ Generate the next question (or set is_done=true if coverage is sufficient)."""
     except Exception as e:
         print(f"[interview] question gen failed: {e}")
         return {"question": "", "why_asking": "", "targets_criterion": "", "is_done": True}
+
+    # W-04: dedup guard — if LLM loops back to an already-targeted criterion after MIN_QUESTIONS, declare done
+    if not data.get("is_done") and len(previous_qa) >= MIN_QUESTIONS:
+        tc = data.get("targets_criterion", "")
+        if tc and tc != "general":
+            already_targeted = {qa.get("targets_criterion") for qa in previous_qa} - {None, "", "general"}
+            if tc in already_targeted:
+                print(f"[interview] W04: LLM re-targeted '{tc}' already covered — forcing is_done=True")
+                return {"question": "", "why_asking": "", "targets_criterion": tc, "is_done": True}
 
     return {
         "question": data.get("question", ""),

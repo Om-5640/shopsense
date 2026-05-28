@@ -142,18 +142,23 @@ import re  # needed for has_ambiguous_price
 
 
 def _query_variations(query: str) -> list[str]:
-    """Generate 3 query variations to broaden the thread pool."""
+    """Generate query variations to broaden the thread pool with semantic diversity."""
     region = detect_region(query)
     variations = [
         f"site:reddit.com {query}",
         f"site:reddit.com {query} recommendation",
-        f"site:reddit.com {query} which to buy",
+        f"site:reddit.com {query} review",
+        f"site:reddit.com {query} vs",
     ]
-    # If region detected, add a region-targeted variant
+    # Region-targeted variant for localized advice threads
     if region == "india":
         variations.append(f"site:reddit.com {query} india")
     elif region == "uk":
         variations.append(f"site:reddit.com {query} uk")
+    elif region == "australia":
+        variations.append(f"site:reddit.com {query} australia")
+    elif region in ("usa", "canada"):
+        variations.append(f"site:reddit.com {query} worth it")
     return variations
 
 

@@ -139,13 +139,14 @@ def start_pipeline(
 
 _PIPELINE_CACHE_TTL = 3600  # 1 hour
 
-def _pipeline_cache_key(query: str, category: str, rubric: dict) -> str:
-    """Deterministic cache key: hash of query + category + rubric weights."""
+def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict | None = None) -> str:
+    """Deterministic cache key: hash of query + category + rubric weights + user preferences."""
     weights = sorted(
         (c["name"], c["weight"])
         for c in rubric.get("weighted_criteria", [])
     )
-    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}"
+    pref = (profile or {}).get("preferences_summary", "") if profile else ""
+    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}|{pref}"
     return hashlib.md5(payload.encode()).hexdigest()
 
 
@@ -234,7 +235,7 @@ def _execute_pipeline(
     _stage_timings: dict[str, float] = {}
 
     # ---- Phase 8: Pipeline cache check ----
-    _cache_key = _pipeline_cache_key(query, category, rubric)
+    _cache_key = _pipeline_cache_key(query, category, rubric, profile)
     _cached_result = _load_pipeline_cache(_cache_key)
     if _cached_result:
         age_s = int(time.time() - _cached_result.get("_cached_at", 0))
@@ -329,6 +330,15 @@ def _execute_pipeline(
     products = analysis.get("products", [])
     materials = analysis.get("materials", [])
     _stage_timings["analyze"] = round(time.time() - _t0, 1)
+
+    # W-03: Log products whose names have no overlap with primary_noun (potential off-category)
+    import re as _re
+    _noun_words = {w for w in _re.findall(r'[a-z]{4,}', (primary_noun or "").lower())
+                   if w not in ('best', 'good', 'most', 'with', 'that', 'this', 'from')}
+    if _noun_words and len(products) > 3:
+        _off = [p["name"] for p in products if not any(w in p.get("name", "").lower() for w in _noun_words)]
+        if _off and len(_off) < len(products):
+            session.emit_log(f"[W03] {len(_off)} products may be off-category for '{primary_noun}': {_off[:3]}")
     session.emit("stage_done", {
         "stage": "analyze",
         "products_found": len(products),

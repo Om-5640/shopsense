@@ -152,7 +152,7 @@ function ResearchPageContent() {
   const [qaHistory, setQaHistory] = useState<QAEntry[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentQ, setCurrentQ] = useState(0)
-  const [totalQ] = useState(8)
+  const [totalQ] = useState(14)  // matches backend MAX_QUESTIONS; interview ends earlier via is_done
   const [waiting, setWaiting] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null)
   const [memCtx, setMemCtx] = useState<MemoryContext | null>(null)
@@ -182,7 +182,7 @@ function ResearchPageContent() {
     criteria: Criterion[]
     preQA: QAEntry[]
   } | null>(null)
-  const hasInitRef = useRef(false)
+  const hasInitRef = useRef<string | null>(null)
 
   // Redirect if no query
   useEffect(() => {
@@ -231,9 +231,20 @@ function ResearchPageContent() {
         setSavedProfile(existing)
         setPhase('profile_choice')
       } else {
-        // Start interview — seed with any pre-answered QA from disambiguation
-        if (preQA.length > 0) setQaHistory(preQA)
-        await askNextQuestion(cat, crit, preQA, preQA.length + 1)
+        // W-01: Check for a saved interview checkpoint (from a prior session that crashed mid-interview)
+        let startQA = preQA
+        try {
+          const ckptRaw = localStorage.getItem(`shopsense_ckpt_${query}`)
+          if (ckptRaw) {
+            const ckpt = JSON.parse(ckptRaw) as QAEntry[]
+            if (Array.isArray(ckpt) && ckpt.length > preQA.length) {
+              startQA = ckpt
+            }
+          }
+        } catch { /* ignore */ }
+        // Start interview — seed with checkpoint (or disambiguation pre-answers)
+        if (startQA.length > 0) setQaHistory(startQA)
+        await askNextQuestion(cat, crit, startQA, startQA.length + 1)
       }
     } catch (e) {
       handleError(`Setup failed: ${e instanceof Error ? e.message : e}`)
@@ -308,6 +319,8 @@ function ResearchPageContent() {
       { id: `a-${currentQ}`, role: 'user', content: answer },
     ])
     setCurrentQ((n) => n + 1)
+    // W-01: persist progress so a browser crash doesn't lose all answers
+    try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
 
     if (currentQuestion.is_done || currentQ >= totalQ) {
       await finishInterview(category, criteria, newHistory)
@@ -328,6 +341,7 @@ function ResearchPageContent() {
       ...prev.map((m) => ({ ...m, isTyping: false })),
       { id: `skip-${currentQ}`, role: 'user', content: '[Skipped]' },
     ])
+    try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
     if (currentQ >= totalQ) {
       await finishInterview(category, criteria, newHistory)
     } else {
@@ -338,6 +352,8 @@ function ResearchPageContent() {
   async function finishInterview(cat: string, crit: Criterion[], history: QAEntry[]) {
     setWaiting(true)
     try {
+      // W-01: clear interview checkpoint now that it completed
+      try { localStorage.removeItem(`shopsense_ckpt_${query}`) } catch { /* ignore */ }
       const { preferences_summary } = await summarizeInterview(cat, history)
       const prof = {
         category: cat,
@@ -488,12 +504,38 @@ function ResearchPageContent() {
     sseCleanupRef.current?.()
   }
 
-  // ── Run detection on mount ────────────────────────────────────────────────
+  // ── Run detection on mount (and when query param changes) ─────────────────
   useEffect(() => {
     if (!query) return
-    // Guard against React StrictMode double-invocation
-    if (hasInitRef.current) return
-    hasInitRef.current = true
+    // Guard against React StrictMode double-invocation and same-query re-fires.
+    // Using the query string as key means a changed query correctly re-initializes.
+    if (hasInitRef.current === query) return
+    hasInitRef.current = query
+    // Reset all state for the new query so stale data from a previous run doesn't bleed through
+    sseCleanupRef.current?.()
+    sseCleanupRef.current = null
+    setPhase('detecting')
+    setError(null)
+    setElapsedTime(0)
+    setDetection(null)
+    setCategory('')
+    setPrimaryNoun('')
+    setRegion('india')
+    setCriteria([])
+    setQaHistory([])
+    setMessages([])
+    setCurrentQ(0)
+    setCurrentQuestion(null)
+    setMemCtx(null)
+    setSavedProfile(null)
+    setRubric(null)
+    setRubricCriteria([])
+    setRedditThreads([])
+    setActiveSearchId(null)
+    setStopping(false)
+    setStages(INIT_STAGES)
+    profileRef.current = null
+    pendingProfileSetupRef.current = null
     ;(async () => {
       try {
         const d = await detectCategory(query)
