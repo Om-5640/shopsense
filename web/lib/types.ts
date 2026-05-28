@@ -237,3 +237,12 @@ export interface MemoryContext {
   profile_summary: string
   has_memory: boolean
 }
+
+export interface ProcessMessageResult {
+  intent: 'ANSWER' | 'QUESTION' | 'MIXED' | 'SKIP' | 'COMMAND' | 'UNCLEAR'
+  confidence: number
+  preference_fragment: string | null
+  question_answer: string | null
+  clarification_question: string | null
+  command_action: string | null
+}

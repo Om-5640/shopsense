@@ -143,6 +143,14 @@ class InterviewSummarizeRequest(BaseModel):
     qa_history: list[dict]
 
 
+class ProcessMessageRequest(BaseModel):
+    category: str
+    criteria: list[dict]
+    current_question: dict
+    message: str
+    qa_history: list[dict] = []
+
+
 class SearchRequest(BaseModel):
     query: str
     category: str
@@ -234,6 +242,12 @@ def interview_next(req: InterviewNextRequest) -> dict:
     if force_continue:
         result["is_done"] = False
     return result
+
+
+@app.post("/api/interview/process_message")
+def process_message_endpoint(req: ProcessMessageRequest) -> dict:
+    from interview import process_message
+    return process_message(req.category, req.criteria, req.current_question, req.message, req.qa_history)
 
 
 @app.post("/api/interview/summarize")

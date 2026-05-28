@@ -471,6 +471,127 @@ def run_interview(category: str, criteria: list[dict]) -> dict:
     return profile
 
 
+PROCESS_MESSAGE_SYSTEM = """You are an adaptive interview assistant classifying user messages during a product research interview.
+
+TASK: Classify what the user said and generate the appropriate response.
+
+INTENTS:
+ANSWER  — Clear preference signal (even brief/partial). Extract it cleanly.
+QUESTION — User asks what a term means, wants an explanation, or asks a clarifying question about the topic.
+MIXED   — Contains BOTH a preference AND a clarifying question in the same message.
+SKIP    — No preference / wants to skip: "skip", "don't care", "anything", "doesn't matter", "no idea", "not sure".
+COMMAND — Wants to end the interview: "recommend now", "show results", "enough questions", "stop asking", "done".
+UNCLEAR — Too vague to extract a preference: single "yes"/"maybe"/"ok" with no context, contradictions, non-sequiturs.
+
+RULES:
+- Prefer ANSWER over UNCLEAR when there's any preference signal, even partial
+- "I want something balanced" → UNCLEAR (too vague, needs narrowing)
+- "Camera should be decent" → UNCLEAR (decent is undefined — needs: social/video/low-light/casual?)
+- "I play games sometimes" → UNCLEAR (needs: major priority or occasional?)
+- "Gaming matters most, but what is refresh rate?" → MIXED (clear preference + question)
+- "What is OLED?" → QUESTION (pure question)
+- "I mainly care about camera and battery" → ANSWER
+
+For QUESTION and MIXED: 2-3 sentence plain-language explanation. No markdown. No extra text.
+For UNCLEAR: generate a clarification follow-up with 3-4 specific bullet-point options.
+For ANSWER/MIXED: extract the preference in 1 clean sentence (strip out the question part for MIXED).
+
+Return ONLY valid JSON (no markdown, no commentary):
+{
+  "intent": "ANSWER|QUESTION|MIXED|SKIP|COMMAND|UNCLEAR",
+  "confidence": 0.0-1.0,
+  "preference_fragment": "1-sentence preference or null",
+  "question_answer": "plain-language explanation or null",
+  "clarification_question": "follow-up with specific options or null",
+  "command_action": "finish or null"
+}"""
+
+
+_SKIP_EXACT = frozenset({
+    "skip", "next", "idc", "i don't care", "dont care", "no preference", "no pref",
+    "anything", "anything is fine", "doesn't matter", "doesnt matter", "no idea",
+    "not sure", "not important", "pass", "no strong preference", "i don't mind",
+})
+
+_COMMAND_EXACT = frozenset({
+    "recommend now", "show results", "enough questions", "done interviewing",
+    "start research", "stop interview", "show recommendations", "go ahead",
+    "enough", "stop asking", "just recommend", "recommend",
+})
+
+
+def process_message(
+    category: str,
+    criteria: list[dict],
+    current_question: dict,
+    message: str,
+    qa_history: list[dict],
+) -> dict:
+    """
+    Classify a user's interview message and return the appropriate action.
+
+    Returns dict with keys:
+        intent              : ANSWER | QUESTION | MIXED | SKIP | COMMAND | UNCLEAR
+        confidence          : float 0-1
+        preference_fragment : cleaned answer string (ANSWER/MIXED) or None
+        question_answer     : plain-language answer to user's question (QUESTION/MIXED) or None
+        clarification_question : targeted follow-up (UNCLEAR) or None
+        command_action      : "finish" (COMMAND) or None
+    """
+    msg = message.strip()
+    lower = msg.lower()
+
+    # Fast-path: unambiguous skip/command → skip LLM call
+    if lower in _SKIP_EXACT:
+        return {"intent": "SKIP", "confidence": 1.0, "preference_fragment": None,
+                "question_answer": None, "clarification_question": None, "command_action": None}
+
+    if lower in _COMMAND_EXACT:
+        return {"intent": "COMMAND", "confidence": 1.0, "preference_fragment": None,
+                "question_answer": None, "clarification_question": None, "command_action": "finish"}
+
+    # Build LLM context: criteria summary + recent history
+    criteria_text = "\n".join(
+        f"- {c['name']}: {c.get('label', '')} — {c.get('description', '')}"
+        for c in criteria
+    )
+    qa_summary = "\n".join(
+        f"Q: {qa['question']}\nA: {qa['answer']}"
+        for qa in qa_history[-4:]
+    ) if qa_history else "(none yet)"
+
+    prompt = f"""Category: {category}
+Current interview question: "{current_question.get('question', '')}"
+User's message: "{msg}"
+
+Available criteria (for disambiguation context):
+{criteria_text}
+
+Recent previous answers:
+{qa_summary}
+
+Classify the user's message and generate the appropriate response."""
+
+    try:
+        raw = run_agent("interview_classifier", user_prompt=prompt, system=PROCESS_MESSAGE_SYSTEM)
+        from llm_client import _try_repair_json
+        data = _try_repair_json(raw)
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data).__name__}")
+        return {
+            "intent": data.get("intent", "ANSWER"),
+            "confidence": float(data.get("confidence", 0.8)),
+            "preference_fragment": data.get("preference_fragment") or None,
+            "question_answer": data.get("question_answer") or None,
+            "clarification_question": data.get("clarification_question") or None,
+            "command_action": data.get("command_action") or None,
+        }
+    except Exception as e:
+        print(f"[interview] process_message failed: {e} — treating as ANSWER")
+        return {"intent": "ANSWER", "confidence": 0.5, "preference_fragment": msg,
+                "question_answer": None, "clarification_question": None, "command_action": None}
+
+
 def _summarize_preferences(category: str, qa_history: list[dict]) -> str:
     """Distill the interview into a tight summary for use in rubric generation."""
     if not qa_history:

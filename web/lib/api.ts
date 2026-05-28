@@ -14,6 +14,7 @@ import type {
   UserSignal,
   ProductMemory,
   MemoryContext,
+  ProcessMessageResult,
 } from './types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -60,6 +61,17 @@ export async function getNextQuestion(
     initial_query: initialQuery ?? '',
   })
   return data
+}
+
+export async function processInterviewMessage(body: {
+  category: string
+  criteria: Criterion[]
+  current_question: InterviewQuestion
+  message: string
+  qa_history: QAEntry[]
+}): Promise<ProcessMessageResult> {
+  const { data } = await client.post('/api/interview/process_message', body)
+  return data as ProcessMessageResult
 }
 
 export async function summarizeInterview(

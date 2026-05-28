@@ -30,11 +30,12 @@ import { AnalyzerAnimation } from '@/components/research/analyzer-animation'
 import { RedditFetchGrid } from '@/components/research/reddit-fetch-grid'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { Criterion, QAEntry, Rubric, MemoryContext, InterviewQuestion } from '@/lib/types'
+import type { Criterion, QAEntry, Rubric, MemoryContext, InterviewQuestion, ProcessMessageResult } from '@/lib/types'
 import {
   detectCategory,
   getCriteria,
   getNextQuestion,
+  processInterviewMessage,
   summarizeInterview,
   generateRubric,
   startSearch,
@@ -183,6 +184,8 @@ function ResearchPageContent() {
     preQA: QAEntry[]
   } | null>(null)
   const hasInitRef = useRef<string | null>(null)
+  const clarificationCountRef = useRef(0)  // how many clarification follow-ups asked for current Q
+  const inClarificationRef = useRef(false)  // next message should bypass intent detection
 
   // Redirect if no query
   useEffect(() => {
@@ -279,11 +282,15 @@ function ResearchPageContent() {
     setMessages([])
     setCurrentQuestion(null)
     setCurrentQ(setup.preQA.length)
+    clarificationCountRef.current = 0
+    inClarificationRef.current = false
     setPhase('interview')
     await askNextQuestion(setup.cat, setup.criteria, setup.preQA, setup.preQA.length + 1)
   }
 
   async function askNextQuestion(cat: string, crit: Criterion[], history: QAEntry[], qNum: number) {
+    clarificationCountRef.current = 0
+    inClarificationRef.current = false
     setWaiting(true)
     try {
       const q = await getNextQuestion(cat, crit, history, query)
@@ -303,21 +310,115 @@ function ResearchPageContent() {
     }
   }
 
-  // ── Handle user answer ────────────────────────────────────────────────────
+  // ── Handle user answer (with adaptive intent detection) ───────────────────
   async function handleSendMessage(answer: string) {
     if (!currentQuestion || waiting) return
+
+    // Show user message in chat immediately
+    setMessages((prev) => [
+      ...prev.map((m) => ({ ...m, isTyping: false })),
+      { id: `u-${Date.now()}`, role: 'user', content: answer },
+    ])
+
+    // Clarification mode: user answered our follow-up — treat as direct answer, skip detection
+    if (inClarificationRef.current) {
+      inClarificationRef.current = false
+      clarificationCountRef.current = 0
+      const entry: QAEntry = {
+        question: currentQuestion.question,
+        answer,
+        why_asked: currentQuestion.why_asking,
+        targets_criterion: currentQuestion.targets_criterion,
+      }
+      const newHistory = [...qaHistory, entry]
+      setQaHistory(newHistory)
+      setCurrentQ((n) => n + 1)
+      try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
+      if (currentQuestion.is_done || currentQ >= totalQ) {
+        await finishInterview(category, criteria, newHistory)
+      } else {
+        await askNextQuestion(category, criteria, newHistory, currentQ + 1)
+      }
+      return
+    }
+
+    // Classify intent via backend
+    setWaiting(true)
+    let result: ProcessMessageResult
+    try {
+      result = await processInterviewMessage({
+        category,
+        criteria,
+        current_question: currentQuestion,
+        message: answer,
+        qa_history: qaHistory,
+      })
+    } catch {
+      // API failure: fall back to treating as plain answer
+      result = { intent: 'ANSWER', confidence: 0.5, preference_fragment: null,
+                 question_answer: null, clarification_question: null, command_action: null }
+    } finally {
+      setWaiting(false)
+    }
+
+    // ── QUESTION: answer it and re-present the same question ─────────────────
+    if (result.intent === 'QUESTION') {
+      clarificationCountRef.current = 0
+      const responseText = result.question_answer
+        ? `${result.question_answer}\n\nBack to my question — ${currentQuestion.question}`
+        : currentQuestion.question
+      setMessages((prev) => [
+        ...prev,
+        { id: `qa-${Date.now()}`, role: 'assistant', content: responseText, isTyping: true },
+      ])
+      return
+    }
+
+    // ── UNCLEAR: ask one targeted clarification, then fall through next time ─
+    if (result.intent === 'UNCLEAR') {
+      if (clarificationCountRef.current < 1 && result.clarification_question) {
+        clarificationCountRef.current += 1
+        inClarificationRef.current = true
+        setMessages((prev) => [
+          ...prev,
+          { id: `clr-${Date.now()}`, role: 'assistant', content: result.clarification_question!, isTyping: true },
+        ])
+        return
+      }
+      // Already clarified once (or no clarification available) — store what we have and advance
+      clarificationCountRef.current = 0
+    }
+
+    // ── COMMAND: end the interview early with whatever answers we have ────────
+    if (result.intent === 'COMMAND') {
+      clarificationCountRef.current = 0
+      await finishInterview(category, criteria, qaHistory)
+      return
+    }
+
+    // ── ANSWER / MIXED / SKIP / fallback: store and advance ──────────────────
+    // For MIXED, show the clarification answer before advancing
+    if (result.intent === 'MIXED' && result.question_answer) {
+      setMessages((prev) => [
+        ...prev,
+        { id: `qa-mix-${Date.now()}`, role: 'assistant', content: result.question_answer!, isTyping: true },
+      ])
+    }
+
+    clarificationCountRef.current = 0
+    const storedAnswer =
+      result.intent === 'SKIP'
+        ? '[Skipped]'
+        : (result.preference_fragment || answer)
+
     const entry: QAEntry = {
       question: currentQuestion.question,
-      answer,
+      answer: storedAnswer,
       why_asked: currentQuestion.why_asking,
       targets_criterion: currentQuestion.targets_criterion,
     }
     const newHistory = [...qaHistory, entry]
     setQaHistory(newHistory)
-    setMessages((prev) => [
-      ...prev.map((m) => ({ ...m, isTyping: false })),
-      { id: `a-${currentQ}`, role: 'user', content: answer },
-    ])
     setCurrentQ((n) => n + 1)
     // W-01: persist progress so a browser crash doesn't lose all answers
     try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
@@ -536,6 +637,8 @@ function ResearchPageContent() {
     setStages(INIT_STAGES)
     profileRef.current = null
     pendingProfileSetupRef.current = null
+    clarificationCountRef.current = 0
+    inClarificationRef.current = false
     ;(async () => {
       try {
         const d = await detectCategory(query)
