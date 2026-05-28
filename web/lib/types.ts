@@ -168,6 +168,15 @@ export interface StageState {
   count?: number
 }
 
+// ── Structured user intent (Phase 3) ─────────────────────────────────────────
+export interface UserIntent {
+  hard_constraints: string[]
+  budget: string | null
+  preferences: string[]
+  exclusions: string[]
+  uncertainties: string[]
+}
+
 // Interview
 export interface QAEntry {
   question: string

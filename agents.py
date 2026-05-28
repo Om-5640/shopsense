@@ -63,10 +63,10 @@ AGENTS = {
     "preference_summarizer": {
         "provider": "mistral",
         "fallback_chain": ["gemini", "groq", "cerebras", _MASTER],
-        "temperature": 0.5,
-        "max_tokens": 512,
-        "json_mode": False,
-        "description": "Summarize interview Q&A into preference bullets",
+        "temperature": 0.3,
+        "max_tokens": 1024,
+        "json_mode": True,
+        "description": "Summarize interview Q&A into structured intent + text summary",
     },
     "rubric_generator": {
         "provider": "gemini",

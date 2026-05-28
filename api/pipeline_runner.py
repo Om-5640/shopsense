@@ -9,6 +9,7 @@ interactive input() calls. Category detection, interview, and region
 selection are handled by separate REST endpoints BEFORE this runs.
 """
 
+import re as _re
 import sys
 import hashlib
 import json
@@ -16,10 +17,49 @@ import logging
 import threading
 import queue
 import time
+import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
 _logger = logging.getLogger(__name__)
+
+# ── Token budget constants (Phase 7) ─────────────────────────────────────────
+# chars ≈ tokens * 4; these are conservative budgets leaving headroom for output.
+_TOKEN_BUDGET_CHARS = {
+    "groq":       24_000,
+    "cerebras":   24_000,
+    "gemini":    800_000,
+    "mistral":    96_000,
+    "openrouter": 80_000,
+}
+_DEFAULT_BUDGET_CHARS = 24_000   # safest assumption when provider unknown
+
+
+def _estimate_tokens(text: str) -> int:
+    """Approximate token count (4 chars ≈ 1 token for English)."""
+    return max(1, len(text) // 4)
+
+
+def _emit_token_warning(
+    session: "PipelineSession",
+    label: str,
+    text: str,
+    budget_chars: int,
+) -> str:
+    """
+    If `text` exceeds `budget_chars`, emit an SSE warning and trim to fit.
+    Returns the (possibly trimmed) text.
+    Phase 7: overflow warnings surfaced in the SSE stream so UI can show them.
+    """
+    if len(text) > budget_chars:
+        token_est = _estimate_tokens(text)
+        budget_tok = budget_chars // 4
+        session.emit_log(
+            f"[token_budget] {label}: ~{token_est:,} tokens exceeds limit ~{budget_tok:,}. "
+            f"Trimming to fit."
+        )
+        text = text[:budget_chars]
+    return text
 
 # Ensure the project root is importable from within api/
 _ROOT = Path(__file__).parent.parent
@@ -44,6 +84,16 @@ class PipelineSession:
         self._cancelled = False
         # All events emitted so far — lets reconnected clients catch up
         self._event_log: list[dict] = []
+        # Phase 11: pipeline diagnostics — populated during execution
+        self.stats: dict = {
+            "stage_timings": {},
+            "product_count": 0,
+            "thread_count": 0,
+            "dedup_removed": 0,
+            "llm_calls_estimated": 0,
+            "tokens_estimated": 0,
+            "warnings": [],
+        }
 
     def emit(self, event_type: str, data: dict) -> None:
         item = {"type": event_type, "data": data}
@@ -52,6 +102,9 @@ class PipelineSession:
 
     def emit_log(self, message: str) -> None:
         self.emit("log", {"message": message})
+        # Phase 11: capture token_budget warnings in stats for diagnostics
+        if "[token_budget]" in message and "exceeds" in message:
+            self.stats["warnings"].append(message)
 
     def finish(self) -> None:
         """Signal that the SSE stream is over."""
@@ -140,13 +193,22 @@ def start_pipeline(
 _PIPELINE_CACHE_TTL = 3600  # 1 hour
 
 def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict | None = None) -> str:
-    """Deterministic cache key: hash of query + category + rubric weights + user preferences."""
+    """
+    Deterministic cache key: hash of query + category + rubric weights + current-session interview.
+    Uses interview Q&A (not merged preferences_summary) to prevent cross-category memory signals
+    from invalidating the cache for an unrelated search.
+    """
     weights = sorted(
         (c["name"], c["weight"])
         for c in rubric.get("weighted_criteria", [])
     )
-    pref = (profile or {}).get("preferences_summary", "") if profile else ""
-    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}|{pref}"
+    # Fingerprint only the current-session interview answers, not the merged memory summary
+    interview = (profile or {}).get("interview", []) if profile else []
+    session_fingerprint = json.dumps(
+        [(qa.get("question", ""), qa.get("answer", "")) for qa in interview],
+        sort_keys=True,
+    )
+    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}|{session_fingerprint}"
     return hashlib.md5(payload.encode()).hexdigest()
 
 
@@ -170,6 +232,93 @@ def _save_pipeline_cache(key: str, result: dict) -> None:
         _cache.set("pipeline_result", key, to_store)
     except Exception:
         pass
+
+
+# ── Retrieval enrichment helpers (B3 + B4) ───────────────────────────────────
+
+_USAGE_PATTERNS: list[tuple[str, str]] = [
+    ("gaming",       "gaming"),
+    ("game",         "gaming"),
+    ("gym",          "gym workouts"),
+    ("workout",      "gym workouts"),
+    ("commut",       "commuting"),
+    ("travel",       "travel"),
+    ("office",       "office use"),
+    ("work from home", "remote work"),
+    ("running",      "running"),
+    ("study",        "studying"),
+    ("music",        "music listening"),
+    ("creative",     "creative work"),
+    ("photo",        "photography"),
+    ("video edit",   "video editing"),
+]
+
+
+def _build_retrieval_query(base_query: str, profile: dict) -> str:
+    """
+    Augment retrieval query with primary usage context extracted from preferences.
+    Adds 1 usage term (e.g., "gaming", "commuting") when clearly stated in the profile.
+    Never modifies the query if no strong signal is found.
+    """
+    if not isinstance(profile, dict):
+        return base_query
+    prefs = (profile.get("preferences_summary") or "").lower()
+    if not prefs:
+        return base_query
+    for keyword, hint in _USAGE_PATTERNS:
+        if keyword in prefs and hint.lower() not in base_query.lower():
+            enriched = f"{base_query} {hint}"
+            return enriched[:100]  # cap at 100 chars
+    return base_query
+
+
+def _build_analyzer_hint(profile: dict) -> str:
+    """
+    Build a compact preference hint for the main analyzer.
+    Prefers structured intent (hard_constraints first) when available.
+    Falls back to truncated text summary.
+    Max ~500 chars so it doesn't overwhelm the analyzer prompt.
+    """
+    if not isinstance(profile, dict):
+        return ""
+
+    intent = profile.get("intent")
+    if intent and isinstance(intent, dict):
+        parts = []
+        if intent.get("hard_constraints"):
+            parts.append("MUST: " + "; ".join(intent["hard_constraints"][:3]))
+        if intent.get("budget"):
+            parts.append(f"Budget: {intent['budget']}")
+        if intent.get("preferences"):
+            parts.append("Wants: " + "; ".join(intent["preferences"][:4]))
+        if intent.get("exclusions"):
+            parts.append("Excludes: " + "; ".join(intent["exclusions"][:2]))
+        if parts:
+            return "\n".join(parts)[:500]
+
+    # Fallback to text summary if no structured intent
+    prefs = (profile.get("preferences_summary") or "").strip()
+    return prefs[:400] if prefs else ""
+
+
+def _build_score_based_explanation(product: dict) -> str:
+    """
+    Deterministic (no-LLM) explanation from top/bottom scores.
+    Used for products outside the top-N LLM explanation window.
+    """
+    scores = product.get("scores", [])
+    if not scores:
+        return ""
+    by_contribution = sorted(scores, key=lambda s: s.get("weighted_contribution", 0), reverse=True)
+    top = by_contribution[0] if by_contribution else None
+    weak = [s for s in by_contribution if s.get("score", 5) <= 4]
+
+    parts = []
+    if top and top.get("score", 0) >= 7:
+        parts.append(f"Strong in {top['label'].lower()}")
+    if weak:
+        parts.append(f"lower {weak[-1]['label'].lower()}")
+    return ". ".join(parts) + "." if parts else ""
 
 
 def _build_research_text(analysis: dict, sources: list) -> str:
@@ -200,6 +349,76 @@ def _build_research_text(analysis: dict, sources: list) -> str:
             for d in s["discussions"][:20]:
                 parts.append(f"  - {d['text'][:600]}")
     return "\n".join(parts)
+
+
+def _dedup_threads(threads: list[dict]) -> list[dict]:
+    """
+    Remove near-duplicate Reddit threads by title word overlap.
+    Two threads are considered duplicates if >60% of their title words overlap.
+    Keeps the higher-scored thread in each duplicate pair.
+    Runs before summarization to avoid wasting API budget on repeated content.
+    """
+    if len(threads) <= 1:
+        return threads
+
+    # Sort by score descending so we always keep the better-scoring thread
+    ranked = sorted(threads, key=lambda t: t.get("score", 0), reverse=True)
+
+    _stop_words = {"the", "a", "an", "for", "in", "is", "are", "best", "good", "vs",
+                   "of", "to", "and", "or", "what", "how", "does", "which", "i", "my",
+                   "this", "that", "with", "by", "on", "at", "from", "be", "was", "has"}
+
+    seen_token_sets: list[set] = []
+    unique: list[dict] = []
+
+    for t in ranked:
+        title = (t.get("title") or "").lower()
+        tokens = {w for w in _re.findall(r"[a-z0-9]{3,}", title) if w not in _stop_words}
+        if not tokens:
+            unique.append(t)
+            seen_token_sets.append(tokens)
+            continue
+
+        is_dup = False
+        for seen in seen_token_sets:
+            if not seen:
+                continue
+            overlap = len(tokens & seen) / max(len(tokens | seen), 1)
+            if overlap > 0.60:
+                is_dup = True
+                break
+
+        if not is_dup:
+            unique.append(t)
+            seen_token_sets.append(tokens)
+
+    removed = len(threads) - len(unique)
+    if removed > 0:
+        _logger.info("[pipeline] dedup: removed %d near-duplicate threads (%d → %d)", removed, len(threads), len(unique))
+    return unique
+
+
+def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
+    """
+    Phase 11: Write a structured JSON log entry for this pipeline run.
+    Appended to logs/pipeline_YYYY-MM-DD.jsonl in the project root.
+    Non-fatal: any failure is silently swallowed.
+    """
+    try:
+        logs_dir = _ROOT / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        today = datetime.date.today().isoformat()
+        log_file = logs_dir / f"pipeline_{today}.jsonl"
+        entry = {
+            "search_id": search_id,
+            "query": query,
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            **stats,
+        }
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as _log_err:
+        _logger.debug("[pipeline_log] write failed (non-fatal): %s", _log_err)
 
 
 def _check_cancelled(session: "PipelineSession") -> None:
@@ -261,8 +480,13 @@ def _execute_pipeline(
         "label": "Researching Reddit",
         "total": limit,
     })
-    reddit_threads = fetch_all_threads(query, limit=limit)
+    enriched_query = _build_retrieval_query(query, profile)
+    if enriched_query != query:
+        session.emit_log(f"[retrieval] query enriched: '{query}' → '{enriched_query}'")
+    reddit_threads = fetch_all_threads(enriched_query, limit=limit, profile=profile)
     _stage_timings["reddit_fetch"] = round(time.time() - _t0, 1)
+    session.stats["thread_count"] = len(reddit_threads)
+    session.stats["stage_timings"]["reddit_fetch"] = _stage_timings["reddit_fetch"]
     session.emit("stage_done", {
         "stage": "reddit_fetch",
         "count": len(reddit_threads),
@@ -299,6 +523,16 @@ def _execute_pipeline(
         "total": len(reddit_threads),
     })
 
+    # Dedup near-identical threads before summarization to avoid wasting API budget
+    deduped_threads = _dedup_threads(reddit_threads)
+    _dedup_removed = len(reddit_threads) - len(deduped_threads)
+    session.stats["dedup_removed"] = _dedup_removed
+    session.stats["llm_calls_estimated"] += len(deduped_threads)  # one call per thread summary
+    if _dedup_removed > 0:
+        session.emit_log(
+            f"[dedup] removed {_dedup_removed} near-duplicate threads"
+        )
+
     def _on_thread_done(done: int, total: int, subreddit: str) -> None:
         session.emit("progress", {
             "stage": "summarize",
@@ -308,9 +542,10 @@ def _execute_pipeline(
         })
 
     thread_summaries = summarize_threads_parallel(
-        reddit_threads, query, progress_callback=_on_thread_done
+        deduped_threads, query, progress_callback=_on_thread_done
     )
     _stage_timings["summarize"] = round(time.time() - _t0, 1)
+    session.stats["stage_timings"]["summarize"] = _stage_timings["summarize"]
     session.emit("stage_done", {
         "stage": "summarize",
         "count": len(thread_summaries),
@@ -325,14 +560,19 @@ def _execute_pipeline(
         "label": "Analyzing Research",
     })
     primary_noun = options.get("primary_noun", category.split("/")[-1].replace("-", " "))
-    analysis = analyze_with_summaries(query, thread_summaries, review_pages,
-                                      primary_noun=str(primary_noun))
+    preference_hint = _build_analyzer_hint(profile)
+    analysis = analyze_with_summaries(
+        query, thread_summaries, review_pages,
+        primary_noun=str(primary_noun),
+        preference_hint=preference_hint,
+    )
     products = analysis.get("products", [])
     materials = analysis.get("materials", [])
     _stage_timings["analyze"] = round(time.time() - _t0, 1)
+    session.stats["stage_timings"]["analyze"] = _stage_timings["analyze"]
+    session.stats["llm_calls_estimated"] += 1  # one main_analyzer call
 
     # W-03: Log products whose names have no overlap with primary_noun (potential off-category)
-    import re as _re
     _noun_words = {w for w in _re.findall(r'[a-z]{4,}', (primary_noun or "").lower())
                    if w not in ('best', 'good', 'most', 'with', 'that', 'this', 'from')}
     if _noun_words and len(products) > 3:
@@ -354,7 +594,9 @@ def _execute_pipeline(
     # ---- Stage 4.5: Gap-fill rubric weights from research signal ----
     sources = normalize_all(reddit_threads, review_pages)
     research_text = _build_research_text(analysis, sources)
-    rubric = fill_criterion_gaps(rubric, category, profile, research_text)
+    # Phase 4: pass intent-aware user context so gap-filler sees hard constraints + budget
+    _user_ctx = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
+    rubric = fill_criterion_gaps(rubric, category, profile, research_text, user_context=_user_ctx)
 
     # ---- Stage 4.6: Cross-subreddit validation ----
     session.emit("stage_start", {
@@ -442,40 +684,76 @@ def _execute_pipeline(
             "detail": name,
         })
 
+    user_intent = (profile or {}).get("intent") if isinstance(profile, dict) else None
+
+    # Phase 7: emit token estimate + enforce budget on research_text before scoring
+    _rt_tokens = _estimate_tokens(research_text)
+    session.emit_log(f"[token_budget] research_text: ~{_rt_tokens:,} tokens entering scorer")
+    # Per-product budget handled inside scorer; trim total only when extreme
+    research_text = _emit_token_warning(
+        session, "research_text_total",
+        research_text,
+        _TOKEN_BUDGET_CHARS.get("gemini", 800_000),  # use Gemini limit as the ceiling
+    )
+
     scored = score_all_products(
-        products, rubric, research_text, progress_callback=_on_product_scored
+        products, rubric, research_text,
+        progress_callback=_on_product_scored,
+        user_intent=user_intent,
     )
     _stage_timings["scoring"] = round(time.time() - _t0, 1)
+    session.stats["stage_timings"]["scoring"] = _stage_timings["scoring"]
+    session.stats["product_count"] = len(scored)
+    # Estimate: ceil(products / 3) batch calls + top-5 explanation calls
+    import math as _math
+    session.stats["llm_calls_estimated"] += _math.ceil(len(products) / 3) + min(5, len(products))
+    session.stats["tokens_estimated"] = _estimate_tokens(research_text) * len(products) // 3
     session.emit("stage_done", {
         "stage": "scoring",
         "count": len(scored),
         "elapsed_s": _stage_timings["scoring"],
     })
 
-    # ---- Stage 5.5: Write "why this fits you" explanations for top 3 ----
+    # ---- Stage 5.5: Write personalized explanations ----
+    # Top 5: rich LLM explanations. Remaining: deterministic score-based fallback.
     session.emit("stage_start", {"stage": "explanations", "label": "Writing Explanations"})
     try:
         from agents import run_agent
-        profile_summary = profile.get("preferences_summary", "") if isinstance(profile, dict) else ""
-        for idx, product in enumerate(scored[:3]):
+        from prompt_builder import assemble_prompt as _assemble_prompt
+        # Phase 4: use intent-aware context (structured intent > preferences_summary)
+        user_ctx_text = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
+        _LLM_EXPLANATION_LIMIT = 5
+
+        # LLM explanations for top products
+        for idx, product in enumerate(scored[:_LLM_EXPLANATION_LIMIT]):
             criteria_scores = "\n".join(
                 f"- {s['label']}: {s['score']}/10 — {s['evidence']}"
                 for s in product.get("scores", [])[:6]
             )
-            expl_prompt = (
-                f"Category: {category}\n"
-                f"User's preferences: {profile_summary or '(none given)'}\n\n"
-                f"Product: {product['name']}\n"
-                f"Score: {product.get('percentage', 0):.0f}%\n"
-                f"Criterion scores:\n{criteria_scores}\n\n"
-                f"Write 2-3 sentences explaining WHY this product fits this specific user's stated "
-                f"preferences. Be personal and concrete. Start with the strongest reason."
-            )
+            # Phase 5: assembled prompt with dedup + budget
+            expl_prompt = _assemble_prompt([
+                ("task", (
+                    f"Category: {category}\n"
+                    f"Product: {product['name']}\n"
+                    f"Score: {product.get('percentage', 0):.0f}%\n"
+                    f"Criterion scores:\n{criteria_scores}\n\n"
+                    "Write 2-3 sentences explaining WHY this product fits this specific user's "
+                    "stated preferences. Be personal and concrete. Start with the strongest reason."
+                )),
+                ("user_context", f"User preferences:\n{user_ctx_text or '(none given)'}"),
+            ])
             try:
                 expl = run_agent("explanation_writer", user_prompt=expl_prompt)
                 scored[idx]["explanation"] = expl.strip()
             except Exception as e_err:
                 session.emit_log(f"[explanation] product {idx} failed: {e_err}")
+                scored[idx]["explanation"] = _build_score_based_explanation(product)
+
+        # Score-based fallback for remaining products
+        for idx in range(_LLM_EXPLANATION_LIMIT, len(scored)):
+            if not scored[idx].get("explanation"):
+                scored[idx]["explanation"] = _build_score_based_explanation(scored[idx])
+
     except Exception as expl_err:
         session.emit_log(f"[explanations] stage non-fatal: {expl_err}")
     session.emit("stage_done", {"stage": "explanations"})
@@ -510,7 +788,7 @@ def _execute_pipeline(
     # Phase 8: Save pipeline result to cache
     _save_pipeline_cache(_cache_key, session.result)
 
-    # Phase 7: Log total pipeline time
+    # Phase 7 + 11: Log total pipeline time with full diagnostics
     _total_elapsed = round(time.time() - _pipeline_start, 1)
     _timing_summary = ", ".join(f"{k}={v}s" for k, v in _stage_timings.items())
     _logger.info("[pipeline] TOTAL %ss | %s", _total_elapsed, _timing_summary)
@@ -532,4 +810,19 @@ def _execute_pipeline(
     except Exception as db_err:
         session.emit_log(f"[db] write failed (non-fatal): {db_err}")
 
-    session.emit("done", {"search_id": session.search_id, "elapsed_s": _total_elapsed})
+    # Phase 11: Finalize stats and emit with done event
+    session.stats["total_elapsed_s"] = _total_elapsed
+    session.stats["stage_timings"]["total"] = _total_elapsed
+    _logger.info(
+        "[pipeline] diagnostics: %d threads, %d products, ~%d LLM calls, ~%d tokens",
+        session.stats["thread_count"],
+        session.stats["product_count"],
+        session.stats["llm_calls_estimated"],
+        session.stats["tokens_estimated"],
+    )
+    _write_pipeline_log(session.search_id, session.query, session.stats)
+    session.emit("done", {
+        "search_id": session.search_id,
+        "elapsed_s": _total_elapsed,
+        "diagnostics": session.stats,
+    })

@@ -6,6 +6,9 @@
 # Stale pre-v9 example file superseded by .env.example
 env.example
 
+# ── Runtime logs ────────────────────────────────────────────────────────────────
+logs/
+
 # ── Database ────────────────────────────────────────────────────────────────────
 *.db
 *.db-journal

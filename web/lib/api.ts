@@ -15,6 +15,7 @@ import type {
   ProductMemory,
   MemoryContext,
   ProcessMessageResult,
+  UserIntent,
 } from './types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -77,7 +78,7 @@ export async function processInterviewMessage(body: {
 export async function summarizeInterview(
   category: string,
   qaHistory: QAEntry[],
-): Promise<{ preferences_summary: string }> {
+): Promise<{ preferences_summary: string; intent: UserIntent }> {
   const { data } = await client.post('/api/interview/summarize', {
     category,
     qa_history: qaHistory,

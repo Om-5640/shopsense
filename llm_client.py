@@ -304,7 +304,7 @@ def analyze_sources(query: str, sources: list[dict]) -> dict:
 
 
 def analyze_with_summaries(query: str, thread_summaries: list[dict], review_pages: list[dict],
-                           primary_noun: str = "") -> dict:
+                           primary_noun: str = "", preference_hint: str = "") -> dict:
     """
     NEW v5 flow: aggregate pre-summarized thread data (from parallel sub-agents)
     + raw review pages → ranked products.
@@ -342,7 +342,16 @@ def analyze_with_summaries(query: str, thread_summaries: list[dict], review_page
         f"Do NOT include related products. Only '{noun}' products.\n"
     ) if noun else ""
 
-    prompt = f"""USER'S QUERY: {query}{noun_constraint}
+    user_context = ""
+    if preference_hint:
+        # Keep compact — just enough for the analyzer to surface relevant products
+        hint_truncated = preference_hint[:300].strip()
+        user_context = (
+            f"\n\n📋 USER PREFERENCES (surface products that fit; flag obvious mismatches):\n"
+            f"{hint_truncated}"
+        )
+
+    prompt = f"""USER'S QUERY: {query}{noun_constraint}{user_context}
 
 You are aggregating research from multiple sources to recommend products.
 

@@ -227,7 +227,8 @@ def criteria(req: CriteriaRequest) -> dict:
 
 @app.post("/api/interview/next")
 def interview_next(req: InterviewNextRequest) -> dict:
-    from interview import generate_next_question, _identify_uncovered_criteria, MAX_QUESTIONS, MIN_QUESTIONS, COVERAGE_TARGET
+    from interview import (generate_next_question, _identify_uncovered_criteria,
+                           MAX_QUESTIONS, MIN_QUESTIONS, _dynamic_coverage_target)
 
     qa = req.qa_history
     force_continue = (len(qa) + 1) <= MIN_QUESTIONS
@@ -235,7 +236,8 @@ def interview_next(req: InterviewNextRequest) -> dict:
     if not force_continue:
         uncovered = _identify_uncovered_criteria(req.criteria, qa)
         coverage = (len(req.criteria) - len(uncovered)) / max(len(req.criteria), 1)
-        if coverage >= COVERAGE_TARGET or len(qa) >= MAX_QUESTIONS:
+        dyn_target = _dynamic_coverage_target(len(req.criteria))
+        if coverage >= dyn_target or len(qa) >= MAX_QUESTIONS:
             return {"question": "", "why_asking": "", "targets_criterion": "", "is_done": True}
 
     result = generate_next_question(req.category, req.criteria, qa, initial_query=req.initial_query)
@@ -252,9 +254,9 @@ def process_message_endpoint(req: ProcessMessageRequest) -> dict:
 
 @app.post("/api/interview/summarize")
 def interview_summarize(req: InterviewSummarizeRequest) -> dict:
-    from interview import _summarize_preferences
-    summary = _summarize_preferences(req.category, req.qa_history)
-    return {"preferences_summary": summary}
+    from interview import _summarize_and_extract_intent
+    summary, intent = _summarize_and_extract_intent(req.category, req.qa_history)
+    return {"preferences_summary": summary, "intent": intent}
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +283,18 @@ def generate_rubric_endpoint(body: dict) -> dict:
     if memory_context and isinstance(profile, dict):
         existing = profile.get("preferences_summary", "")
         if existing:
-            profile = {**profile, "preferences_summary": memory_context + "\n\n" + existing}
+            # Current-session interview ALWAYS takes precedence; memory is supplemental
+            profile = {**profile, "preferences_summary": (
+                f"{existing}\n\nAdditional context from past searches:\n{memory_context}"
+            )}
         else:
             profile = {**profile, "preferences_summary": memory_context}
+
+    # Carry intent from request body into profile if frontend sent it but profile didn't
+    if isinstance(profile, dict) and not profile.get("intent"):
+        req_intent = body.get("intent")
+        if req_intent and isinstance(req_intent, dict):
+            profile = {**profile, "intent": req_intent}
 
     rubric = generate_rubric(category, criteria, profile)
     return rubric
@@ -559,6 +570,34 @@ def providers_status() -> dict:
     """Detailed per-provider status: configured, session alive, circuit breaker state."""
     from agents import get_provider_status
     return {"providers": get_provider_status()}
+
+
+@app.get("/api/search/{search_id}/diagnostics")
+def get_diagnostics(search_id: str) -> dict:
+    """
+    Phase 11: Return pipeline diagnostics for a search.
+    Available while running (partial) and after completion (full).
+    """
+    from pipeline_runner import get_session as _get_session
+    import time as _time
+
+    session = _get_session(search_id)
+    if session:
+        return {
+            "search_id": search_id,
+            "status": session.status,
+            "elapsed_s": round(_time.time() - session._created_at, 1),
+            "stats": session.stats,
+        }
+    # Session evicted — return what we have from DB
+    row = get_search(search_id)
+    if not row:
+        raise HTTPException(404, "Search not found")
+    return {
+        "search_id": search_id,
+        "status": row.get("status"),
+        "stats": {},
+    }
 
 
 @app.get("/api/health")

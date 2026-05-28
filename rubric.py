@@ -9,6 +9,7 @@ Stored at rubrics/<category>.json so it can be reused/edited.
 
 import json
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
 from agents import run_agent
@@ -75,6 +76,29 @@ RULES:
 NO markdown, NO commentary, JSON only."""
 
 
+def _build_intent_context(profile: dict) -> str:
+    """
+    Extract a compact hard-constraints block from profile intent.
+    Returns empty string if no intent or no constraints.
+    Used to make hard requirements explicit in rubric/scorer prompts.
+    """
+    intent = profile.get("intent") if isinstance(profile, dict) else None
+    if not intent or not isinstance(intent, dict):
+        return ""
+    parts = []
+    if intent.get("hard_constraints"):
+        parts.append("HARD REQUIREMENTS (user said MUST/NEVER/required/allergic):")
+        for c in intent["hard_constraints"][:6]:
+            parts.append(f"  ⚠ {c}")
+    if intent.get("exclusions"):
+        parts.append("USER EXPLICITLY REJECTS:")
+        for e in intent["exclusions"][:4]:
+            parts.append(f"  ✗ {e}")
+    if intent.get("budget"):
+        parts.append(f"BUDGET: {intent['budget']}")
+    return "\n".join(parts) if parts else ""
+
+
 def generate_rubric(category: str, criteria: list[dict], profile: dict) -> dict:
     """Build a weighted rubric from criteria + profile."""
     criteria_text = "\n".join(
@@ -87,13 +111,20 @@ def generate_rubric(category: str, criteria: list[dict], profile: dict) -> dict:
         for qa in profile.get("interview", [])
     )
 
+    constraint_block = _build_intent_context(profile)
+    constraint_section = (
+        f"\n\n{constraint_block}\n\n"
+        "For criteria directly related to the above constraints, weight them 9-10. "
+        "For criteria violating exclusions, weight them 1-2 to penalize."
+    ) if constraint_block else ""
+
     prompt = f"""Category: {category}
 
 Criteria to weight:
 {criteria_text}
 
 User's preferences summary:
-{prefs}
+{prefs}{constraint_section}
 
 Full interview Q&A:
 {qa_text}
@@ -174,12 +205,67 @@ Be HONEST with weights. Don't default everything to 5. If a criterion is genuine
 NO markdown, NO commentary, JSON only."""
 
 
-def fill_criterion_gaps(rubric: dict, category: str, profile: dict, research_summary: str = "") -> dict:
+def _extract_criterion_relevant_snippet(text: str, criteria: list[dict], max_chars: int = 5000) -> str:
+    """
+    Select the most criterion-relevant paragraphs from research text instead of naive head truncation.
+    Scores each paragraph by how many criterion label/name keywords it contains,
+    then assembles top-scoring paragraphs in original order up to max_chars.
+    """
+    if not text:
+        return "(no research yet)"
+    if len(text) <= max_chars:
+        return text
+
+    # Build keyword set from criterion labels and snake_case names
+    keywords: set[str] = set()
+    for c in criteria:
+        for word in re.findall(r'\b\w{4,}\b', (c.get("label", "") + " " + c.get("name", "")).lower()):
+            keywords.add(word)
+
+    if not keywords:
+        return text[:max_chars]
+
+    paragraphs = re.split(r'\n\s*\n', text)
+
+    # Score each paragraph by keyword hits
+    scored: list[tuple[int, int, str]] = []
+    for i, para in enumerate(paragraphs):
+        para_lower = para.lower()
+        hits = sum(1 for kw in keywords if kw in para_lower)
+        scored.append((hits, i, para))
+
+    # Sort by relevance (desc), then original position (asc) as tiebreak
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    # Collect top paragraphs up to max_chars (preserving selection set)
+    selected_indices: set[int] = set()
+    total = 0
+    for _hits, idx, para in scored:
+        if total + len(para) + 2 > max_chars:
+            break
+        selected_indices.add(idx)
+        total += len(para) + 2
+
+    # Reconstruct in original paragraph order
+    kept = [para for i, para in enumerate(paragraphs) if i in selected_indices]
+    return "\n\n".join(kept) if kept else text[:max_chars]
+
+
+def fill_criterion_gaps(
+    rubric: dict,
+    category: str,
+    profile: dict,
+    research_summary: str = "",
+    user_context: str | None = None,
+) -> dict:
     """
     For criteria in the rubric that have default rationales ("not addressed in interview"),
     re-infer weights using category norms + research data instead of leaving them at 5.
 
     This eliminates the "all defaults are 5" problem when interview can't cover all criteria.
+
+    user_context: pre-built context string from _build_analyzer_hint(profile).
+    When provided, uses it (includes structured intent). Falls back to preferences_summary.
     """
     # Find criteria with default rationale
     defaulted = [
@@ -200,8 +286,9 @@ def fill_criterion_gaps(rubric: dict, category: str, profile: dict, research_sum
         f"- {c['name']}: {c['label']} ({c.get('description', '')})"
         for c in defaulted
     )
-    prefs = profile.get("preferences_summary", "")
-    research_snippet = research_summary[:5000] if research_summary else "(no research yet)"
+    # Phase 4: use pre-built intent-aware context when available
+    prefs = user_context if user_context is not None else profile.get("preferences_summary", "")
+    research_snippet = _extract_criterion_relevant_snippet(research_summary, defaulted, max_chars=5000)
 
     prompt = f"""Category: {category}
 

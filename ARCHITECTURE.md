@@ -7,14 +7,15 @@ Deep technical reference. For a high-level overview see [README.md](README.md).
 ## Table of Contents
 
 1. [Full Pipeline Flow](#1-full-pipeline-flow)
-2. [Agent Registry](#2-agent-registry)
-3. [LLM Provider Failover](#3-llm-provider-failover)
-4. [Memory Layer](#4-memory-layer)
-5. [Scoring Algorithm](#5-scoring-algorithm)
-6. [Database Schema](#6-database-schema)
-7. [API Endpoint Reference](#7-api-endpoint-reference)
-8. [Frontend Architecture](#8-frontend-architecture)
-9. [Key Design Decisions](#9-key-design-decisions)
+2. [Structured User Intent Model](#2-structured-user-intent-model)
+3. [Agent Registry](#3-agent-registry)
+4. [LLM Provider Failover](#4-llm-provider-failover)
+5. [Memory Layer](#5-memory-layer)
+6. [Scoring Algorithm](#6-scoring-algorithm)
+7. [Database Schema](#7-database-schema)
+8. [API Endpoint Reference](#8-api-endpoint-reference)
+9. [Frontend Architecture](#9-frontend-architecture)
+10. [Key Design Decisions](#10-key-design-decisions)
 
 ---
 
@@ -26,14 +27,30 @@ The pipeline runs in a background thread (`api/pipeline_runner.py`) and emits Se
 POST /api/search
   └─► pipeline_runner._execute_pipeline(search_id, query, category, rubric)
         │
-        ├─ [CACHE CHECK] md5(query|category|rubric_weights) → 1h TTL
-        │   hit → replay cached events, return immediately
+        ├─ [CACHE CHECK] SHA256(query|category|rubric_weights|interview_Q&A) → 4h TTL
+        │   Key uses interview Q&A only — NOT preferences_summary — so memory
+        │   augmentation never busts the cache (fix R2).
+        │   hit → replay cached result, return immediately
         │
-        ├─ Stage 1: reddit_fetch.fetch_reddit_threads(query, category, region)
-        │   ├── Build query variations (3-5 variants)
-        │   ├── Serper search for Reddit URLs (or PRAW if USE_PRAW=true)
-        │   ├── Fetch thread HTML, parse comment tree recursively
+        ├─ Stage 1: reddit_fetch.fetch_all_threads(enriched_query, limit, profile)
+        │   ├── _build_retrieval_query(query, profile) — appends usage pattern
+        │   │   from intent.preferences or preferences_summary to query
+        │   │
+        │   ├── _query_variations(query, profile) — profile-aware semantic variants:
+        │   │     [base, +recommendation, +review, +vs]
+        │   │     + usage pattern variant (gaming / gym / commuting / travel / …)
+        │   │     + budget variant if intent.budget is set
+        │   │     + region variant (india / uk / australia / worth it)
+        │   │
+        │   ├── Serper search for Reddit URLs across all variants (or PRAW if USE_PRAW=true)
+        │   ├── _score_and_rank_urls() — subreddit relevance + title token overlap
+        │   ├── fetch_thread_comments() — 2-pass: top + controversial sort, flatten tree
         │   └── Returns: list[Thread] (title, body, comments[], score)
+        │
+        ├─ Stage 1b: _dedup_threads(threads)
+        │   Removes near-duplicate Reddit threads before summarization.
+        │   Jaccard title-word overlap > 60% → keep higher-scored thread.
+        │   Saves ~1-3 LLM summarization calls per run.
         │
         ├─ Stage 2: thread_summarizer.summarize_threads_parallel(threads)
         │   ├── ThreadPoolExecutor(max_workers=5)
@@ -48,6 +65,8 @@ POST /api/search
         │   └── domain_blacklist skips domains with >70% failure rate
         │
         ├─ Stage 4: llm_client.analyze_sources(summaries + reviews, query, rubric)
+        │   ├── _build_analyzer_hint(profile) — prefers structured intent fields
+        │   │   (MUST/budget/preferences/exclusions) over raw text truncation
         │   ├── main_analyzer agent (gemini, 1M context)
         │   ├── Returns: {products[], materials[], summary}
         │   └── analysis_normalizer coerces any malformed LLM output
@@ -75,7 +94,10 @@ POST /api/search
         │       MentionResult: total_mentions, distinct_threads, distinct_comments,
         │                      positive, negative, neutral, sentiment_score, sentiment_records
         │
-        ├─ Stage 5: scorer.score_all_products(products, rubric, research_text)
+        ├─ Stage 5: scorer.score_all_products(products, rubric, research_text, user_intent)
+        │   ├── _build_constraint_context(user_intent) — injects hard_constraints
+        │   │   and exclusions as scoring overrides (score 1-3 on violated criteria)
+        │   ├── _format_criterion_line() — uses criterion.rationale over description
         │   ├── SCORING_MODE=fast  → pure heuristic (instant)
         │   ├── SCORING_MODE=hybrid → LLM top-10, heuristic rest
         │   └── SCORING_MODE=llm   → full LLM scoring
@@ -105,7 +127,72 @@ POST /api/search
 
 ---
 
-## 2. Agent Registry
+## 2. Structured User Intent Model
+
+Interview Q&A is summarized into a typed `UserIntent` object in a single LLM call.
+This replaces the old flat `preferences_summary` text blob as the primary carrier of user requirements.
+
+```python
+UserIntent = {
+    "hard_constraints": list[str],  # MUST/NEVER/required/allergic/can't/won't
+    "budget":           str | None, # "under ₹5000" / "$200 max" / null
+    "preferences":      list[str],  # clearly stated wants (not constraints)
+    "exclusions":       list[str],  # soft rejections ("prefers not in-ear")
+    "uncertainties":    list[str],  # hedged statements ("maybe", "I think")
+}
+```
+
+### How intent flows through the system
+
+```
+interview.py:_summarize_and_extract_intent()
+    └─► profile["intent"] = UserIntent
+
+profile["intent"]
+    ├─► rubric.py:_build_intent_context()
+    │     Adds "HARD REQUIREMENTS" + "USER EXPLICITLY REJECTS" + "BUDGET"
+    │     block to the rubric generation prompt → weights reflect actual requirements
+    │
+    ├─► pipeline_runner.py:_build_analyzer_hint()
+    │     Formats intent as MUST:/Budget:/Wants:/Excludes: lines for the
+    │     analyzer hint (prefers structured intent over raw text truncation)
+    │
+    ├─► pipeline_runner.py:_build_retrieval_query()
+    │     Extracts usage pattern from intent.preferences to enrich the
+    │     Reddit search query (e.g. "best earbuds" → "best earbuds gaming")
+    │
+    ├─► reddit_fetch.py:_query_variations()
+    │     Adds a usage-pattern variant and a budget variant to the
+    │     query variation set sent to Serper
+    │
+    └─► scorer.py:_build_constraint_context()
+          Injects hard_constraints + exclusions as per-product scoring
+          overrides: products that violate a constraint score 1-3 on the
+          relevant criterion regardless of research text
+```
+
+### Backward compatibility
+
+- `profile["preferences_summary"]` still set alongside `intent` for any
+  code that reads it.
+- `_summarize_preferences()` wrapper returns text only (used by old CLI paths).
+- Saved profiles without `intent` fall back gracefully — all intent-aware
+  functions gate on `profile.get("intent")`.
+
+### Memory safety (B2 fix)
+
+Memory context from past searches is appended **after** the current-session
+`preferences_summary`, never prepended:
+
+```python
+merged = f"{current_session_summary}\n\nAdditional context from past searches:\n{memory_context}"
+```
+
+Cross-category signals are filtered before injection to prevent leakage.
+
+---
+
+## 3. Agent Registry
 
 All agents are defined in `agents.py`. The agent name is the key; the value specifies the default provider, fallback chain, and behavior.
 
@@ -114,7 +201,7 @@ All agents are defined in `agents.py`. The agent name is the key; the value spec
 | `category_detector` | groq | cerebras→gemini→mistral→openrouter | Query → category slug + region |
 | `criteria_generator` | gemini | groq→cerebras→mistral→openrouter | Category → buying criteria list |
 | `interview_questioner` | mistral | gemini→groq→cerebras→openrouter | Next adaptive question |
-| `preference_summarizer` | mistral | gemini→groq→cerebras→openrouter | Q&A → preference bullets |
+| `preference_summarizer` | mistral | gemini→groq→cerebras→openrouter | Q&A → `UserIntent` JSON + summary text (JSON mode, max_tokens=1024) |
 | `rubric_generator` | gemini | groq→cerebras→mistral→openrouter | Profile + criteria → weights |
 | `gap_filler` | gemini | groq→cerebras→mistral→openrouter | Fill uncovered criteria from research |
 | `thread_summarizer` | **pool** | groq→cerebras→gemini→mistral→openrouter | One thread → structured summary |
@@ -391,7 +478,7 @@ Base URL: `http://localhost:8000`
 | `POST` | `/api/detect` | `{query}` | `{category, region, needs_disambiguation}` |
 | `POST` | `/api/criteria` | `{category}` | `{criteria: Criterion[]}` |
 | `POST` | `/api/interview/next` | `{category, qa_history[]}` | `{question, why_asking, is_done}` |
-| `POST` | `/api/interview/summarize` | `{category, qa_history[]}` | `{summary}` |
+| `POST` | `/api/interview/summarize` | `{category, qa_history[]}` | `{preferences_summary, intent: UserIntent}` |
 | `POST` | `/api/rubric` | `{category, profile, criteria}` | `{rubric: Rubric}` |
 | `GET` | `/api/profile/:category` | — | Profile dict |
 | `POST` | `/api/profile/:category` | Profile dict | `{ok}` |

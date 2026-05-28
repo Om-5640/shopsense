@@ -78,9 +78,15 @@ def extract_and_save_signals(
     if not qa_history:
         return []
 
+    # Filter [Skipped] entries — they carry no signal worth persisting
+    _SKIP_TOKENS = {"[Skipped]", "(skipped)"}
+    answered = [e for e in qa_history if e.get("answer", "") not in _SKIP_TOKENS]
+    if not answered:
+        return []
+
     qa_text = "\n".join(
         f"Q: {entry.get('question', '')}\nA: {entry.get('answer', '')}"
-        for entry in qa_history
+        for entry in answered
     )
     prompt = f"Category being researched: {category}\n\nInterview transcript:\n{qa_text}"
 

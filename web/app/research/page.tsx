@@ -455,13 +455,14 @@ function ResearchPageContent() {
     try {
       // W-01: clear interview checkpoint now that it completed
       try { localStorage.removeItem(`shopsense_ckpt_${query}`) } catch { /* ignore */ }
-      const { preferences_summary } = await summarizeInterview(cat, history)
+      const { preferences_summary, intent } = await summarizeInterview(cat, history)
       const prof = {
         category: cat,
         primary_noun: primaryNoun || cat.split('/').pop() || '',
         source_query: query,
         interview: history,
         preferences_summary,
+        intent: intent ?? undefined,
         region,
       }
       profileRef.current = prof

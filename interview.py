@@ -8,11 +8,14 @@ Profile is saved as profiles/<category>.json so future runs can reuse it.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from datetime import datetime
 from agents import run_agent
 from category import category_to_filename
+
+_logger = logging.getLogger(__name__)
 
 
 PROFILES_DIR = Path(__file__).parent / "profiles"
@@ -416,8 +419,10 @@ def run_interview(category: str, criteria: list[dict]) -> dict:
         if not force_continue:
             uncovered = _identify_uncovered_criteria(criteria, qa_history)
             coverage = (len(criteria) - len(uncovered)) / max(len(criteria), 1)
-            if coverage >= COVERAGE_TARGET:
-                print(f"[interview] coverage at {coverage*100:.0f}% — sufficient, ending")
+            dyn_target = _dynamic_coverage_target(len(criteria))
+            if coverage >= dyn_target:
+                print(f"[interview] coverage at {coverage*100:.0f}% ≥ dynamic target "
+                      f"{dyn_target*100:.0f}% ({len(criteria)} criteria) — sufficient, ending")
                 break
 
         result = generate_next_question(category, criteria, qa_history)
@@ -460,15 +465,105 @@ def run_interview(category: str, criteria: list[dict]) -> dict:
     if uncovered:
         print(f"[interview] uncovered criteria will be inferred from research: {', '.join(uncovered)}")
 
-    # Build profile from Q&A
+    # Build profile from Q&A — single LLM call for both text and structured intent
+    prefs_summary, intent = _summarize_and_extract_intent(category, qa_history)
     profile = {
         "interview": qa_history,
-        "preferences_summary": _summarize_preferences(category, qa_history),
+        "preferences_summary": prefs_summary,
+        "intent": intent,
         "uncovered_criteria": uncovered,
         "coverage_percent": coverage_pct,
     }
     save_profile(category, profile)
     return profile
+
+
+# ---- Summarizer constants ----
+
+# Both CLI ("(skipped)") and web ("[Skipped]") skip tokens
+_SKIP_ANSWER_TOKENS = frozenset({"[Skipped]", "(skipped)"})
+
+
+def _categorize_qa_entry(qa: dict) -> str:
+    """Return 'skipped' if the user skipped this question, else 'answered'."""
+    return "skipped" if qa.get("answer", "") in _SKIP_ANSWER_TOKENS else "answered"
+
+
+SUMMARIZE_SYSTEM = """You extract structured intent AND produce a readable summary from a product research interview.
+
+Return ONLY this JSON (no markdown, no wrapping text):
+{
+  "hard_constraints": ["short constraint phrase"],
+  "budget": "exact budget string or null",
+  "preferences": ["clearly stated preference"],
+  "exclusions": ["explicitly rejected feature, brand, or type"],
+  "uncertainties": ["tentative statement"],
+  "summary_text": "• bullet 1\\n• bullet 2"
+}
+
+EXTRACTION RULES:
+1. hard_constraints: ONLY MUST/NEVER/required/allergic/can't/won't entries. Keep each under 10 words.
+2. budget: exact amount+currency if stated (e.g. "under ₹5000", "$200 max"), else null.
+3. preferences: clearly stated wants that are NOT constraints. Skip vague entries like "good quality".
+4. exclusions: explicit rejections softer than hard constraints ("prefers not in-ear", "avoids brand X").
+5. uncertainties: hedged statements — "maybe", "I think", "I guess", "probably", "not sure but".
+6. SKIP SEMANTICS: skipped = UNKNOWN. Never infer from skipped questions.
+7. CONTRADICTION: same topic, conflicting answers → LATER answer wins. Note it in summary_text.
+8. summary_text: 4-8 bullets, plain text. Order: [REQUIRED]/[EXCLUDED] → Budget → Preferences → Tentative.
+
+JSON only. No commentary."""
+
+
+# ---- Priority context for process_message classifier ----
+
+_CRITICAL_CONTEXT_KEYWORDS = frozenset({
+    "budget", "price", "cost", "spend", "rupee", "dollar", "rs.", "₹", "$",
+    "allerg", "medical", "condition", "never", "must", "required", "can't", "cannot",
+    "exclud", "avoid", "hate", "worst", "won't", "refuse",
+})
+
+
+def _build_priority_classifier_context(qa_history: list[dict], max_entries: int = 6) -> str:
+    """
+    Build classifier context window with semantic priority.
+    Always includes budget/constraint entries; fills remaining slots with recency.
+    """
+    if not qa_history:
+        return "(none yet)"
+
+    critical_idxs: set[int] = set()
+    for i, qa in enumerate(qa_history):
+        combined = (qa.get("question", "") + " " + qa.get("answer", "")).lower()
+        if any(kw in combined for kw in _CRITICAL_CONTEXT_KEYWORDS):
+            critical_idxs.add(i)
+
+    remaining = max_entries - len(critical_idxs)
+    recent_idxs = [i for i in range(len(qa_history) - 1, -1, -1)
+                   if i not in critical_idxs][:max(0, remaining)]
+    selected = sorted(critical_idxs | set(recent_idxs))
+
+    return "\n".join(
+        f"Q: {qa_history[i]['question']}\nA: {qa_history[i]['answer']}"
+        for i in selected
+    )
+
+
+# ---- Dynamic coverage target ----
+
+def _dynamic_coverage_target(n_criteria: int) -> float:
+    """
+    Scale COVERAGE_TARGET down for large criteria sets.
+    With 5 criteria: 90% target (4-5 questions) is achievable.
+    With 12+ criteria: 90% would need 11+ questions, hitting MAX_QUESTIONS prematurely.
+    """
+    if n_criteria <= 5:
+        return COVERAGE_TARGET   # 0.90
+    elif n_criteria <= 8:
+        return 0.75
+    elif n_criteria <= 12:
+        return 0.65
+    else:
+        return 0.60
 
 
 PROCESS_MESSAGE_SYSTEM = """You are an adaptive interview assistant classifying user messages during a product research interview.
@@ -550,15 +645,12 @@ def process_message(
         return {"intent": "COMMAND", "confidence": 1.0, "preference_fragment": None,
                 "question_answer": None, "clarification_question": None, "command_action": "finish"}
 
-    # Build LLM context: criteria summary + recent history
+    # Build LLM context: criteria summary + priority history (budget/constraints always included)
     criteria_text = "\n".join(
         f"- {c['name']}: {c.get('label', '')} — {c.get('description', '')}"
         for c in criteria
     )
-    qa_summary = "\n".join(
-        f"Q: {qa['question']}\nA: {qa['answer']}"
-        for qa in qa_history[-4:]
-    ) if qa_history else "(none yet)"
+    qa_summary = _build_priority_classifier_context(qa_history, max_entries=6)
 
     prompt = f"""Category: {category}
 Current interview question: "{current_question.get('question', '')}"
@@ -592,23 +684,113 @@ Classify the user's message and generate the appropriate response."""
                 "question_answer": None, "clarification_question": None, "command_action": None}
 
 
-def _summarize_preferences(category: str, qa_history: list[dict]) -> str:
-    """Distill the interview into a tight summary for use in rubric generation."""
+_EMPTY_INTENT: dict = {
+    "hard_constraints": [],
+    "budget": None,
+    "preferences": [],
+    "exclusions": [],
+    "uncertainties": [],
+}
+
+
+def _summarize_and_extract_intent(
+    category: str,
+    qa_history: list[dict],
+) -> tuple[str, dict]:
+    """
+    Single LLM call producing both a human-readable summary string AND a
+    structured intent dict. This replaces the old plain-text summarizer.
+
+    Returns (summary_text: str, intent: dict).
+    The intent dict has keys: hard_constraints, budget, preferences, exclusions, uncertainties.
+    """
     if not qa_history:
-        return "No preferences specified."
+        return "No preferences specified.", dict(_EMPTY_INTENT)
 
-    qa_text = "\n".join(f"Q: {qa['question']}\nA: {qa['answer']}" for qa in qa_history)
-    prompt = f"""User answered these questions about buying a {category}:
+    answered = [qa for qa in qa_history if _categorize_qa_entry(qa) == "answered"]
+    skipped_count = len(qa_history) - len(answered)
 
-{qa_text}
+    if not answered:
+        return "No preferences specified (all questions skipped).", dict(_EMPTY_INTENT)
 
-Summarize their preferences in 3-5 short bullet points. Be specific. Plain text, no markdown."""
+    qa_text = "\n".join(f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered)
+    skip_note = (
+        f"\n\nNote: {skipped_count} question(s) skipped — treat as UNKNOWN, never infer."
+        if skipped_count > 0 else ""
+    )
+    prompt = (
+        f"Category: {category}\n\nInterview Q&A:\n{qa_text}{skip_note}"
+        f"\n\nExtract structured summary."
+    )
 
     try:
-        raw = run_agent("preference_summarizer", user_prompt=prompt)
-        return raw.strip()
+        raw = run_agent("preference_summarizer", user_prompt=prompt, system=SUMMARIZE_SYSTEM)
+        from llm_client import _try_repair_json
+        data = _try_repair_json(raw)
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data).__name__}")
+
+        summary_text = data.get("summary_text") or ""
+        if not isinstance(summary_text, str):
+            summary_text = str(summary_text)
+
+        def _clean_strs(lst) -> list[str]:
+            return [s.strip() for s in (lst or []) if isinstance(s, str) and s.strip()]
+
+        intent = {
+            "hard_constraints": _clean_strs(data.get("hard_constraints")),
+            "budget": (
+                data["budget"].strip()
+                if isinstance(data.get("budget"), str) and data["budget"].strip()
+                else None
+            ),
+            "preferences": _clean_strs(data.get("preferences")),
+            "exclusions": _clean_strs(data.get("exclusions")),
+            "uncertainties": _clean_strs(data.get("uncertainties")),
+        }
+
+        if not summary_text:
+            # Fallback: reconstruct minimal text from structured fields
+            lines = []
+            for c in intent["hard_constraints"]:
+                lines.append(f"• [REQUIRED] {c}")
+            if intent["budget"]:
+                lines.append(f"• Budget: {intent['budget']}")
+            for p in intent["preferences"]:
+                lines.append(f"• {p}")
+            summary_text = "\n".join(lines) if lines else "No preferences specified."
+
+        return summary_text.strip(), intent
+
+    except Exception as exc:
+        _logger.warning("[interview] summarize+intent failed (%s) — using text fallback", exc)
+        # Last resort: plain-text-only summarization without structure
+        return _summarize_preferences_text_only(category, qa_history), dict(_EMPTY_INTENT)
+
+
+def _summarize_preferences_text_only(category: str, qa_history: list[dict]) -> str:
+    """
+    Fallback: plain-text summarizer using the old single-field approach.
+    Called only when the JSON-structured summarizer fails.
+    """
+    answered = [qa for qa in qa_history if _categorize_qa_entry(qa) == "answered"]
+    if not answered:
+        return "No preferences specified (all questions skipped)."
+    qa_text = "\n".join(f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered)
+    _SIMPLE_SYSTEM = (
+        "Summarize the user's stated product preferences as 4-8 short bullet points. "
+        "Put [REQUIRED] before hard constraints. Put Budget first if mentioned. Plain text only."
+    )
+    try:
+        return run_agent("preference_summarizer", user_prompt=qa_text, system=_SIMPLE_SYSTEM).strip()
     except Exception as e:
         return f"(Could not summarize: {e})"
+
+
+def _summarize_preferences(category: str, qa_history: list[dict]) -> str:
+    """Backward-compatible wrapper — returns text summary only."""
+    text, _ = _summarize_and_extract_intent(category, qa_history)
+    return text
 
 
 # ---- top-level: prompt for use / edit / new ----
@@ -681,9 +863,11 @@ def _edit_profile(category: str, criteria: list[dict], existing: dict) -> dict:
         updated_history.append(qa)
         print()
 
+    prefs_summary, intent = _summarize_and_extract_intent(category, updated_history)
     profile = {
         "interview": updated_history,
-        "preferences_summary": _summarize_preferences(category, updated_history),
+        "preferences_summary": prefs_summary,
+        "intent": intent,
     }
     save_profile(category, profile)
     return profile

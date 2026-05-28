@@ -99,23 +99,59 @@ def _filter_research_for_product(product_name: str, full_research: str, max_char
     return filtered[:max_chars]
 
 
-def score_product(product: dict, rubric: dict, full_research_text: str) -> dict:
+def _format_criterion_line(c: dict) -> str:
+    """Build a single criterion line for scorer prompts. Prefers rationale over description."""
+    context = c.get("rationale") or c.get("description") or ""
+    return f"- {c['name']}: {c['label']} (weight {c['weight']}/10) — {context}"
+
+
+def _build_constraint_context(user_intent: dict | None) -> str:
+    """
+    Build a compact constraint block injected into scorer prompts.
+    Hard constraints and exclusions directly override evidence-based scoring —
+    a product violating a MUST/NEVER constraint should score 1-2 on that criterion
+    regardless of what Reddit says.
+    """
+    if not user_intent or not isinstance(user_intent, dict):
+        return ""
+    parts = []
+    if user_intent.get("hard_constraints"):
+        parts.append("⚠️ HARD CONSTRAINTS — score low (1-3) on the relevant criterion if product violates:")
+        for c in user_intent["hard_constraints"][:5]:
+            parts.append(f"  MUST: {c}")
+    if user_intent.get("exclusions"):
+        parts.append("USER EXPLICITLY REJECTS (score relevant criteria 1-3 if product includes these):")
+        for e in user_intent["exclusions"][:3]:
+            parts.append(f"  ✗ {e}")
+    if user_intent.get("budget"):
+        parts.append(f"Budget constraint: {user_intent['budget']} — penalize value_for_money if product is over budget.")
+    return "\n".join(parts) if parts else ""
+
+
+def score_product(
+    product: dict,
+    rubric: dict,
+    full_research_text: str,
+    user_intent: dict | None = None,
+) -> dict:
     """Score a single product. Returns dict with scores, totals, percentage."""
     criteria_text = "\n".join(
-        f"- {c['name']}: {c['label']} (weight {c['weight']}/10) - {c.get('description', '')}"
-        for c in rubric["weighted_criteria"]
+        _format_criterion_line(c) for c in rubric["weighted_criteria"]
     )
 
     product_text = _format_product(product)
     # 6K chars per product is safe for Groq 8K token limit when combined with rubric + system
     relevant_research = _filter_research_for_product(product.get("name", ""), full_research_text, max_chars=6000)
 
+    constraint_section = _build_constraint_context(user_intent)
+    constraint_block = f"\n\n{constraint_section}\n" if constraint_section else ""
+
     prompt = f"""PRODUCT TO SCORE:
 {product_text}
 
 RELEVANT RESEARCH (Reddit comments + review excerpts mentioning this product):
 {relevant_research}
-
+{constraint_block}
 RUBRIC:
 {criteria_text}
 
@@ -196,6 +232,33 @@ def _format_product(p: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Provider-aware token budgeting ───────────────────────────────────────────
+
+_PROVIDER_RESEARCH_BUDGETS: dict[str, int] = {
+    "gemini":      6000,   # Gemini 2.0 Flash: 1M token context
+    "mistral":     4000,   # Mistral: 32K context
+    "openrouter":  4000,
+    "groq":        2500,   # Groq LLaMA 70B: 8K token limit per request
+    "cerebras":    2500,   # Cerebras: same as Groq
+}
+
+
+def _get_provider_research_budget() -> int:
+    """
+    Return per-product research character budget based on the first active provider.
+    Falls back to the smallest safe budget (Groq/Cerebras) on any error.
+    """
+    try:
+        from agents import get_provider_status
+        for provider, info in get_provider_status().items():
+            if info.get("session_alive") and not info.get("circuit_blocked"):
+                budget = _PROVIDER_RESEARCH_BUDGETS.get(provider, 2500)
+                return budget
+    except Exception:
+        pass
+    return 2500
+
+
 # Batching: score N products per Groq call to reduce request count
 PRODUCTS_PER_BATCH = 3
 
@@ -227,36 +290,41 @@ RULES:
 NO markdown, NO commentary, JSON only."""
 
 
-def _score_batch(products: list[dict], rubric: dict, full_research_text: str) -> list[dict]:
+def _score_batch(
+    products: list[dict],
+    rubric: dict,
+    full_research_text: str,
+    user_intent: dict | None = None,
+) -> list[dict]:
     """
     Score a batch of products in a single LLM call.
     Returns list of scored dicts. Products that fail extraction get None — caller retries them.
     """
     criteria_text = "\n".join(
-        f"- {c['name']}: {c['label']} (weight {c['weight']}/10) - {c.get('description', '')}"
-        for c in rubric["weighted_criteria"]
+        _format_criterion_line(c) for c in rubric["weighted_criteria"]
     )
 
-    # Build prompt with all products and filtered research for each
-    # Groq has 8K token limit per request → very tight budget
-    # Per-product research: 2500 chars (~625 tokens) × 3 products = 7500 chars
-    # Plus rubric + system prompt = ~10K total = ~2500 tokens. Fits comfortably.
+    # Build prompt with all products and filtered research for each.
+    # Budget per product depends on active provider context window.
+    per_product_budget = _get_provider_research_budget()
     products_text_parts = []
     for p in products:
         prod_block = [f"--- PRODUCT: {p.get('name', '?')} ---"]
         prod_block.append(_format_product(p))
-        # Tight context window per product to stay under Groq's 8K limit
-        rel = _filter_research_for_product(p.get("name", ""), full_research_text, max_chars=2500)
+        rel = _filter_research_for_product(p.get("name", ""), full_research_text, max_chars=per_product_budget)
         if rel:
             prod_block.append(f"\nResearch:\n{rel}")
         products_text_parts.append("\n".join(prod_block))
 
     products_text = "\n\n".join(products_text_parts)
 
+    constraint_section = _build_constraint_context(user_intent)
+    constraint_block = f"\n{constraint_section}\n" if constraint_section else ""
+
     prompt = f"""PRODUCTS TO SCORE (score each against ALL criteria below):
 
 {products_text}
-
+{constraint_block}
 RUBRIC (apply to every product):
 {criteria_text}
 
@@ -356,12 +424,16 @@ def score_all_products(
     rubric: dict,
     full_research_text: str,
     progress_callback=None,
+    user_intent: dict | None = None,
 ) -> list[dict]:
     """
     Score all products. Mode controlled by SCORING_MODE env var:
       llm    (default) — parallel batch LLM scoring, best quality
       hybrid — LLM for top 10 products, fast heuristic for the rest
       fast   — heuristic only, no LLM calls, ~instant
+
+    user_intent: structured intent dict from interview (hard_constraints, budget, etc.)
+                 When provided, constraint violations lower relevant criterion scores.
     """
     n = len(products)
 
@@ -379,7 +451,9 @@ def score_all_products(
         llm_products = products[:10]
         fast_products = products[10:]
         print(f"[scorer] HYBRID mode: LLM for {len(llm_products)}, fast for {len(fast_products)}")
-        llm_scored = _run_parallel_batch_scoring(llm_products, rubric, full_research_text, progress_callback, n)
+        llm_scored = _run_parallel_batch_scoring(
+            llm_products, rubric, full_research_text, progress_callback, n, user_intent
+        )
         fast_scored = [_fast_score(p, rubric, full_research_text) for p in fast_products]
         if progress_callback:
             for i, p in enumerate(fast_products, len(llm_products) + 1):
@@ -388,7 +462,7 @@ def score_all_products(
 
     # ---- llm mode (default): full parallel batch LLM scoring ----
     print(f"[scorer] LLM mode: parallel batch scoring {n} products, batch={PRODUCTS_PER_BATCH}, workers={MAX_SCORING_WORKERS}")
-    return _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n)
+    return _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n, user_intent)
 
 
 def _run_parallel_batch_scoring(
@@ -397,6 +471,7 @@ def _run_parallel_batch_scoring(
     full_research_text: str,
     progress_callback,
     total_n: int,
+    user_intent: dict | None = None,
 ) -> list[dict]:
     """Inner parallel batch executor. Extracted so hybrid mode can call it for a subset."""
     n = len(products)
@@ -409,7 +484,7 @@ def _run_parallel_batch_scoring(
 
     def score_batch_with_retry(batch: list[dict]) -> list[dict]:
         """Try batch scoring; fall back to per-product if batch parse fails."""
-        batch_results = _score_batch(batch, rubric, full_research_text)
+        batch_results = _score_batch(batch, rubric, full_research_text, user_intent)
         # For any None results (parse failures), retry individually
         final = []
         for p, br in zip(batch, batch_results):
@@ -418,7 +493,7 @@ def _run_parallel_batch_scoring(
             else:
                 print(f"  [scorer] batch miss for {p.get('name','?')}, retrying individually")
                 try:
-                    single = score_product(p, rubric, full_research_text)
+                    single = score_product(p, rubric, full_research_text, user_intent)
                     final.append(single if single is not None else _default_score(p, rubric))
                 except Exception as e:
                     print(f"  [scorer] single retry failed for {p.get('name','?')}: {e}")

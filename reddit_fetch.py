@@ -141,8 +141,43 @@ def resolve_region_interactively(query: str, profile: dict | None = None) -> tup
 import re  # needed for has_ambiguous_price
 
 
-def _query_variations(query: str) -> list[str]:
-    """Generate query variations to broaden the thread pool with semantic diversity."""
+# Usage-pattern keywords → short label injected into query variant
+_USAGE_KEYWORD_MAP: list[tuple[list[str], str]] = [
+    (["gaming", "game", "fps", "esports", "ps5", "xbox"], "gaming"),
+    (["gym", "workout", "exercise", "running", "fitness", "sports"], "gym workout"),
+    (["commut", "transit", "bus", "train", "office", "daily use"], "commuting"),
+    (["studio", "recording", "music production", "mixing", "daw"], "studio"),
+    (["audiophile", "hi-fi", "hifi", "lossless", "dac"], "audiophile"),
+    (["sleep", "sleeping", "bedtime", "night"], "sleeping"),
+    (["travel", "flight", "airplane", "portable"], "travel"),
+]
+
+
+def _extract_usage_pattern(profile: dict | None) -> str | None:
+    """Return first recognized usage pattern from intent.preferences or preferences_summary."""
+    if not profile:
+        return None
+    intent = profile.get("intent")
+    if intent and isinstance(intent, dict):
+        text = " ".join(intent.get("preferences", []))
+    else:
+        text = ""
+    text = (text or profile.get("preferences_summary") or "").lower()
+    if not text:
+        return None
+    for keywords, label in _USAGE_KEYWORD_MAP:
+        if any(kw in text for kw in keywords):
+            return label
+    return None
+
+
+def _query_variations(query: str, profile: dict | None = None) -> list[str]:
+    """
+    Generate semantically diverse query variants to broaden the thread pool.
+    Profile-aware: injects usage pattern (gaming/gym/commute…) and budget term
+    as additional variants so Reddit threads relevant to the user's actual context
+    surface in the results.
+    """
     region = detect_region(query)
     variations = [
         f"site:reddit.com {query}",
@@ -150,6 +185,18 @@ def _query_variations(query: str) -> list[str]:
         f"site:reddit.com {query} review",
         f"site:reddit.com {query} vs",
     ]
+
+    # Usage-pattern semantic variant (e.g. "…gaming", "…gym workout")
+    usage = _extract_usage_pattern(profile)
+    if usage:
+        variations.append(f"site:reddit.com {query} {usage}")
+
+    # Budget-explicit variant when user has a stated budget
+    intent = (profile or {}).get("intent") if isinstance(profile, dict) else None
+    budget_str = intent.get("budget") if isinstance(intent, dict) else None
+    if budget_str:
+        variations.append(f"site:reddit.com {query} budget")
+
     # Region-targeted variant for localized advice threads
     if region == "india":
         variations.append(f"site:reddit.com {query} india")
@@ -164,7 +211,7 @@ def _query_variations(query: str) -> list[str]:
 
 # ---- URL discovery ----
 
-def find_reddit_urls(query: str, limit: int = 15) -> list[str]:
+def find_reddit_urls(query: str, limit: int = 15, profile: dict | None = None) -> list[str]:
     """Find Reddit URLs using multiple query variants merged + deduped."""
     cache_key = f"urls|{query}|{limit}"
     cached = cache.get("reddit_urls", cache_key)
@@ -173,7 +220,7 @@ def find_reddit_urls(query: str, limit: int = 15) -> list[str]:
         return cached
 
     all_urls = []
-    variations = _query_variations(query)
+    variations = _query_variations(query, profile)
     region = detect_region(query)
 
     # Source 1: Serper (primary) — run all query variations
@@ -553,11 +600,17 @@ def _praw_credentials_set() -> bool:
     )
 
 
-def fetch_all_threads(query: str, limit: int = 15, delay: float = 1.5) -> list[dict]:
+def fetch_all_threads(
+    query: str,
+    limit: int = 15,
+    delay: float = 1.5,
+    profile: dict | None = None,
+) -> list[dict]:
     """
     End-to-end fetch.
     If USE_PRAW=true and Reddit credentials are set, uses the PRAW deep fetcher
     (200+ comments/thread). Otherwise falls back to the JSON endpoint approach.
+    `profile` is forwarded to _query_variations for intent-aware semantic variants.
     """
     if os.environ.get("USE_PRAW", "").lower() == "true" and _praw_credentials_set():
         from reddit_praw import fetch_threads_deep
@@ -568,7 +621,7 @@ def fetch_all_threads(query: str, limit: int = 15, delay: float = 1.5) -> list[d
         print(f"[reddit] detected region: {region}")
 
     print(f"[reddit] discovering URLs for: {query}")
-    urls = find_reddit_urls(query, limit=limit)
+    urls = find_reddit_urls(query, limit=limit, profile=profile)
     for u in urls:
         print(f"   - {u}")
 
