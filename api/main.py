@@ -342,13 +342,18 @@ def generate_rubric_endpoint(request: Request, body: dict) -> dict:
 
     if memory_context and isinstance(profile, dict):
         existing = profile.get("preferences_summary", "")
-        if existing:
-            # Current-session interview ALWAYS takes precedence; memory is supplemental
-            profile = {**profile, "preferences_summary": (
-                f"{existing}\n\nAdditional context from past searches:\n{memory_context}"
-            )}
-        else:
-            profile = {**profile, "preferences_summary": memory_context}
+        # ENTROPY-01: only inject memory context if it's not already present in the summary,
+        # preventing double-injection when the frontend passes memory_context AND the profile
+        # was already enriched by a prior call.
+        already_injected = memory_context.strip() and memory_context.strip() in existing
+        if not already_injected:
+            if existing:
+                # Current-session interview ALWAYS takes precedence; memory is supplemental
+                profile = {**profile, "preferences_summary": (
+                    f"{existing}\n\nAdditional context from past searches:\n{memory_context}"
+                )}
+            else:
+                profile = {**profile, "preferences_summary": memory_context}
 
     # Carry intent from request body into profile if frontend sent it but profile didn't
     if isinstance(profile, dict) and not profile.get("intent"):

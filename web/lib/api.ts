@@ -25,7 +25,7 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 // Per-browser session ID — isolates memory/signals between different users.
 // Generated once, persisted in localStorage, sent on every API request.
 // ---------------------------------------------------------------------------
-function _getOrCreateSessionId(): string {
+export function getOrCreateSessionId(): string {
   if (typeof window === 'undefined') return 'default'
   const key = 'shopsense_session_id'
   let sid = localStorage.getItem(key)
@@ -43,7 +43,7 @@ const client = axios.create({ baseURL: BASE })
 
 // Attach session ID on every request (runs client-side only)
 client.interceptors.request.use((config) => {
-  config.headers['X-Session-ID'] = _getOrCreateSessionId()
+  config.headers['X-Session-ID'] = getOrCreateSessionId()
   return config
 })
 

@@ -316,7 +316,7 @@ def _score_and_rank_urls(urls: list[str], query: str, region: str | None,
             score += 8.0   # region-specific variant (also valuable)
 
         # 4. Penalty for obviously off-topic subreddits
-        off_topic = {"phoenix", "pakistan", "frugal", "askreddit", "outoftheloop"}
+        off_topic = {"phoenix", "askreddit", "outoftheloop"}
         if region == "india" and subreddit in off_topic:
             score -= 15.0
 

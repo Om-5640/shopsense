@@ -25,7 +25,14 @@ from llm_clients import GroqQuotaExhausted
 MAX_SCORING_WORKERS = 4    # One concurrent call per provider in the pool
 
 # Scoring mode: "llm" (full), "hybrid" (LLM for top 10, fast for rest), "fast" (heuristic only)
-SCORING_MODE = os.environ.get("SCORING_MODE", "llm").lower()
+_VALID_SCORING_MODES = {"llm", "hybrid", "fast"}
+_raw_mode = os.environ.get("SCORING_MODE", "llm").lower().strip()
+SCORING_MODE = _raw_mode if _raw_mode in _VALID_SCORING_MODES else "llm"
+if _raw_mode not in _VALID_SCORING_MODES and _raw_mode:
+    import logging as _log
+    _log.getLogger(__name__).warning(
+        "[scorer] SCORING_MODE=%r is not valid (must be llm|hybrid|fast) — defaulting to 'llm'", _raw_mode
+    )
 
 
 SYSTEM = """You score products against a weighted rubric using REAL evidence from research data.
@@ -46,7 +53,7 @@ Return ONLY a JSON object:
 RULES:
 1. Use the EXACT criterion names given. Don't invent new ones.
 2. Look HARD at the research text before saying "no data found". Many criteria have implicit evidence (e.g. "lasted 2 years" implies durability).
-3. If truly no evidence exists, score 5 and write "no direct data found".
+3. If truly no evidence exists, score 4 and write "insufficient data — treat with caution".
 4. Reserve 9-10 for strong, multi-source positive evidence.
 5. Score 1-3 only for confirmed complaints with multiple users.
 6. Be specific in evidence. "Multiple users praise battery" is weak; "Reddit users say 8+ hours on single charge" is good.
@@ -95,13 +102,20 @@ def _filter_research_for_product(product_name: str, full_research: str, max_char
     if not tokens:
         return full_research[:max_chars]
 
+    # Brand contamination fix: when a product has 2+ distinctive tokens,
+    # require at least 2 to match so single-brand-token matches don't pull in
+    # all other products from the same brand (e.g. "Sony WF-1000XM5" shouldn't
+    # collect all paragraphs mentioning any Sony product).
+    min_matches = min(2, len(tokens))
+
     paragraphs = re.split(r"\n\s*\n", full_research)
 
     # Find indices of paragraphs matching the product
     match_indices = set()
     for i, p in enumerate(paragraphs):
         p_lower = p.lower()
-        if any(t in p_lower for t in tokens):
+        matched = sum(1 for t in tokens if t in p_lower)
+        if matched >= min_matches:
             match_indices.add(i)
             # Include surrounding paragraphs for context
             if i > 0:
@@ -207,8 +221,8 @@ Example: "lasted 2 years" implies durability; "comfortable for 8 hours" implies 
             score = max(0, min(10, float(s["score"])))
             evidence = s.get("evidence", "")
         else:
-            score = 5.0
-            evidence = "no direct data found"
+            score = 4.0
+            evidence = "insufficient data — treat with caution"
 
         weight = c["weight"]
         weighted_total += score * weight
@@ -306,7 +320,7 @@ Return ONLY a JSON object:
 
 RULES:
 1. Use EXACT product names and EXACT criterion names from the input. Never invent.
-2. Score every criterion for every product, even if "no direct data found" (score 5 in that case).
+2. Score every criterion for every product, even if no evidence (score 4 and write "insufficient data — treat with caution").
 3. Look HARD at research text. "Lasted 2 years" implies durability. "Quiet" implies noise score.
 4. Evidence: brief, factual, cite source if visible (e.g. "Reddit users praise X" or "rtings.com tested at 32dB").
 5. Reserve 9-10 for strong multi-source positive evidence. Reserve 1-3 only for confirmed multi-user complaints.
@@ -413,8 +427,8 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
             score = max(0, min(10, float(s["score"])))
             evidence = s.get("evidence", "")
         else:
-            score = 5.0
-            evidence = "no direct data found"
+            score = 4.0
+            evidence = "insufficient data — treat with caution"
 
         weight = c["weight"]
         weighted_total += score * weight
@@ -450,6 +464,7 @@ def score_all_products(
     full_research_text: str,
     progress_callback=None,
     user_intent: dict | None = None,
+    cancelled_check=None,
 ) -> list[dict]:
     """
     Score all products. Mode controlled by SCORING_MODE env var:
@@ -477,7 +492,7 @@ def score_all_products(
         fast_products = products[10:]
         print(f"[scorer] HYBRID mode: LLM for {len(llm_products)}, fast for {len(fast_products)}")
         llm_scored = _run_parallel_batch_scoring(
-            llm_products, rubric, full_research_text, progress_callback, n, user_intent
+            llm_products, rubric, full_research_text, progress_callback, n, user_intent, cancelled_check
         )
         fast_scored = [_fast_score(p, rubric, full_research_text) for p in fast_products]
         if progress_callback:
@@ -487,7 +502,7 @@ def score_all_products(
 
     # ---- llm mode (default): full parallel batch LLM scoring ----
     print(f"[scorer] LLM mode: parallel batch scoring {n} products, batch={PRODUCTS_PER_BATCH}, workers={MAX_SCORING_WORKERS}")
-    return _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n, user_intent)
+    return _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n, user_intent, cancelled_check)
 
 
 def _run_parallel_batch_scoring(
@@ -497,6 +512,7 @@ def _run_parallel_batch_scoring(
     progress_callback,
     total_n: int,
     user_intent: dict | None = None,
+    cancelled_check=None,
 ) -> list[dict]:
     """Inner parallel batch executor. Extracted so hybrid mode can call it for a subset."""
     n = len(products)
@@ -529,6 +545,11 @@ def _run_parallel_batch_scoring(
         future_to_batch = {ex.submit(score_batch_with_retry, batch): batch for batch in batches}
 
         for future in as_completed(future_to_batch):
+            # Check cancellation between batch completions — stops scoring when user hits Stop
+            if cancelled_check and cancelled_check():
+                ex.shutdown(wait=False, cancel_futures=True)
+                break
+
             batch = future_to_batch[future]
             try:
                 batch_scored = future.result()

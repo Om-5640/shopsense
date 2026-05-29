@@ -43,6 +43,7 @@ import {
   saveProfile,
   getProfile,
   getMemoryContext,
+  getOrCreateSessionId,
 } from '@/lib/api'
 import { connectSSE } from '@/lib/sse'
 import { extractWeights } from '@/lib/rerank'
@@ -93,6 +94,44 @@ interface ChatMessage {
   content: string
   isTyping?: boolean
 }
+
+// ─── Checkpoint helpers (BUG-05 + MEMORY-02) ─────────────────────────────────
+
+const _CKPT_TTL_MS = 24 * 60 * 60 * 1000  // 24 hours
+
+function _ckptKey(query: string): string {
+  const sid = getOrCreateSessionId()
+  return `shopsense_ckpt_${sid}_${query}`
+}
+
+function _saveCkpt(query: string, history: unknown[]): void {
+  try {
+    localStorage.setItem(_ckptKey(query), JSON.stringify({ ts: Date.now(), history }))
+  } catch { /* ignore */ }
+}
+
+function _loadCkpt(query: string): unknown[] | null {
+  try {
+    const raw = localStorage.getItem(_ckptKey(query))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && 'ts' in parsed && 'history' in parsed) {
+      if (Date.now() - (parsed.ts as number) > _CKPT_TTL_MS) {
+        localStorage.removeItem(_ckptKey(query))
+        return null
+      }
+      return parsed.history as unknown[]
+    }
+    // Legacy format (no TTL wrapper) — treat as expired
+    localStorage.removeItem(_ckptKey(query))
+    return null
+  } catch { return null }
+}
+
+function _clearCkpt(query: string): void {
+  try { localStorage.removeItem(_ckptKey(query)) } catch { /* ignore */ }
+}
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -237,15 +276,10 @@ function ResearchPageContent() {
       } else {
         // W-01: Check for a saved interview checkpoint (from a prior session that crashed mid-interview)
         let startQA = preQA
-        try {
-          const ckptRaw = localStorage.getItem(`shopsense_ckpt_${query}`)
-          if (ckptRaw) {
-            const ckpt = JSON.parse(ckptRaw) as QAEntry[]
-            if (Array.isArray(ckpt) && ckpt.length > preQA.length) {
-              startQA = ckpt
-            }
-          }
-        } catch { /* ignore */ }
+        const ckpt = _loadCkpt(query)
+        if (Array.isArray(ckpt) && ckpt.length > preQA.length) {
+          startQA = ckpt as QAEntry[]
+        }
         // Start interview — seed with checkpoint (or disambiguation pre-answers)
         if (startQA.length > 0) setQaHistory(startQA)
         await askNextQuestion(cat, crit, startQA, startQA.length + 1)
@@ -340,7 +374,7 @@ function ResearchPageContent() {
       const newHistory = [...qaHistory, entry]
       setQaHistory(newHistory)
       setCurrentQ((n) => n + 1)
-      try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
+      _saveCkpt(query, newHistory)
       if (currentQuestion.is_done || currentQ >= totalQ) {
         await finishInterview(category, criteria, newHistory)
       } else {
@@ -461,7 +495,7 @@ function ResearchPageContent() {
     setWaiting(true)
     try {
       // W-01: clear interview checkpoint now that it completed
-      try { localStorage.removeItem(`shopsense_ckpt_${query}`) } catch { /* ignore */ }
+      _clearCkpt(query)
       const { preferences_summary, intent } = await summarizeInterview(cat, history)
       setCapturedIntent(intent ?? undefined)
       const prof = {

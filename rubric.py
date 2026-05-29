@@ -10,6 +10,7 @@ Stored at rubrics/<category>.json so it can be reused/edited.
 import json
 import logging
 import re
+import threading
 from pathlib import Path
 from datetime import datetime
 from agents import run_agent
@@ -20,6 +21,18 @@ _logger = logging.getLogger(__name__)
 
 RUBRICS_DIR = Path(__file__).parent / "rubrics"
 RUBRICS_DIR.mkdir(exist_ok=True)
+
+# Per-category file locks — prevents concurrent same-category searches from
+# corrupting rubrics/<category>.json via interleaved writes.
+_rubric_file_locks: dict[str, threading.Lock] = {}
+_rubric_locks_mutex = threading.Lock()
+
+
+def _get_rubric_lock(category: str) -> threading.Lock:
+    with _rubric_locks_mutex:
+        if category not in _rubric_file_locks:
+            _rubric_file_locks[category] = threading.Lock()
+        return _rubric_file_locks[category]
 
 
 # ---- storage ----
@@ -43,8 +56,9 @@ def save_rubric(category: str, rubric: dict) -> None:
     path = rubric_path(category)
     rubric["category"] = category
     rubric["last_updated"] = datetime.utcnow().isoformat() + "Z"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(rubric, f, indent=2)
+    with _get_rubric_lock(category):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rubric, f, indent=2)
 
 
 # ---- generation ----

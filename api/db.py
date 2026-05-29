@@ -495,7 +495,7 @@ def find_similar_signals(
             "       productName AS \"productName\", category, text, "
             "       strength, sourceSearchId AS \"sourceSearchId\", "
             "       createdAt AS \"createdAt\", embedding "
-            "FROM UserSignal WHERE userId = ? AND embedding IS NOT NULL",
+            "FROM UserSignal WHERE userId = ? AND embedding IS NOT NULL LIMIT 2000",
             (user_id,),
         ).fetchall()
 

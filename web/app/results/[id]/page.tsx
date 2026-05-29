@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useMemo, useEffect, useRef, useDeferredValue } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef, useTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity } from 'lucide-react'
@@ -123,6 +123,7 @@ export default function ResultsPage() {
     useResultsStore()
   const { addSearchHistory } = useAppStore()
   const hasLoadedRef = useRef<string | null>(null)
+  const [isReweighting, startReweightTransition] = useTransition()
 
   // Load result on mount
   useEffect(() => {
@@ -237,10 +238,12 @@ export default function ResultsPage() {
   const handleWeightChange = useCallback(
     (criterionId: string, value: number) => {
       setActiveCriterionId(criterionId)
-      setWeight(criterionId, value)
+      startReweightTransition(() => {
+        setWeight(criterionId, value)
+      })
       setTimeout(() => setActiveCriterionId(null), 500)
     },
-    [setWeight],
+    [setWeight, startReweightTransition],
   )
 
   const handleReset = useCallback(() => {
@@ -286,13 +289,20 @@ export default function ResultsPage() {
     }
   }, [compareSet, router, id])
 
-  // Defer weight-change re-renders so rapid slider drags don't trigger layout thrash
-  const deferredProducts = useDeferredValue(products)
+  // Detect when user has modified weights from the original rubric values
+  const hasCustomWeights = useMemo(() => {
+    if (!rubric) return false
+    return rubric.weighted_criteria.some(
+      (c) => weights[c.name] !== undefined && weights[c.name] !== c.weight,
+    )
+  }, [rubric, weights])
 
   // Sorted product list (secondary sort: price or rating)
+  // useTransition marks weight changes as non-urgent, so the UI stays responsive
+  // during slider drags and the list re-sorts only after input settles.
   const displayProducts = useMemo(() => {
-    if (sortBy === 'score') return deferredProducts
-    return [...deferredProducts].sort((a, b) => {
+    if (sortBy === 'score') return products
+    return [...products].sort((a, b) => {
       if (sortBy === 'price') {
         const ap = a.price?.best_price?.price_inr ?? a.price?.best_price?.price_usd ?? 0
         const bp = b.price?.best_price?.price_inr ?? b.price?.best_price?.price_usd ?? 0
@@ -302,14 +312,14 @@ export default function ResultsPage() {
       const br = bestRetailer(b)?.rating ?? 0
       return br - ar
     })
-  }, [deferredProducts, sortBy])
+  }, [products, sortBy])
 
   // ── Insights panel — derived from real backend data ──────────────────────
   // Must be here (before early returns) to satisfy Rules of Hooks
   const insightsProps = useMemo(() => {
     // Types: group products by the criterion each one scores highest on
     const criterionGroups: Record<string, string[]> = {}
-    deferredProducts.forEach((p) => {
+    products.forEach((p) => {
       if (!p.scores.length) return
       const top = p.scores.reduce((a, b) => (a.score > b.score ? a : b))
       const label = sidebarCriteria.find((c) => c.id === top.criterion)?.label ?? top.label ?? top.criterion
@@ -322,7 +332,7 @@ export default function ResultsPage() {
       .map(([name, prods]) => ({ name, products: prods }))
 
     // Signal: one dot per product, sentiment from signal_strength + cross-subreddit
-    const communitySignal = deferredProducts.map((p, i) => {
+    const communitySignal = products.map((p, i) => {
       let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral'
       if (p.signal_strength === 'high' || p.cross_subreddit_signal?.signal === 'consistent') {
         sentiment = 'positive'
@@ -333,7 +343,7 @@ export default function ResultsPage() {
     })
 
     // Avoid: low signal or very low score
-    const toAvoid = deferredProducts
+    const toAvoid = products
       .filter((p) => p.signal_strength === 'low' || p.percentage < 40)
       .slice(0, 3)
       .map((p) => ({
@@ -344,7 +354,7 @@ export default function ResultsPage() {
       }))
 
     // Warnings: products with split community opinion
-    const warnings = deferredProducts
+    const warnings = products
       .filter((p) => p.cross_subreddit_signal?.signal === 'split')
       .slice(0, 3)
       .map((p) => ({
@@ -353,7 +363,7 @@ export default function ResultsPage() {
       }))
 
     return { categories, communitySignal, toAvoid, warnings }
-  }, [deferredProducts, sidebarCriteria])
+  }, [products, sidebarCriteria])
 
   if (loading) {
     return (
@@ -493,6 +503,24 @@ export default function ResultsPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
+                </div>
+              )}
+
+              {/* Stale-scores banner — shown when weights differ from original rubric */}
+              {(hasCustomWeights || isReweighting) && (
+                <div className="mb-4 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2 text-xs text-amber-300">
+                  <span className="text-amber-400">⚡</span>
+                  {isReweighting
+                    ? 'Re-sorting…'
+                    : 'Scores re-ranked by adjusted weights — explanations reflect original analysis.'}
+                  {hasCustomWeights && !isReweighting && (
+                    <button
+                      onClick={handleReset}
+                      className="ml-auto text-amber-400 hover:text-amber-200 underline underline-offset-2"
+                    >
+                      Reset weights
+                    </button>
+                  )}
                 </div>
               )}
 

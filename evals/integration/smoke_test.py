@@ -40,12 +40,12 @@ if str(_ROOT / "api") not in sys.path:
 # ---------------------------------------------------------------------------
 
 def _pass(name: str) -> None:
-    print(f"  ✓ {name}")
+    print(f"  PASS {name}")
 
 
 def _fail(name: str, reason: str) -> None:
-    print(f"  ✗ {name}: {reason}")
-    raise AssertionError(f"SMOKE TEST FAILED — {name}: {reason}")
+    print(f"  FAIL {name}: {reason}")
+    raise AssertionError(f"SMOKE TEST FAILED - {name}: {reason}")
 
 
 # ---------------------------------------------------------------------------
@@ -66,17 +66,14 @@ def test_scorer_weighted_percentage():
 
     mock_response = '{"scores": [{"criterion": "battery_life", "score": 9, "evidence": "great battery"}, {"criterion": "sound_quality", "score": 7, "evidence": "decent sound"}]}'
 
-    with patch("scorer.run_agent", return_value=mock_response):
-        with patch("scorer._try_repair_json", side_effect=lambda x: __import__("json").loads(x)):
-            # patch the import inside score_product
-            import scorer as _scorer
-            import llm_client as _llmc
-            original = _llmc._try_repair_json
-            _llmc._try_repair_json = lambda x: __import__("json").loads(x)
-            try:
-                result = score_product(product, rubric, "test research text")
-            finally:
-                _llmc._try_repair_json = original
+    import llm_client as _llmc
+    original = _llmc._try_repair_json
+    _llmc._try_repair_json = lambda x: __import__("json").loads(x)
+    try:
+        with patch("scorer.run_agent", return_value=mock_response):
+            result = score_product(product, rubric, "test research text")
+    finally:
+        _llmc._try_repair_json = original
 
     if result is None:
         _fail("scorer_weighted_percentage", "score_product returned None")
@@ -236,12 +233,11 @@ def test_interview_memory_context_in_prompt():
         captured_prompt["prompt"] = user_prompt
         return '{"question": "What battery life do you need?", "why_asking": "test", "targets_criterion": "battery_life", "is_done": false}'
 
-    with patch("interview.run_agent", side_effect=mock_run_agent):
-        with patch("interview._try_repair_json", side_effect=lambda x: __import__("json").loads(x)):
-            import interview as _interview
-            import llm_client as _llmc
-            orig = _llmc._try_repair_json
-            _llmc._try_repair_json = lambda x: __import__("json").loads(x)
+    import llm_client as _llmc
+    orig = _llmc._try_repair_json
+    _llmc._try_repair_json = lambda x: __import__("json").loads(x)
+    try:
+        with patch("interview.run_agent", side_effect=mock_run_agent):
             try:
                 generate_next_question(
                     "electronics/earbuds", criteria, [],
@@ -250,8 +246,8 @@ def test_interview_memory_context_in_prompt():
                 )
             except Exception:
                 pass  # we only care about the prompt content
-            finally:
-                _llmc._try_repair_json = orig
+    finally:
+        _llmc._try_repair_json = orig
 
     prompt = captured_prompt.get("prompt", "")
     if "sensitive ears" not in prompt and "comfortable fit" not in prompt:
@@ -292,7 +288,7 @@ def run_all() -> int:
             print(f"    {e}")
             failed += 1
         except Exception as e:
-            print(f"  ✗ {test_fn.__name__}: unexpected error — {type(e).__name__}: {e}")
+            print(f"  FAIL {test_fn.__name__}: unexpected error - {type(e).__name__}: {e}")
             failed += 1
     print(f"\nResults: {passed} passed, {failed} failed out of {len(_TESTS)} tests")
     return failed

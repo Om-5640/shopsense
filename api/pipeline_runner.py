@@ -267,6 +267,7 @@ def _save_pipeline_cache(key: str, result: dict) -> None:
 # ── Retrieval enrichment helpers (B3 + B4) ───────────────────────────────────
 
 _USAGE_PATTERNS: list[tuple[str, str]] = [
+    # Tech / entertainment
     ("gaming",       "gaming"),
     ("game",         "gaming"),
     ("gym",          "gym workouts"),
@@ -281,6 +282,31 @@ _USAGE_PATTERNS: list[tuple[str, str]] = [
     ("creative",     "creative work"),
     ("photo",        "photography"),
     ("video edit",   "video editing"),
+    # Home / lifestyle
+    ("kitchen",      "kitchen use"),
+    ("cooking",      "cooking"),
+    ("bedroom",      "bedroom"),
+    ("living room",  "living room"),
+    ("outdoor",      "outdoor use"),
+    ("camping",      "camping"),
+    ("hiking",       "hiking"),
+    ("baby",         "baby use"),
+    ("kids",         "kids"),
+    ("pet",          "pet owner"),
+    ("winter",       "winter use"),
+    ("summer",       "summer use"),
+    ("daily",        "everyday use"),
+    # Beauty / personal care
+    ("oily skin",    "oily skin"),
+    ("dry skin",     "dry skin"),
+    ("sensitive skin", "sensitive skin"),
+    ("acne",         "acne-prone skin"),
+    ("hair",         "hair care"),
+    # Sports / fitness
+    ("yoga",         "yoga"),
+    ("cycling",      "cycling"),
+    ("swim",         "swimming"),
+    ("crossfit",     "crossfit"),
 ]
 
 
@@ -338,6 +364,16 @@ def _build_retrieval_query(base_query: str, profile: dict, rubric: dict | None =
                     enriched = f"{enriched} {hint}"
                     break  # add at most one criterion term
 
+    # Step 3: inject exclusion terms from user intent as negative Reddit search terms
+    if isinstance(profile, dict):
+        intent = profile.get("intent")
+        if intent and isinstance(intent, dict):
+            exclusions = intent.get("exclusions", [])
+            for excl in exclusions[:2]:
+                excl_clean = excl.strip().lower()
+                if excl_clean and excl_clean not in enriched.lower():
+                    enriched = f"{enriched} -{excl_clean}"
+
     # Word-boundary-safe truncation: cut at last space before limit
     limit = 120
     if len(enriched) > limit:
@@ -394,6 +430,25 @@ def _build_score_based_explanation(product: dict) -> str:
     if weak:
         parts.append(f"lower {weak[-1]['label'].lower()}")
     return ". ".join(parts) + "." if parts else ""
+
+
+def _dedup_research_paragraphs(text: str) -> str:
+    """
+    Remove duplicate paragraphs from research text before scoring.
+    Uses exact-match dedup on stripped paragraphs to eliminate repeated Reddit
+    comment boilerplate (e.g. the same recommendation appearing in multiple threads).
+    """
+    if not text:
+        return text
+    paragraphs = _re.split(r"\n\s*\n", text)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for para in paragraphs:
+        key = para.strip()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(para)
+    return "\n\n".join(unique)
 
 
 def _build_research_text(analysis: dict, sources: list) -> str:
@@ -459,7 +514,7 @@ def _dedup_threads(threads: list[dict]) -> list[dict]:
             if not seen:
                 continue
             overlap = len(tokens & seen) / max(len(tokens | seen), 1)
-            if overlap > 0.60:
+            if overlap > 0.70:
                 is_dup = True
                 break
 
@@ -684,7 +739,7 @@ def _execute_pipeline(
 
     # ---- Stage 4.5: Gap-fill rubric weights from research signal ----
     sources = normalize_all(reddit_threads, review_pages)
-    research_text = _build_research_text(analysis, sources)
+    research_text = _dedup_research_paragraphs(_build_research_text(analysis, sources))
     # Phase 4: pass intent-aware user context so gap-filler sees hard constraints + budget
     _user_ctx = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
     rubric = fill_criterion_gaps(rubric, category, profile, research_text, user_context=_user_ctx)
@@ -791,6 +846,7 @@ def _execute_pipeline(
         products, rubric, research_text,
         progress_callback=_on_product_scored,
         user_intent=user_intent,
+        cancelled_check=lambda: session._cancelled,
     )
     _stage_timings["scoring"] = round(time.time() - _t0, 1)
     session.stats["stage_timings"]["scoring"] = _stage_timings["scoring"]
@@ -822,14 +878,18 @@ def _execute_pipeline(
                 for s in product.get("scores", [])[:6]
             )
             # Phase 5: assembled prompt with dedup + budget
+            # CEILING-03: ground the explanation in the actual evidence strings from scoring
+            # to prevent hallucination. The model must only refer to evidence already cited.
             expl_prompt = _assemble_prompt([
                 ("task", (
                     f"Category: {category}\n"
                     f"Product: {product['name']}\n"
                     f"Score: {product.get('percentage', 0):.0f}%\n"
-                    f"Criterion scores:\n{criteria_scores}\n\n"
+                    f"Criterion scores (with evidence from research):\n{criteria_scores}\n\n"
                     "Write 2-3 sentences explaining WHY this product fits this specific user's "
-                    "stated preferences. Be personal and concrete. Start with the strongest reason."
+                    "stated preferences. Base your explanation ONLY on the evidence strings above — "
+                    "do not invent claims not supported by that evidence. "
+                    "Be personal and concrete. Start with the strongest reason."
                 )),
                 ("user_context", f"User preferences:\n{user_ctx_text or '(none given)'}"),
             ])

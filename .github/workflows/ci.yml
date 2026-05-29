@@ -52,6 +52,15 @@ jobs:
           SERPER_API_KEY: dummy
           OPENROUTER_API_KEY: dummy
 
+      - name: Integration smoke tests
+        run: |
+          python -m pytest evals/integration/smoke_test.py evals/integration/orchestration_test.py -v
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
   # ── Next.js frontend ────────────────────────────────────────────
   frontend:
     name: Frontend (TypeScript + build)

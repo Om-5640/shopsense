@@ -204,9 +204,27 @@ def _rule_based_result(query: str) -> dict | None:
     return None
 
 
+def validate_category_slug(category: str) -> str:
+    """
+    Sanitise a category string before it is used in any file-system path.
+    Strips all characters not in [a-z0-9/_-] and raises ValueError if the
+    result is empty or the input looks like a path-traversal attempt.
+    """
+    if not category or not isinstance(category, str):
+        raise ValueError("category must be a non-empty string")
+    clean = _sanitize_slug(category)
+    if not clean:
+        raise ValueError(f"category slug became empty after sanitisation: {category!r}")
+    # Reject any residual traversal pattern (should never occur after _sanitize_slug, but be explicit)
+    if ".." in clean or clean.startswith("/"):
+        raise ValueError(f"category slug failed path-traversal check: {clean!r}")
+    return clean
+
+
 def category_to_filename(category: str) -> str:
     """Turn 'bedding/blanket' into 'bedding_blanket' for file paths."""
-    return category.replace("/", "_")
+    safe = validate_category_slug(category)
+    return safe.replace("/", "_")
 
 
 def resolve_category_interactively(query: str, forced_category: str | None = None) -> dict:
