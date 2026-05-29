@@ -315,11 +315,18 @@ def _identify_uncovered_criteria(criteria: list[dict], qa_history: list[dict]) -
     return [c["name"] for c in criteria if c["name"] not in targeted]
 
 
-def generate_next_question(category: str, criteria: list[dict], previous_qa: list[dict], initial_query: str = "") -> dict:
+def generate_next_question(
+    category: str,
+    criteria: list[dict],
+    previous_qa: list[dict],
+    initial_query: str = "",
+    memory_context: list[dict] | None = None,
+) -> dict:
     """
     Returns {question, why_asking, targets_criterion, is_done}.
     Serves category-template questions first, then coverage-aware dynamic questions.
     initial_query: the user's original search prompt — used to skip already-answered template questions.
+    memory_context: signals from past searches — criteria already answered by memory are deprioritised.
     """
     # ---- Serve template questions first ----
     asked_questions = [qa["question"] for qa in previous_qa]
@@ -358,11 +365,24 @@ def generate_next_question(category: str, criteria: list[dict], previous_qa: lis
             f"{initial_query}\n"
         )
 
+    # Memory context: tell the interviewer what we already know from past searches so it
+    # doesn't ask redundant questions about criteria memory already covers.
+    memory_note = ""
+    if memory_context:
+        remembered_facts = [s.get("text", "") for s in memory_context if s.get("text")]
+        if remembered_facts:
+            facts_text = "\n".join(f"  - {f}" for f in remembered_facts[:6])
+            memory_note = (
+                f"\nKNOWN FROM PAST SEARCHES (do NOT ask about these — already answered):\n"
+                f"{facts_text}\n"
+                f"Focus questions on criteria NOT already covered by the above facts.\n"
+            )
+
     prompt = f"""Category: {category}
 
 All buying criteria for this category:
 {criteria_text}
-{initial_context}
+{initial_context}{memory_note}
 Previous questions asked and answers given:
 {qa_text}
 {coverage_note}

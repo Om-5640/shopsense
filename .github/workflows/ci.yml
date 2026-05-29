@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master, main]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
   # ── Python backend ──────────────────────────────────────────────
@@ -26,7 +26,10 @@ jobs:
 
       - name: Check for leaked secrets
         run: |
-          if grep -rE "AIza[A-Za-z0-9_-]{30,}|gsk_[A-Za-z0-9]{30,}|csk-[A-Za-z0-9]{30,}|sk-or-[A-Za-z0-9]{30,}" \
+          # Patterns: Gemini (AIza...), Groq (gsk_...), Cerebras (csk-...), OpenRouter (sk-or-...),
+          # generic Bearer tokens, Mistral keys, Serper keys, and raw API_KEY= assignments with values.
+          if grep -rE \
+               "AIza[A-Za-z0-9_-]{30,}|gsk_[A-Za-z0-9]{30,}|csk-[A-Za-z0-9]{30,}|sk-or-[A-Za-z0-9]{30,}|[A-Za-z0-9_-]{32,}(serper|mistral|cohere|hf)[A-Za-z0-9_-]{8,}|API_KEY\s*=\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]" \
                --include="*.py" --include="*.ts" --include="*.tsx" --include="*.md" \
                --exclude-dir=node_modules --exclude-dir=.next .; then
             echo "ERROR: Possible API keys found in committed files!"

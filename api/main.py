@@ -41,10 +41,13 @@ from typing import AsyncGenerator, Any, Optional
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Ensure both api/ dir and project root are importable.
 _API_DIR = Path(__file__).parent
@@ -90,7 +93,40 @@ async def lifespan(app: FastAPI):
             pass
 
 
+# ---------------------------------------------------------------------------
+# Rate limiting (slowapi) — protects against quota-drain attacks
+# ---------------------------------------------------------------------------
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+
 app = FastAPI(title="Shopping Research Agent v7", version="7.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ---------------------------------------------------------------------------
+# Optional API-key authentication
+# Set API_SECRET_KEY env var to enable. Unset = auth disabled (dev mode).
+# Clients send: Authorization: Bearer <key>   OR   X-API-Key: <key>
+# ---------------------------------------------------------------------------
+
+_API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
+
+
+def _check_api_key(request: Request) -> None:
+    if not _API_SECRET_KEY:
+        return  # auth disabled — development mode
+    # Accept key via Authorization: Bearer <key> or X-API-Key: <key> header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+        if token == _API_SECRET_KEY:
+            return
+    api_key_header = request.headers.get("X-API-Key", "")
+    if api_key_header == _API_SECRET_KEY:
+        return
+    raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 _CORS_ORIGINS = [
     o.strip()
@@ -115,6 +151,19 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = rid
     return response
+
+
+def _get_session_user_id(request: Request) -> str:
+    """
+    Extract per-browser session ID from X-Session-ID header.
+    Falls back to 'default' for backwards compatibility (CLI mode, old clients).
+    Clients generate a UUID once and store it in localStorage — no auth required,
+    just isolation so different browsers don't share memory/signals.
+    """
+    sid = request.headers.get("X-Session-ID", "").strip()
+    if sid and len(sid) <= 64 and sid.replace("-", "").replace("_", "").isalnum():
+        return sid
+    return "default"
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +239,8 @@ class BoughtRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/detect")
-def detect(req: DetectRequest) -> dict:
+@limiter.limit("30/minute")
+def detect(request: Request, req: DetectRequest) -> dict:
     from category import detect_category, _sanitize_slug
     from reddit_fetch import detect_region, has_ambiguous_price
 
@@ -240,14 +290,23 @@ def interview_next(req: InterviewNextRequest) -> dict:
         if coverage >= dyn_target or len(qa) >= MAX_QUESTIONS:
             return {"question": "", "why_asking": "", "targets_criterion": "", "is_done": True}
 
-    result = generate_next_question(req.category, req.criteria, qa, initial_query=req.initial_query)
+    # Pass memory_context to the question generator so it avoids asking about
+    # criteria already answered by signals from the user's past searches.
+    result = generate_next_question(
+        req.category,
+        req.criteria,
+        qa,
+        initial_query=req.initial_query,
+        memory_context=req.memory_context or [],
+    )
     if force_continue:
         result["is_done"] = False
     return result
 
 
 @app.post("/api/interview/process_message")
-def process_message_endpoint(req: ProcessMessageRequest) -> dict:
+@limiter.limit("60/minute")
+def process_message_endpoint(request: Request, req: ProcessMessageRequest) -> dict:
     from interview import process_message
     return process_message(req.category, req.criteria, req.current_question, req.message, req.qa_history)
 
@@ -264,7 +323,8 @@ def interview_summarize(req: InterviewSummarizeRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/rubric")
-def generate_rubric_endpoint(body: dict) -> dict:
+@limiter.limit("30/minute")
+def generate_rubric_endpoint(request: Request, body: dict) -> dict:
     from rubric import generate_rubric
 
     category = body.get("category", "")
@@ -305,16 +365,19 @@ def generate_rubric_endpoint(body: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/search")
-def start_search(req: SearchRequest) -> dict:
+@limiter.limit("10/minute")
+def start_search(request: Request, req: SearchRequest, _auth: None = Depends(_check_api_key)) -> dict:
+    user_id = _get_session_user_id(request)
     search_id = str(uuid.uuid4())
     create_search(search_id, req.query, req.category, req.region)
     update_search(search_id, profile=req.profile, rubric=req.rubric, status="running")
     session = create_session(search_id, req.query)
-    # Merge qa_history and primary_noun into options
+    # Merge qa_history, primary_noun, and user_id into options
     options_with_qa = {
         **req.options,
         "qa_history": req.qa_history,
         "primary_noun": req.primary_noun or req.category.split("/")[-1].replace("-", " "),
+        "user_id": user_id,
     }
     start_pipeline(session, req.category, req.region, req.profile, req.rubric, options_with_qa)
     return {"search_id": search_id}
@@ -438,11 +501,12 @@ def fetch_prices_endpoint(req: PricesRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/memory/context")
-def get_memory_context(q: str = Query(""), category: str = Query("")) -> dict:
+def get_memory_context(request: Request, q: str = Query(""), category: str = Query("")) -> dict:
     """
     Given a query (or category), return relevant remembered signals.
     Used by the research page to pre-fill interview context.
     """
+    user_id = _get_session_user_id(request)
     try:
         from memory import find_relevant_signals, summarize_user_profile
         signals = find_relevant_signals(
@@ -450,8 +514,9 @@ def get_memory_context(q: str = Query(""), category: str = Query("")) -> dict:
             k=5,
             min_similarity=0.65,
             current_category=category or None,
+            user_id=user_id,
         )
-        profile_summary = summarize_user_profile(current_category=category or None)
+        profile_summary = summarize_user_profile(current_category=category or None, user_id=user_id)
         return {
             "signals": signals,
             "profile_summary": profile_summary,
@@ -552,7 +617,7 @@ def record_purchase(req: BoughtRequest) -> dict:
 
 
 @app.delete("/api/memory/all")
-def wipe_all_memory() -> dict:
+def wipe_all_memory(_auth: None = Depends(_check_api_key)) -> dict:
     try:
         from memory import clear_all_memory
         result = clear_all_memory()

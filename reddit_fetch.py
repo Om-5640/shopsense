@@ -51,10 +51,10 @@ PRICE_INDICATORS = ["under", "below", "around", "max", "budget", "less than", "f
 
 
 def detect_region(query: str) -> str | None:
-    """Returns region key. Checks session override first, then currency in query."""
-    # Session override set by resolve_region_interactively
-    if _SESSION_REGION:
-        return _SESSION_REGION
+    """Returns region key. Checks thread-local session override first, then currency in query."""
+    override = getattr(_session_local, "region", None)
+    if override:
+        return override
     q = query.lower()
     for marker, region in REGIONS_BY_CURRENCY.items():
         if marker in q:
@@ -62,14 +62,15 @@ def detect_region(query: str) -> str | None:
     return None
 
 
-# Session-level region override (set once per run)
-_SESSION_REGION: str | None = None
+# Thread-local region override — each pipeline thread has its own isolated value.
+# Replaces the old module-level global which caused cross-request corruption under concurrency.
+import threading as _threading
+_session_local = _threading.local()
 
 
 def set_session_region(region: str) -> None:
-    """Set the region for the current run, used by all downstream detect_region calls."""
-    global _SESSION_REGION
-    _SESSION_REGION = region if region != "global" else None
+    """Set the region for the current pipeline thread. Thread-safe — no global state."""
+    _session_local.region = region if region != "global" else None
 
 
 def has_ambiguous_price(query: str) -> bool:
@@ -392,8 +393,7 @@ def _gemini_request(body, max_attempts=3, wait=10):
         try:
             resp = requests.post(
                 GEMINI_URL,
-                headers={"Content-Type": "application/json"},
-                params={"key": GEMINI_API_KEY},
+                headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
                 json=body,
                 timeout=120,
             )

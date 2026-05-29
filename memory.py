@@ -70,6 +70,7 @@ def extract_and_save_signals(
     category: str,
     qa_history: list[dict],
     source_search_id: Optional[str] = None,
+    user_id: str = "default",
 ) -> list[dict]:
     """
     Run signal_extractor agent on Q&A history, embed each signal, and persist.
@@ -129,6 +130,7 @@ def extract_and_save_signals(
                 category=sig.get("category_hint") or category,
                 strength=sig.get("strength", "moderate"),
                 source_search_id=source_search_id,
+                user_id=user_id,
             )
             saved.append({"id": sig_id, **sig})
         except Exception as exc:
@@ -147,6 +149,7 @@ def find_relevant_signals(
     k: int = 5,
     min_similarity: float = 0.7,
     current_category: Optional[str] = None,
+    user_id: str = "default",
 ) -> list[dict]:
     """
     Retrieve top-k signals most relevant to `query` via embedding similarity.
@@ -166,7 +169,7 @@ def find_relevant_signals(
         return []
 
     try:
-        raw_results = find_similar_signals(query_vec, k=k * 3, min_similarity=0.0)
+        raw_results = find_similar_signals(query_vec, k=k * 3, min_similarity=0.0, user_id=user_id)
     except Exception as exc:
         print(f"[memory] find_similar_signals failed (non-fatal): {exc}")
         return []
@@ -191,7 +194,7 @@ def find_relevant_signals(
     return filtered[:k]
 
 
-def summarize_user_profile(current_category: Optional[str] = None) -> str:
+def summarize_user_profile(current_category: Optional[str] = None, user_id: str = "default") -> str:
     """
     Generate a compact text summary of known user preferences.
     Used to inject memory context into rubric generation and interview prompts.
@@ -199,7 +202,7 @@ def summarize_user_profile(current_category: Optional[str] = None) -> str:
     """
     try:
         from db import list_signals
-        signals = list_signals(limit=50)
+        signals = list_signals(user_id=user_id, limit=50)
     except Exception:
         return ""
 

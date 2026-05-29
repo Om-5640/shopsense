@@ -222,8 +222,15 @@ def call_gemini(prompt: str, system: str = "", json_mode: bool = False, max_toke
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
 
-    url = f"{GEMINI_URL}?key={GEMINI_API_KEY}"
-    resp = _smart_post_with_retry(url, {"Content-Type": "application/json"}, body, "gemini", timeout=GEMINI_TIMEOUT)
+    # Key goes in a request header, not the URL — prevents leakage into server logs,
+    # proxy access logs, browser DevTools, and HTTP Referer headers.
+    resp = _smart_post_with_retry(
+        GEMINI_URL,
+        {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
+        body,
+        "gemini",
+        timeout=GEMINI_TIMEOUT,
+    )
     data = resp.json()
 
     try:

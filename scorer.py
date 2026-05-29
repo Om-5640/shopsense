@@ -54,6 +54,25 @@ RULES:
 NO markdown, NO commentary, JSON only."""
 
 
+_INJECT_PATTERN = re.compile(
+    r"(ignore\s+(all\s+)?(previous|prior|above)\s+instructions?|"
+    r"system\s*:\s*|you\s+are\s+now|disregard\s+your\s+|"
+    r"new\s+instructions?:|override\s+instructions?|"
+    r"]\s*}\s*\{|]\s*}\s*SYSTEM)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_research_text(text: str) -> str:
+    """
+    Strip prompt-injection attempts from Reddit content before it enters LLM prompts.
+    Removes instruction-override patterns while preserving genuine product discussion.
+    """
+    if not text:
+        return text
+    return _INJECT_PATTERN.sub("[removed]", text)
+
+
 def _filter_research_for_product(product_name: str, full_research: str, max_chars: int = 15_000) -> str:
     """
     Find paragraphs in research text that mention this product, PLUS adjacent paragraphs
@@ -141,16 +160,22 @@ def score_product(
 
     product_text = _format_product(product)
     # 6K chars per product is safe for Groq 8K token limit when combined with rubric + system
-    relevant_research = _filter_research_for_product(product.get("name", ""), full_research_text, max_chars=6000)
+    raw_research = _filter_research_for_product(product.get("name", ""), full_research_text, max_chars=6000)
+    # Sanitize before injecting into prompt — prevents Reddit comment injection attacks
+    relevant_research = _sanitize_research_text(raw_research)
 
     constraint_section = _build_constraint_context(user_intent)
     constraint_block = f"\n\n{constraint_section}\n" if constraint_section else ""
 
+    # Explicit data boundary tags prevent injected instructions in Reddit content
+    # from being mistaken for system directives by the LLM.
     prompt = f"""PRODUCT TO SCORE:
 {product_text}
 
+<research_data>
 RELEVANT RESEARCH (Reddit comments + review excerpts mentioning this product):
 {relevant_research}
+</research_data>
 {constraint_block}
 RUBRIC:
 {criteria_text}

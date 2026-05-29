@@ -68,8 +68,14 @@ if str(_ROOT) not in sys.path:
 
 
 # In-memory session registry (survives only while the server is up)
+# Hard cap: reject new sessions when this many are active, preventing unbounded memory growth.
+# True horizontal scaling requires a shared session store (Redis), but a cap prevents OOM crashes.
+_MAX_CONCURRENT_SESSIONS = 100
 _sessions: dict[str, "PipelineSession"] = {}
 _sessions_lock = threading.Lock()
+
+
+_MAX_EVENT_LOG = 500  # cap per-session event replay log to prevent unbounded memory growth
 
 
 class PipelineSession:
@@ -82,7 +88,7 @@ class PipelineSession:
         self.error: Optional[str] = None
         self._created_at = time.time()
         self._cancelled = False
-        # All events emitted so far — lets reconnected clients catch up
+        # Bounded event replay log — capped at _MAX_EVENT_LOG entries to prevent OOM
         self._event_log: list[dict] = []
         # Phase 11: pipeline diagnostics — populated during execution
         self.stats: dict = {
@@ -97,7 +103,8 @@ class PipelineSession:
 
     def emit(self, event_type: str, data: dict) -> None:
         item = {"type": event_type, "data": data}
-        self._event_log.append(item)
+        if len(self._event_log) < _MAX_EVENT_LOG:
+            self._event_log.append(item)
         self.events.put(item)
 
     def emit_log(self, message: str) -> None:
@@ -120,7 +127,28 @@ class PipelineSession:
 def create_session(search_id: str, query: str) -> "PipelineSession":
     session = PipelineSession(search_id, query)
     with _sessions_lock:
+        # Enforce session cap — evict oldest finished sessions first, then reject if still over cap
+        if len(_sessions) >= _MAX_CONCURRENT_SESSIONS:
+            _done = sorted(
+                [(sid, s) for sid, s in _sessions.items() if s.status in ("done", "error", "cancelled")],
+                key=lambda x: x[1]._created_at,
+            )
+            for sid, _ in _done[:max(1, len(_done) // 2)]:
+                del _sessions[sid]
+        if len(_sessions) >= _MAX_CONCURRENT_SESSIONS:
+            raise RuntimeError(
+                f"Server at capacity ({_MAX_CONCURRENT_SESSIONS} concurrent sessions). "
+                "Please try again in a moment."
+            )
         _sessions[search_id] = session
+    # Reset provider dead-state so each new search gets a clean fallback chain.
+    # The module-level _dead_providers set was persisting across requests, causing
+    # providers exhausted in search N to be skipped permanently in searches N+1..∞.
+    try:
+        from agents import reset_dead_providers
+        reset_dead_providers()
+    except Exception:
+        pass
     return session
 
 
@@ -139,10 +167,10 @@ def cancel_session(search_id: str) -> bool:
     return False
 
 
-def cleanup_old_sessions(max_age_hours: int = 6) -> int:
-    """Remove done/error sessions older than max_age_hours, and hung running sessions older than 2×."""
+def cleanup_old_sessions(max_age_hours: int = 2) -> int:
+    """Remove done/error sessions older than max_age_hours, and hung running sessions older than 4h."""
     cutoff = time.time() - max_age_hours * 3600
-    running_cutoff = time.time() - max_age_hours * 2 * 3600
+    running_cutoff = time.time() - 4 * 3600
     removed = 0
     with _sessions_lock:
         to_remove = [
@@ -195,8 +223,10 @@ _PIPELINE_CACHE_TTL = 3600  # 1 hour
 def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict | None = None) -> str:
     """
     Deterministic cache key: hash of query + category + rubric weights + current-session interview.
-    Uses interview Q&A (not merged preferences_summary) to prevent cross-category memory signals
-    from invalidating the cache for an unrelated search.
+
+    IMPORTANT: always call this AFTER fill_criterion_gaps() so the key reflects the
+    gap-filled rubric weights. Calling it on the pre-gap rubric causes different users
+    with identical pre-gap rubrics but different gap-fill results to share a stale cache entry.
     """
     weights = sorted(
         (c["name"], c["weight"])
@@ -254,22 +284,67 @@ _USAGE_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
-def _build_retrieval_query(base_query: str, profile: dict) -> str:
+# Map criterion names to human-readable retrieval terms
+_CRITERION_RETRIEVAL_HINTS: dict[str, str] = {
+    "noise_cancellation": "noise cancellation",
+    "battery_life": "battery life",
+    "sound_quality": "sound quality",
+    "call_quality": "call quality",
+    "microphone_quality": "microphone",
+    "water_resistance": "waterproof",
+    "durability": "durability",
+    "gaming_latency": "low latency gaming",
+    "bass_response": "bass",
+    "portability": "portable",
+    "comfort": "comfort",
+    "transparency_mode": "transparency mode",
+    "price_to_value": "budget",
+    "build_quality": "build quality",
+    "connectivity": "multipoint bluetooth",
+    "ecosystem_integration": "ecosystem",
+}
+
+
+def _build_retrieval_query(base_query: str, profile: dict, rubric: dict | None = None) -> str:
     """
-    Augment retrieval query with primary usage context extracted from preferences.
-    Adds 1 usage term (e.g., "gaming", "commuting") when clearly stated in the profile.
-    Never modifies the query if no strong signal is found.
+    Augment retrieval query with:
+    1. Primary usage context from profile preferences (e.g., "gaming", "commuting")
+    2. Top-weighted rubric criterion terms so retrieval targets the user's actual priorities.
+
+    Without criterion-aware enrichment, Reddit's most-popular threads dominate retrieval
+    regardless of what the user actually cares about (RETRIEVAL-01 / CEILING-01 fix).
     """
     if not isinstance(profile, dict):
         return base_query
+
+    # Step 1: usage-pattern enrichment (existing behaviour)
     prefs = (profile.get("preferences_summary") or "").lower()
-    if not prefs:
-        return base_query
-    for keyword, hint in _USAGE_PATTERNS:
-        if keyword in prefs and hint.lower() not in base_query.lower():
-            enriched = f"{base_query} {hint}"
-            return enriched[:100]  # cap at 100 chars
-    return base_query
+    enriched = base_query
+    if prefs:
+        for keyword, hint in _USAGE_PATTERNS:
+            if keyword in prefs and hint.lower() not in base_query.lower():
+                enriched = f"{base_query} {hint}"
+                break  # add at most one usage term
+
+    # Step 2: inject top-weighted criterion term if not already covered
+    if rubric and isinstance(rubric, dict):
+        criteria = rubric.get("weighted_criteria", [])
+        if criteria:
+            # Find the highest-weight criterion that maps to a retrieval hint
+            top_criteria = sorted(criteria, key=lambda c: c.get("weight", 0), reverse=True)
+            for c in top_criteria[:3]:
+                hint = _CRITERION_RETRIEVAL_HINTS.get(c.get("name", ""))
+                if hint and hint.lower() not in enriched.lower():
+                    enriched = f"{enriched} {hint}"
+                    break  # add at most one criterion term
+
+    # Word-boundary-safe truncation: cut at last space before limit
+    limit = 120
+    if len(enriched) > limit:
+        cut = enriched[:limit].rsplit(" ", 1)[0]
+        enriched = cut if cut else enriched[:limit]
+
+    return enriched
 
 
 def _build_analyzer_hint(profile: dict) -> str:
@@ -453,9 +528,15 @@ def _execute_pipeline(
     _pipeline_start = time.time()
     _stage_timings: dict[str, float] = {}
 
-    # ---- Phase 8: Pipeline cache check ----
-    _cache_key = _pipeline_cache_key(query, category, rubric, profile)
-    _cached_result = _load_pipeline_cache(_cache_key)
+    # Set region for thread-local calls downstream (must happen before any reddit_fetch call)
+    set_session_region(region)
+
+    # ---- Phase 8: Pipeline cache check (uses pre-gap rubric key for fast hit) ----
+    # We check cache here with the pre-gap rubric. After gap-filling we recompute the key
+    # and save under the post-gap key. On subsequent runs the pre-gap lookup will miss
+    # (weights differ) and we'll find the post-gap entry instead — ensuring no stale results.
+    _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
+    _cached_result = _load_pipeline_cache(_pre_gap_cache_key)
     if _cached_result:
         age_s = int(time.time() - _cached_result.get("_cached_at", 0))
         session.emit("log", {"message": f"[cache] Returning cached result from {age_s}s ago"})
@@ -468,10 +549,20 @@ def _execute_pipeline(
             update_search(session.search_id, status="done", **session.result)
         except Exception:
             pass
+        # Still extract signals from interview even on cache hit — memory must always learn.
+        try:
+            from memory import extract_and_save_signals
+            qa_history = options.get("qa_history", [])
+            _uid = options.get("user_id", "default")
+            if qa_history:
+                extract_and_save_signals(
+                    category, qa_history,
+                    source_search_id=session.search_id,
+                    user_id=_uid,
+                )
+        except Exception:
+            pass
         return
-
-    # Set region for thread-local calls downstream
-    set_session_region(region)
 
     # ---- Stage 1: Reddit fetch ----
     _t0 = time.time()
@@ -480,7 +571,7 @@ def _execute_pipeline(
         "label": "Researching Reddit",
         "total": limit,
     })
-    enriched_query = _build_retrieval_query(query, profile)
+    enriched_query = _build_retrieval_query(query, profile, rubric=rubric)
     if enriched_query != query:
         session.emit_log(f"[retrieval] query enriched: '{query}' → '{enriched_query}'")
     reddit_threads = fetch_all_threads(enriched_query, limit=limit, profile=profile)
@@ -769,8 +860,13 @@ def _execute_pipeline(
     try:
         from memory import extract_and_save_signals
         qa_history = options.get("qa_history", [])
+        _user_id = options.get("user_id", "default")
         if qa_history:
-            extract_and_save_signals(category, qa_history, source_search_id=session.search_id)
+            extract_and_save_signals(
+                category, qa_history,
+                source_search_id=session.search_id,
+                user_id=_user_id,
+            )
     except Exception as sig_err:
         session.emit_log(f"[memory] signal extraction non-fatal: {sig_err}")
 
@@ -785,8 +881,10 @@ def _execute_pipeline(
         "scoredProducts": scored,
     }
 
-    # Phase 8: Save pipeline result to cache
-    _save_pipeline_cache(_cache_key, session.result)
+    # Phase 8: Save under post-gap-fill rubric key so future requests with the same
+    # (gap-filled) rubric get a valid cache hit instead of re-running gap-fill.
+    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
+    _save_pipeline_cache(_post_gap_cache_key, session.result)
 
     # Phase 7 + 11: Log total pipeline time with full diagnostics
     _total_elapsed = round(time.time() - _pipeline_start, 1)
