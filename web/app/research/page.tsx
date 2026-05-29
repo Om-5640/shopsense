@@ -30,7 +30,7 @@ import { AnalyzerAnimation } from '@/components/research/analyzer-animation'
 import { RedditFetchGrid } from '@/components/research/reddit-fetch-grid'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { Criterion, QAEntry, Rubric, MemoryContext, InterviewQuestion, ProcessMessageResult } from '@/lib/types'
+import type { Criterion, QAEntry, Rubric, MemoryContext, InterviewQuestion, ProcessMessageResult, UserIntent } from '@/lib/types'
 import {
   detectCategory,
   getCriteria,
@@ -164,6 +164,7 @@ function ResearchPageContent() {
   const [rubricCriteria, setRubricCriteria] = useState<
     Array<{ id: string; label: string; weight: number; rationale: string }>
   >([])
+  const [capturedIntent, setCapturedIntent] = useState<UserIntent | undefined>(undefined)
 
   // Pipeline stages
   const [stages, setStages] = useState<PipelineStage[]>(INIT_STAGES)
@@ -267,6 +268,11 @@ function ResearchPageContent() {
     setSavedProfile(null)
     pendingProfileSetupRef.current = null
     profileRef.current = profile
+    // Restore intent from saved profile so the rubric confirmation can show it
+    const savedIntent = savedProfile.intent
+    if (savedIntent && typeof savedIntent === 'object' && !Array.isArray(savedIntent)) {
+      setCapturedIntent(savedIntent as UserIntent)
+    }
     setQaHistory((profile.interview as QAEntry[] | undefined) ?? [])
     setMessages([])
     await buildRubric(setup.cat, setup.criteria, profile, setup.reg)
@@ -278,6 +284,7 @@ function ResearchPageContent() {
     setSavedProfile(null)
     pendingProfileSetupRef.current = null
     profileRef.current = null
+    setCapturedIntent(undefined)
     setQaHistory(setup.preQA)
     setMessages([])
     setCurrentQuestion(null)
@@ -456,6 +463,7 @@ function ResearchPageContent() {
       // W-01: clear interview checkpoint now that it completed
       try { localStorage.removeItem(`shopsense_ckpt_${query}`) } catch { /* ignore */ }
       const { preferences_summary, intent } = await summarizeInterview(cat, history)
+      setCapturedIntent(intent ?? undefined)
       const prof = {
         category: cat,
         primary_noun: primaryNoun || cat.split('/').pop() || '',
@@ -574,6 +582,13 @@ function ResearchPageContent() {
           try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
           router.push(`/results/${search_id}`)
         },
+        onWarning() {
+          toast.warning('Research data trimmed', {
+            id: 'token-budget-warning',
+            description: 'Some context was trimmed to fit AI token limits. Results may be slightly less comprehensive.',
+            duration: 8000,
+          })
+        },
       })
     } catch (e) {
       handleError(`Failed to start search: ${e instanceof Error ? e.message : e}`)
@@ -632,6 +647,7 @@ function ResearchPageContent() {
     setSavedProfile(null)
     setRubric(null)
     setRubricCriteria([])
+    setCapturedIntent(undefined)
     setRedditThreads([])
     setActiveSearchId(null)
     setStopping(false)
@@ -912,6 +928,7 @@ function ResearchPageContent() {
             criteria={rubricCriteria}
             onWeightChange={handleRubricWeightChange}
             onApprove={handleRubricApprove}
+            intent={capturedIntent}
           />
         </motion.div>
       )

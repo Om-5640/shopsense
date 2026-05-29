@@ -3,13 +3,14 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useDeferredValue } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw } from 'lucide-react'
+import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
 import { CommandPalette } from '@/components/layout/command-palette'
 import { RubricSidebar } from '@/components/results/rubric-sidebar'
 import { ProductCard } from '@/components/results/product-card'
 import { InsightsPanel } from '@/components/results/insights-panel'
+import { DiagnosticsPanel } from '@/components/results/diagnostics-panel'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
@@ -116,6 +117,7 @@ export default function ResultsPage() {
   const [sortBy, setSortBy] = useState<'score' | 'price' | 'rating'>('score')
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
 
   const { rubric, weights, products, compareSet, initResults, setWeight, resetWeights, toggleCompare } =
     useResultsStore()
@@ -467,6 +469,16 @@ export default function ResultsPage() {
                       Refine search
                     </Button>
 
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-[#A1A1AA] hover:text-violet-300 hover:bg-violet-500/10"
+                      onClick={() => setDiagnosticsOpen(true)}
+                    >
+                      <Activity className="w-3.5 h-3.5 mr-1.5" />
+                      Diagnostics
+                    </Button>
+
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="sm" className="text-[#A1A1AA]">
@@ -515,6 +527,22 @@ export default function ResultsPage() {
           </div>
         </div>
       </main>
+
+      {/* Diagnostics sheet */}
+      <Sheet open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
+        <SheetContent side="right" className="w-[360px] sm:w-[420px] bg-[#0F0F12] border-white/[0.06] overflow-y-auto">
+          <div className="pt-2 pb-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity className="w-4 h-4 text-violet-400" />
+              <h2 className="text-base font-semibold text-[#FAFAFA]">Pipeline Diagnostics</h2>
+            </div>
+            <p className="text-xs text-[#71717A] mb-6">
+              Timing, resource usage, and warnings from this research run.
+            </p>
+            <DiagnosticsPanel searchId={id} />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Compare bar */}
       <AnimatePresence>

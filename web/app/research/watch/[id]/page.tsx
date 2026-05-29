@@ -101,6 +101,13 @@ export default function WatchPage() {
             try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
             setTimeout(() => router.push(`/results/${id}`), 800)
           },
+          onWarning() {
+            toast.warning('Research data trimmed', {
+              id: 'token-budget-warning',
+              description: 'Some context was trimmed to fit AI token limits. Results may be slightly less comprehensive.',
+              duration: 8000,
+            })
+          },
         }, /* reconnect */ true)
       })
       .catch(() => {

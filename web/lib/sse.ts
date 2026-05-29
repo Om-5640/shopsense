@@ -11,6 +11,7 @@ export interface SSEHandlers {
   onProgress: (stage: string, current: number, total?: number, detail?: string) => void
   onError: (message: string) => void
   onDone: (searchId: string) => void
+  onWarning?: (message: string) => void
 }
 
 export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = false): () => void {
@@ -44,6 +45,11 @@ export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = 
       } else if (event.type === 'error') {
         handlers.onError((event.data.message as string) ?? 'Pipeline error')
         es.close()
+      } else if (event.type === 'log') {
+        const msg = (event.data.message as string) ?? ''
+        if (msg.includes('[token_budget]') && msg.includes('exceeds') && handlers.onWarning) {
+          handlers.onWarning(msg)
+        }
       }
     } catch {
       // ignore parse errors on malformed SSE frames

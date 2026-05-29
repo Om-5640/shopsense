@@ -255,3 +255,19 @@ export interface ProcessMessageResult {
   clarification_question: string | null
   command_action: string | null
 }
+
+// ── Phase 11: Pipeline diagnostics ───────────────────────────────────────────
+export interface PipelineDiagnostics {
+  search_id: string
+  status: string
+  elapsed_s?: number
+  stats: {
+    stage_timings: Record<string, number>
+    product_count: number
+    thread_count: number
+    dedup_removed: number
+    llm_calls_estimated: number
+    tokens_estimated: number
+    warnings: string[]
+  }
+}

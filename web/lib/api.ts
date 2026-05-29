@@ -16,6 +16,7 @@ import type {
   MemoryContext,
   ProcessMessageResult,
   UserIntent,
+  PipelineDiagnostics,
 } from './types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -126,6 +127,11 @@ export async function getSearchResult(id: string): Promise<SearchResult> {
 export async function cancelSearch(id: string): Promise<{ cancelled: boolean }> {
   const { data } = await client.post(`/api/search/${id}/cancel`)
   return data
+}
+
+export async function getDiagnostics(id: string): Promise<PipelineDiagnostics> {
+  const { data } = await client.get(`/api/search/${id}/diagnostics`)
+  return data as PipelineDiagnostics
 }
 
 export async function listSearches(limit = 50, offset = 0): Promise<SearchResult[]> {
