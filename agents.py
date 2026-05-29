@@ -213,6 +213,7 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
     cfg = AGENTS[agent_name]
     json_mode = cfg.get("json_mode", False)
     max_tokens = cfg.get("max_tokens", 2048)
+    temperature = cfg.get("temperature", 0.3)
 
     # Pick primary provider
     if cfg["provider"] == "pool":
@@ -244,7 +245,7 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
     last_err = None
     for i, provider in enumerate(available):
         try:
-            return _dispatch(provider, user_prompt, system, json_mode, max_tokens)
+            return _dispatch(provider, user_prompt, system, json_mode, max_tokens, temperature)
         except GroqQuotaExhausted as e:
             mark_provider_dead("groq")
             last_err = e
@@ -286,12 +287,28 @@ def _is_provider_available(provider: str) -> bool:
     return False
 
 
-def _dispatch(provider: str, prompt: str, system: str, json_mode: bool, max_tokens: int) -> str:
+_PROVIDER_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "groq": 8192,       # LLaMA 70B hard output limit; requesting exactly 8192 risks mid-JSON truncation
+    "cerebras": 8192,
+    "gemini": 65536,
+    "mistral": 32768,
+    "openrouter": 65536,
+}
+_GROQ_SAFE_MAX_TOKENS = 6000  # leave 2K headroom to avoid mid-JSON truncation at the limit
+
+
+def _dispatch(
+    provider: str, prompt: str, system: str,
+    json_mode: bool, max_tokens: int, temperature: float = 0.3,
+) -> str:
     """Route to the right LLM client based on provider name."""
     if provider == "groq":
-        return call_groq(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)
+        # Cap at safe limit to prevent mid-JSON truncation; Groq's hard output limit is 8192 tokens
+        safe = min(max_tokens, _GROQ_SAFE_MAX_TOKENS)
+        return call_groq(prompt, system=system, json_mode=json_mode, max_tokens=safe)
     elif provider == "gemini":
-        text, _ = call_gemini(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)
+        # Pass agent-configured temperature rather than Gemini hardcoded 0.3 (PROVIDER-04)
+        text, _ = call_gemini(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens, temperature=temperature)
         return text
     elif provider == "mistral":
         return call_mistral(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)

@@ -64,6 +64,7 @@ interface ResultsState {
   query: string
   category: string
   region: string
+  createdAt: string | null
 
   rubric: Rubric | null
   // Live weights — user can slide these without touching the original rubric
@@ -76,6 +77,7 @@ interface ResultsState {
     query: string
     category: string
     region: string
+    createdAt: string
     rubric: Rubric
     products: ScoredProduct[]
   }) => void
@@ -97,14 +99,15 @@ export const useResultsStore = create<ResultsState>((set, get) => ({
   query: '',
   category: '',
   region: '',
+  createdAt: null,
   rubric: null,
   weights: {},
   products: [],
   compareSet: new Set(),
 
-  initResults({ searchId, query, category, region, rubric, products }) {
+  initResults({ searchId, query, category, region, createdAt, rubric, products }) {
     const weights = extractWeights(rubric.weighted_criteria)
-    set({ searchId, query, category, region, rubric, weights, products })
+    set({ searchId, query, category, region, createdAt, rubric, weights, products })
   },
 
   setWeight(criterionName, value) {

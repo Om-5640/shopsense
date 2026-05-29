@@ -598,18 +598,31 @@ def save_product_memory(
 
 
 def get_product_memory(product_name: str, user_id: str = "default") -> Optional[dict]:
+    # Case-insensitive + prefix-tolerant matching: "Sony WF-1000XM5" matches
+    # "Sony WF-1000XM5 Wireless Earbuds" stored from a previous search, and vice versa.
+    name_lower = product_name.strip().lower()
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
-                'SELECT * FROM "ProductMemory" WHERE "userId" = %s AND "productName" = %s',
-                (user_id, product_name),
+                'SELECT * FROM "ProductMemory" '
+                'WHERE "userId" = %s AND ('
+                '  LOWER("productName") = %s'
+                '  OR LOWER(%s) LIKE LOWER("productName") || \' %%\''
+                '  OR LOWER("productName") LIKE LOWER(%s) || \' %%\''
+                ') LIMIT 1',
+                (user_id, name_lower, product_name, product_name),
             )
             return _pg_fetchone_as_dict(cur)
     else:
         conn = _sqlite_connect()
         row = conn.execute(
-            "SELECT * FROM ProductMemory WHERE userId = ? AND productName = ?",
-            (user_id, product_name),
+            "SELECT * FROM ProductMemory "
+            "WHERE userId = ? AND ("
+            "  LOWER(productName) = ?"
+            "  OR LOWER(?) LIKE LOWER(productName) || ' %'"
+            "  OR LOWER(productName) LIKE LOWER(?) || ' %'"
+            ") LIMIT 1",
+            (user_id, name_lower, product_name, product_name),
         ).fetchone()
         return _sqlite_row_to_dict(row) if row else None
 

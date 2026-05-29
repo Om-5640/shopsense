@@ -205,7 +205,13 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
 
 # ---- GEMINI ----
 
-def call_gemini(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 65_000) -> tuple[str, str]:
+def call_gemini(
+    prompt: str,
+    system: str = "",
+    json_mode: bool = False,
+    max_tokens: int = 65_000,
+    temperature: float = 0.3,
+) -> tuple[str, str]:
     """Returns (text, finish_reason). Used for: category, criteria, rubric, analysis."""
     if not GEMINI_API_KEY:
         raise RuntimeError("Set GEMINI_API_KEY env var. Get one at https://aistudio.google.com/apikey")
@@ -213,7 +219,7 @@ def call_gemini(prompt: str, system: str = "", json_mode: bool = False, max_toke
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.3,
+            "temperature": temperature,
             "maxOutputTokens": max_tokens,
         },
     }

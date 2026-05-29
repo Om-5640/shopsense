@@ -40,6 +40,10 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# Must stay in sync with TOKEN_BUDGET_WARNING_PREFIX in web/lib/sse.ts
+_TOKEN_BUDGET_PREFIX = "[token_budget]"
+
+
 def _emit_token_warning(
     session: "PipelineSession",
     label: str,
@@ -55,7 +59,7 @@ def _emit_token_warning(
         token_est = _estimate_tokens(text)
         budget_tok = budget_chars // 4
         session.emit_log(
-            f"[token_budget] {label}: ~{token_est:,} tokens exceeds limit ~{budget_tok:,}. "
+            f"{_TOKEN_BUDGET_PREFIX} {label}: ~{token_est:,} tokens exceeds limit ~{budget_tok:,}. "
             f"Trimming to fit."
         )
         text = text[:budget_chars]
@@ -364,7 +368,16 @@ def _build_retrieval_query(base_query: str, profile: dict, rubric: dict | None =
                     enriched = f"{enriched} {hint}"
                     break  # add at most one criterion term
 
-    # Step 3: inject exclusion terms from user intent as negative Reddit search terms
+    # Step 3: inject budget term so retrieval targets price-tier discussions
+    if isinstance(profile, dict):
+        intent = profile.get("intent")
+        if intent and isinstance(intent, dict):
+            budget = intent.get("budget", "")
+            if budget and "budget" not in enriched.lower():
+                # Strip currency symbols/amounts — just add "budget" if any budget is set
+                enriched = f"{enriched} budget"
+
+    # Step 4: inject exclusion terms from user intent as negative Reddit search terms
     if isinstance(profile, dict):
         intent = profile.get("intent")
         if intent and isinstance(intent, dict):
@@ -892,7 +905,7 @@ def _execute_pipeline(
                     "Be personal and concrete. Start with the strongest reason."
                 )),
                 ("user_context", f"User preferences:\n{user_ctx_text or '(none given)'}"),
-            ])
+            ], budget_chars=6000)  # safe for Groq 8K limit (6K input + 2K output reserve)
             try:
                 expl = run_agent("explanation_writer", user_prompt=expl_prompt)
                 scored[idx]["explanation"] = expl.strip()

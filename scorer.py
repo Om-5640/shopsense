@@ -138,12 +138,16 @@ def _format_criterion_line(c: dict) -> str:
     return f"- {c['name']}: {c['label']} (weight {c['weight']}/10) — {context}"
 
 
-def _build_constraint_context(user_intent: dict | None) -> str:
+def _build_constraint_context(user_intent: dict | None, include_budget: bool = False) -> str:
     """
     Build a compact constraint block injected into scorer prompts.
     Hard constraints and exclusions directly override evidence-based scoring —
     a product violating a MUST/NEVER constraint should score 1-2 on that criterion
     regardless of what Reddit says.
+
+    `include_budget=False` (default): omit budget line since it is already encoded
+    in the rubric's price_to_value weight, avoiding triple-injection (ENTROPY-03).
+    Set True only for non-scorer callers that don't have a rubric in the same prompt.
     """
     if not user_intent or not isinstance(user_intent, dict):
         return ""
@@ -156,7 +160,7 @@ def _build_constraint_context(user_intent: dict | None) -> str:
         parts.append("USER EXPLICITLY REJECTS (score relevant criteria 1-3 if product includes these):")
         for e in user_intent["exclusions"][:3]:
             parts.append(f"  ✗ {e}")
-    if user_intent.get("budget"):
+    if include_budget and user_intent.get("budget"):
         parts.append(f"Budget constraint: {user_intent['budget']} — penalize value_for_money if product is over budget.")
     return "\n".join(parts) if parts else ""
 

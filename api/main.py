@@ -82,6 +82,12 @@ async def lifespan(app: FastAPI):
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
     init_db()
+    # Purge cache files older than 24h at startup to prevent unbounded disk growth (MEMORY-04)
+    try:
+        import cache as _cache_mod
+        _cache_mod.purge_expired(max_age_seconds=86400)
+    except Exception:
+        pass
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     try:
         yield
@@ -128,11 +134,16 @@ def _check_api_key(request: Request) -> None:
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
+_CORS_ENV = os.environ.get("CORS_ORIGINS", "")
+if not _CORS_ENV:
+    import logging as _cors_log
+    _cors_log.getLogger(__name__).warning(
+        "[SEC-08] CORS_ORIGINS env var not set — defaulting to localhost:3000. "
+        "Set CORS_ORIGINS to your production frontend URL(s) to prevent localhost CORS abuse."
+    )
 _CORS_ORIGINS = [
     o.strip()
-    for o in os.environ.get(
-        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-    ).split(",")
+    for o in (_CORS_ENV or "http://localhost:3000,http://127.0.0.1:3000").split(",")
     if o.strip()
 ]
 

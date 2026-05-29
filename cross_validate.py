@@ -137,8 +137,11 @@ def annotate_cross_subreddit(
 
         by_sub = product_by_sub.get(match_key or pname, {})
         n_subs = len(by_sub)
+        total_mentions = sum(len(sents) for sents in by_sub.values())
 
-        if n_subs < 2:
+        # Require at least 2 subreddits AND 3+ total mentions before labeling as
+        # "consistent" or "split" — 2 mentions in the same subreddit is not cross-validation.
+        if n_subs < 2 or total_mentions < 3:
             product["cross_subreddit_signal"] = {
                 "signal": "single_source",
                 "explanation": "",

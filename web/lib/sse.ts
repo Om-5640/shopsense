@@ -5,6 +5,9 @@
 
 import type { PipelineEvent } from './types'
 
+/** Prefix emitted by pipeline_runner._emit_token_warning() — must stay in sync with the Python constant. */
+export const TOKEN_BUDGET_WARNING_PREFIX = '[token_budget]'
+
 export interface SSEHandlers {
   onStageStart: (stage: string, label: string) => void
   onStageDone: (stage: string, count?: number, productsFound?: number) => void
@@ -47,7 +50,7 @@ export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = 
         es.close()
       } else if (event.type === 'log') {
         const msg = (event.data.message as string) ?? ''
-        if (msg.includes('[token_budget]') && msg.includes('exceeds') && handlers.onWarning) {
+        if (msg.startsWith(TOKEN_BUDGET_WARNING_PREFIX) && msg.includes('exceeds') && handlers.onWarning) {
           handlers.onWarning(msg)
         }
       }

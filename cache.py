@@ -31,6 +31,11 @@ def get(cache_type: str, key: str):
         with open(path, "r", encoding="utf-8") as f:
             entry = json.load(f)
         if time.time() - entry["timestamp"] > CACHE_TTL_SECONDS:
+            # Delete expired file so cache directory doesn't fill with stale entries
+            try:
+                path.unlink()
+            except Exception:
+                pass
             return None
         return entry["value"]
     except Exception:
@@ -49,3 +54,27 @@ def set(cache_type: str, key: str, value):
             json.dump({"timestamp": time.time(), "value": value}, f)
     except Exception as e:
         _logger.warning("[cache] write failed (non-fatal): %s", e)
+
+
+def purge_expired(max_age_seconds: int | None = None) -> int:
+    """
+    Delete all cache files older than max_age_seconds (default: CACHE_TTL_SECONDS).
+    Returns count of deleted files.
+    Call periodically (e.g., at server startup) to prevent unbounded disk growth.
+    """
+    cutoff = max_age_seconds if max_age_seconds is not None else CACHE_TTL_SECONDS
+    deleted = 0
+    try:
+        for p in CACHE_DIR.glob("*.json"):
+            try:
+                stat = p.stat()
+                if time.time() - stat.st_mtime > cutoff:
+                    p.unlink()
+                    deleted += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if deleted:
+        _logger.info("[cache] purged %d expired cache files", deleted)
+    return deleted

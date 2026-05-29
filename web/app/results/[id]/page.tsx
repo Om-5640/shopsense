@@ -23,7 +23,7 @@ import {
 import { toast } from 'sonner'
 import { deleteProductMemory, getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
 import { useResultsStore, useAppStore, deriveSidebarCriteria } from '@/lib/store'
-import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord } from '@/lib/types'
+import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord, ProductPrice } from '@/lib/types'
 import { fmtRelative } from '@/lib/utils'
 
 // ─── Adapters ─────────────────────────────────────────────────────────────────
@@ -74,7 +74,14 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     price: priceNum,
     currency: sym,
     store: retailer?.name ?? 'Search',
-    storeUrl: retailer?.url ?? `https://www.google.com/search?q=buy+${encodeURIComponent(p.name)}`,
+    storeUrl: retailer?.url ?? (() => {
+      // Only generate a Google fallback URL when the product name looks like a real product.
+      // LLM-hallucinated names with special chars get no fallback so users aren't sent on
+      // a confusing search. encodeURIComponent prevents URL injection in all cases.
+      const words = p.name.trim().split(/\s+/)
+      const nameOk = words.length >= 2 && !/[<>{}|\\^`]/.test(p.name)
+      return nameOk ? `https://www.google.com/search?q=buy+${encodeURIComponent(p.name)}` : undefined
+    })(),
     originalPrice: retailer?.mrp_inr ?? undefined,
     rating: retailer?.rating ?? undefined,
     reviewCount: retailer?.review_count ?? undefined,
@@ -133,12 +140,12 @@ export default function ResultsPage() {
     const current = useResultsStore.getState()
     if (hasLoadedRef.current === id) return
     if (current.searchId === id && current.products.length > 0) {
-      // Store already has this search's data — just reveal it
+      // Store already has this search's data — use the stored createdAt, not the current time
       setSearchMeta({
         query: current.query,
         category: current.category,
         region: current.region,
-        createdAt: new Date().toISOString(),
+        createdAt: current.createdAt ?? new Date().toISOString(),
       })
       setLoading(false)
       hasLoadedRef.current = id
@@ -183,6 +190,7 @@ export default function ResultsPage() {
             query: result.query,
             category: result.category,
             region: result.region,
+            createdAt: result.createdAt,
             rubric: result.rubric,
             products: mergedProducts,
           })
@@ -202,17 +210,36 @@ export default function ResultsPage() {
             timestamp: new Date(result.createdAt).getTime(),
             topProduct: top ? { name: top.name, score: top.percentage } : undefined,
           })
-          // Best-effort price fetch
-          fetchPrices(result.scoredProducts.slice(0, 8).map((p) => p.name), result.region)
-            .then(({ prices }) => {
-              useResultsStore.setState((state) => ({
-                products: state.products.map((p) => {
-                  const pd = prices.find((pr) => pr.product_name === p.name)
-                  return pd ? { ...p, price: pd } : p
-                }),
-              }))
-            })
-            .catch(() => {/* best-effort */})
+          // Best-effort price fetch — cached in sessionStorage for this search ID
+          // so navigating back to this results page doesn't re-fire 8 Serper calls.
+          const _priceKey = `shopsense_prices_${id}`
+          const _cachedPrices = (() => {
+            try {
+              const raw = sessionStorage.getItem(_priceKey)
+              if (raw) return JSON.parse(raw) as ProductPrice[]
+            } catch { /* ignore */ }
+            return null
+          })()
+          if (_cachedPrices) {
+            useResultsStore.setState((state) => ({
+              products: state.products.map((p) => {
+                const pd = _cachedPrices.find((pr) => pr.product_name === p.name)
+                return pd ? { ...p, price: pd } : p
+              }),
+            }))
+          } else {
+            fetchPrices(result.scoredProducts.slice(0, 8).map((p) => p.name), result.region)
+              .then(({ prices }) => {
+                try { sessionStorage.setItem(_priceKey, JSON.stringify(prices)) } catch { /* ignore */ }
+                useResultsStore.setState((state) => ({
+                  products: state.products.map((p) => {
+                    const pd = prices.find((pr) => pr.product_name === p.name)
+                    return pd ? { ...p, price: pd } : p
+                  }),
+                }))
+              })
+              .catch(() => {/* best-effort */})
+          }
         } else {
           setLoadError(
             result.status === 'running'
@@ -284,7 +311,11 @@ export default function ResultsPage() {
 
   const handleCompare = useCallback(() => {
     if (compareSet.size >= 2) {
-      const names = [...compareSet].map(encodeURIComponent).join(',')
+      // Strip commas from LLM-generated product names before joining so a name like
+      // "Sony WF-1000XM5, Premium Edition" doesn't split the ids parameter incorrectly.
+      const names = [...compareSet]
+        .map((n) => encodeURIComponent(n.replace(/,/g, '')))
+        .join(',')
       router.push(`/compare?ids=${names}&search=${id}`)
     }
   }, [compareSet, router, id])

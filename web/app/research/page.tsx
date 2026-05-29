@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search,
@@ -167,6 +167,7 @@ function categoryLabel(cat: string) {
 function ResearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const query = searchParams.get('q') ?? ''
 
   const [commandOpen, setCommandOpen] = useState(false)
@@ -226,6 +227,14 @@ function ResearchPageContent() {
   const hasInitRef = useRef<string | null>(null)
   const clarificationCountRef = useRef(0)  // how many clarification follow-ups asked for current Q
   const inClarificationRef = useRef(false)  // next message should bypass intent detection
+
+  // UI-02: Reset the init guard when the pathname changes (user navigated away and back).
+  // The guard exists to stop React StrictMode double-fires (same mount), but it must not
+  // persist across page navigations — otherwise a user retrying the same query is stuck.
+  // Cleanup fires on pathname change (navigation away), null-ing the guard before remount.
+  useEffect(() => {
+    return () => { hasInitRef.current = null }
+  }, [pathname])
 
   // Redirect if no query
   useEffect(() => {
@@ -447,10 +456,18 @@ function ResearchPageContent() {
     }
 
     clarificationCountRef.current = 0
+    // For MIXED intent with no preference_fragment: strip embedded question sentences
+    // so that "Gaming matters most, but what is refresh rate?" stores only "Gaming matters most."
+    const _stripQuestions = (text: string) => {
+      const parts = text.split(/(?<=[.!?])\s+/)
+      const noQ = parts.filter((s) => !s.trimEnd().endsWith('?'))
+      return noQ.join(' ').trim() || text
+    }
     const storedAnswer =
       result.intent === 'SKIP'
         ? '[Skipped]'
-        : (result.preference_fragment || answer)
+        : result.preference_fragment ||
+          (result.intent === 'MIXED' ? _stripQuestions(answer) : answer)
 
     const entry: QAEntry = {
       question: currentQuestion.question,

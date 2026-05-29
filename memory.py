@@ -181,11 +181,16 @@ def find_relevant_signals(
         cat_lc = (current_category or "").lower()
 
         if hint == "any":
-            threshold = min_similarity
+            # "any" signals (e.g. "fragrance-free") are globally applicable, but we
+            # still require a higher bar when the current category is set — otherwise
+            # off-topic signals (skincare preferences during headphone searches) leak in
+            # at the default 0.70 threshold.  Without a current_category the user is
+            # category-agnostic and the default threshold applies.
+            threshold = min_similarity if not cat_lc else min_similarity + 0.05
         elif hint == cat_lc:
             threshold = max(0.5, min_similarity - 0.1)
         else:
-            threshold = min_similarity + 0.15  # cross-category: stricter
+            threshold = min_similarity + 0.15  # explicit cross-category: strictest
 
         if sim >= threshold:
             filtered.append(r)

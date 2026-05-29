@@ -307,8 +307,18 @@ NO markdown, NO commentary, JSON only."""
 
 
 def _identify_uncovered_criteria(criteria: list[dict], qa_history: list[dict]) -> list[str]:
-    """Returns the list of criterion names not yet targeted by any question."""
-    targeted = {qa.get("targets_criterion") for qa in qa_history}
+    """Returns criterion names not yet covered by a non-skipped answered question.
+
+    A question answered with [Skipped]/(skipped) does NOT count as covered —
+    skipping produces no signal for the rubric generator, so the criterion
+    remains open for the gap-filler and should not block interview from asking
+    a follow-up question.
+    """
+    targeted = {
+        qa.get("targets_criterion")
+        for qa in qa_history
+        if qa.get("answer", "") not in _SKIP_ANSWER_TOKENS
+    }
     targeted.discard(None)
     targeted.discard("")
     targeted.discard("general")
