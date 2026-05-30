@@ -15,7 +15,6 @@ import re
 import time
 import threading as _threading
 import requests
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 import cache
@@ -82,91 +81,6 @@ _session_local = _threading.local()
 def set_session_region(region: str) -> None:
     """Set the region for the current pipeline thread. Thread-safe — no global state."""
     _session_local.region = region if region != "global" else None
-
-
-# ---- Reddit OAuth2 (bypasses Cloudflare 403 blocks) ----
-
-class _RedditOAuth:
-    """Cached client_credentials OAuth2 flow. Hits oauth.reddit.com, never Cloudflare-blocked."""
-    _lock = _threading.Lock()
-    _token: "str | None" = None
-    _expiry: "datetime | None" = None
-
-    @classmethod
-    def is_available(cls) -> bool:
-        return bool(
-            os.environ.get("REDDIT_CLIENT_ID")
-            and os.environ.get("REDDIT_CLIENT_SECRET")
-        )
-
-    @classmethod
-    def get_token(cls) -> "str | None":
-        if not cls.is_available():
-            return None
-        with cls._lock:
-            now = datetime.utcnow()
-            if cls._token and cls._expiry and now < cls._expiry:
-                return cls._token
-            ua = os.environ.get("REDDIT_USER_AGENT", "ShopSense/1.0")
-            try:
-                resp = requests.post(
-                    "https://www.reddit.com/api/v1/access_token",
-                    auth=(os.environ["REDDIT_CLIENT_ID"], os.environ["REDDIT_CLIENT_SECRET"]),
-                    data={"grant_type": "client_credentials"},
-                    headers={"User-Agent": ua},
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                cls._token = data["access_token"]
-                cls._expiry = now + timedelta(seconds=data.get("expires_in", 3600) - 60)
-                print(f"[reddit] OAuth2 token acquired (valid ~{data.get('expires_in', 3600)//60}min)")
-                return cls._token
-            except Exception as e:
-                print(f"[reddit] OAuth2 auth failed: {e} — will try plain JSON endpoint")
-                return None
-
-
-def _oauth_headers(token: str) -> dict:
-    ua = os.environ.get("REDDIT_USER_AGENT", "ShopSense/1.0")
-    return {"Authorization": f"bearer {token}", "User-Agent": ua}
-
-
-def _submission_id_from_url(permalink: str) -> "str | None":
-    m = re.search(r"/comments/([a-z0-9]+)/", permalink)
-    return m.group(1) if m else None
-
-
-def _oauth_fetch_post_and_top(permalink: str, token: str, limit: int) -> "tuple[dict | None, list]":
-    """Fetch post metadata + top-sorted comments via OAuth API. Returns (post_data, top_raw)."""
-    sub_id = _submission_id_from_url(permalink)
-    if not sub_id:
-        return None, []
-    url = f"https://oauth.reddit.com/comments/{sub_id}?sort=top&limit={limit}"
-    try:
-        resp = requests.get(url, headers=_oauth_headers(token), timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        return data[0]["data"]["children"][0]["data"], data[1]["data"]["children"]
-    except Exception as e:
-        print(f"[reddit] OAuth post fetch failed: {e}")
-        return None, []
-
-
-def _oauth_fetch_comments(permalink: str, token: str, sort: str, limit: int) -> list:
-    """Fetch comment children via OAuth API for a given sort. Returns [] on failure."""
-    sub_id = _submission_id_from_url(permalink)
-    if not sub_id:
-        return []
-    url = f"https://oauth.reddit.com/comments/{sub_id}?sort={sort}&limit={limit}"
-    try:
-        resp = requests.get(url, headers=_oauth_headers(token), timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        return data[1]["data"]["children"]
-    except Exception as e:
-        print(f"[reddit] OAuth comment fetch ({sort}) failed: {e}")
-        return []
 
 
 def has_ambiguous_price(query: str) -> bool:
@@ -605,56 +519,44 @@ def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_T
 
     Merged by Reddit comment ID — no duplicates. Top-sort comments keep their
     position. Controversial-only comments appended after, sorted by score.
-
-    Uses OAuth2 (oauth.reddit.com) when REDDIT_CLIENT_ID/SECRET are set — this
-    bypasses Cloudflare blocking entirely. Falls back to plain JSON endpoint.
+    This ensures we never miss complaints buried in controversy.
     """
     cached = cache.get("reddit_thread", permalink)
     if cached is not None:
         return cached
 
+    # Fetch post metadata using top sort
+    json_url = permalink.rstrip("/") + f"/.json?sort=top&limit={max_comments}"
+    last_err = None
     post_data = None
-    top_raw = []
+    for attempt in range(3):
+        try:
+            resp = requests.get(json_url, headers=HEADERS, timeout=15)
+            if resp.status_code == 429:
+                raise requests.HTTPError("429 Rate Limited")
+            resp.raise_for_status()
+            raw = resp.json()
+            post_data = raw[0]["data"]["children"][0]["data"]
+            top_raw = raw[1]["data"]["children"]
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                wait = 5 * (attempt + 1)
+                print(f"   retry in {wait}s ({e})")
+                time.sleep(wait)
 
-    # ---- Path 1: OAuth2 API (bypasses Cloudflare 403) ----
-    token = _RedditOAuth.get_token()
-    if token:
-        post_data, top_raw = _oauth_fetch_post_and_top(permalink, token, max_comments)
-
-    # ---- Path 2: Plain JSON endpoint fallback ----
     if post_data is None:
-        json_url = permalink.rstrip("/") + f"/.json?sort=top&limit={max_comments}"
-        last_err = None
-        for attempt in range(3):
-            try:
-                resp = requests.get(json_url, headers=HEADERS, timeout=15)
-                if resp.status_code == 429:
-                    raise requests.HTTPError("429 Rate Limited")
-                resp.raise_for_status()
-                raw = resp.json()
-                post_data = raw[0]["data"]["children"][0]["data"]
-                top_raw = raw[1]["data"]["children"]
-                break
-            except Exception as e:
-                last_err = e
-                if attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    print(f"   retry in {wait}s ({e})")
-                    time.sleep(wait)
-
-        if post_data is None:
-            print(f"[reddit] giving up on {permalink}: {last_err}")
-            return None
+        print(f"[reddit] giving up on {permalink}: {last_err}")
+        return None
 
     # Pass 1: flatten top-sorted comments
     top_comments = _flatten_comment_tree(top_raw)
 
-    # Pass 2: controversial sort
+    # Pass 2: fetch controversial sort, flatten, merge by ID
+    # Small delay to avoid rate limiting
     time.sleep(0.5)
-    if token:
-        controversial_raw = _oauth_fetch_comments(permalink, token, "controversial", max_comments)
-    else:
-        controversial_raw = _fetch_raw_comments(permalink, "controversial", max_comments)
+    controversial_raw = _fetch_raw_comments(permalink, "controversial", max_comments)
     controversial_comments = _flatten_comment_tree(controversial_raw)
 
     # Merge: top-sort comments first (preserve order), then add any
