@@ -343,7 +343,7 @@ function ResearchPageContent() {
     inClarificationRef.current = false
     setWaiting(true)
     try {
-      const q = await getNextQuestion(cat, crit, history, query)
+      const q = await getNextQuestion(cat, crit, history, query, primaryNoun)
       setCurrentQuestion(q)
       setCurrentQ(qNum)
 

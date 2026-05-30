@@ -14,3 +14,6 @@ psycopg2-binary>=2.9
 
 # v9: Precise mention counting (Aho-Corasick multi-pattern scan)
 pyahocorasick>=2.0.0
+
+# CI / testing
+pytest>=7.0

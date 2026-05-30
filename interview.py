@@ -172,18 +172,20 @@ def generate_next_question(
     previous_qa: list[dict],
     initial_query: str = "",
     memory_context: list[dict] | None = None,
+    primary_noun: str = "",
 ) -> dict:
     """
     Returns {question, why_asking, targets_criterion, is_done}.
     Budget is always asked first (unless already in query). All other questions are LLM-driven.
     initial_query: user's original search — used to skip already-answered topics.
     memory_context: signals from past searches.
+    primary_noun: exact product name from detection (e.g. "gaming mouse") — overrides _product_noun().
     """
     n = len(previous_qa)
 
     # ---- Always ask budget first if not mentioned in query and not already asked ----
     if n == 0 and not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
-        noun = _product_noun(category)
+        noun = primary_noun.strip() if primary_noun.strip() else _product_noun(category)
         return {
             "question": f"What's your budget range for this {noun}?",
             "why_asking": "Budget defines which price tier to focus on — the primary filter for all recommendations",
@@ -231,8 +233,9 @@ def generate_next_question(
                 + "\n".join(f"  - {f}" for f in facts[:6]) + "\n"
             )
 
+    _noun = primary_noun.strip() if primary_noun.strip() else _product_noun(category)
     prompt = f"""Category: {category}
-Product: {_product_noun(category)}
+Product: {_noun}
 
 Buying criteria for this product:
 {criteria_text}

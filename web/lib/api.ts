@@ -79,12 +79,14 @@ export async function getNextQuestion(
   criteria: Criterion[],
   qaHistory: QAEntry[],
   initialQuery?: string,
+  primaryNoun?: string,
 ): Promise<InterviewQuestion> {
   const { data } = await client.post('/api/interview/next', {
     category,
     criteria,
     qa_history: qaHistory,
     initial_query: initialQuery ?? '',
+    primary_noun: primaryNoun ?? '',
   })
   return data
 }

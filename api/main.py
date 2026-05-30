@@ -196,6 +196,7 @@ class InterviewNextRequest(BaseModel):
     qa_history: list[dict] = []
     memory_context: Optional[list[dict]] = None  # v7: pre-filled signals
     initial_query: str = ""  # original search query — used to skip already-answered template questions
+    primary_noun: str = ""  # exact product name from detection (e.g. "gaming mouse" not "mouse gaming")
 
 
 class InterviewSummarizeRequest(BaseModel):
@@ -309,6 +310,7 @@ def interview_next(req: InterviewNextRequest) -> dict:
         qa,
         initial_query=req.initial_query,
         memory_context=req.memory_context or [],
+        primary_noun=req.primary_noun or "",
     )
     if force_continue:
         result["is_done"] = False

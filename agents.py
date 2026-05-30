@@ -60,6 +60,14 @@ AGENTS = {
         "json_mode": True,
         "description": "Generate next interview question, coverage-aware",
     },
+    "interview_classifier": {
+        "provider": "groq",
+        "fallback_chain": ["cerebras", "mistral", "gemini", _MASTER],
+        "temperature": 0.1,
+        "max_tokens": 512,
+        "json_mode": True,
+        "description": "Classify user interview message: ANSWER/QUESTION/MIXED/SKIP/COMMAND/UNCLEAR",
+    },
     "preference_summarizer": {
         "provider": "mistral",
         "fallback_chain": ["gemini", "groq", "cerebras", _MASTER],
