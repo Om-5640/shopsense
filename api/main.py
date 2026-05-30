@@ -295,7 +295,7 @@ def interview_next(req: InterviewNextRequest) -> dict:
     force_continue = (len(qa) + 1) <= MIN_QUESTIONS
 
     if not force_continue:
-        uncovered = _identify_uncovered_criteria(req.criteria, qa)
+        uncovered = _identify_uncovered_criteria(req.criteria, qa, req.initial_query)
         coverage = (len(req.criteria) - len(uncovered)) / max(len(req.criteria), 1)
         dyn_target = _dynamic_coverage_target(len(req.criteria))
         if coverage >= dyn_target or len(qa) >= MAX_QUESTIONS:

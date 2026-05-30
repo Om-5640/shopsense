@@ -135,13 +135,20 @@ Set is_done=true ONLY when ALL of: budget covered, main use case clear, ≥60% c
 NO markdown, JSON only."""
 
 
-def _identify_uncovered_criteria(criteria: list[dict], qa_history: list[dict]) -> list[str]:
+def _identify_uncovered_criteria(
+    criteria: list[dict],
+    qa_history: list[dict],
+    initial_query: str = "",
+) -> list[str]:
     """Returns criterion names not yet covered by a non-skipped answered question.
 
-    A question answered with [Skipped]/(skipped) does NOT count as covered —
-    skipping produces no signal for the rubric generator, so the criterion
-    remains open for the gap-filler and should not block interview from asking
-    a follow-up question.
+    A question answered with [Skipped]/(skipped) does NOT count as covered.
+
+    Special rule: price_to_value is implicitly covered whenever the budget is
+    known (either stated in the initial query or answered during the interview).
+    Budget = what the user can spend; price_to_value = does a product justify its
+    price. The rubric generator infers price_to_value context from the budget, so
+    asking a separate price_to_value question would be redundant.
     """
     targeted = {
         qa.get("targets_criterion")
@@ -151,6 +158,11 @@ def _identify_uncovered_criteria(criteria: list[dict], qa_history: list[dict]) -
     targeted.discard(None)
     targeted.discard("")
     targeted.discard("general")
+
+    # If budget is known from query or Q&A, treat price_to_value as covered
+    if _mentions_budget(initial_query) or _budget_asked(qa_history):
+        targeted.add("price_to_value")
+
     return [c["name"] for c in criteria if c["name"] not in targeted]
 
 
@@ -172,14 +184,10 @@ def generate_next_question(
     # ---- Always ask budget first if not mentioned in query and not already asked ----
     if n == 0 and not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
         noun = _product_noun(category)
-        # Target the price_to_value criterion if it exists, so the coverage tracker
-        # marks it as covered once the user answers — preventing a redundant follow-up.
-        criteria_names = {c["name"] for c in criteria}
-        budget_target = "price_to_value" if "price_to_value" in criteria_names else "budget"
         return {
             "question": f"What's your budget range for this {noun}?",
-            "why_asking": "Budget is the primary filter — shapes which tier of products to recommend",
-            "targets_criterion": budget_target,
+            "why_asking": "Budget defines which price tier to focus on — the primary filter for all recommendations",
+            "targets_criterion": "budget",
             "is_done": False,
         }
 
@@ -189,7 +197,7 @@ def generate_next_question(
         for qa in previous_qa
     ) if previous_qa else "(none yet)"
 
-    uncovered = _identify_uncovered_criteria(criteria, previous_qa)
+    uncovered = _identify_uncovered_criteria(criteria, previous_qa, initial_query)
     coverage_pct = round((len(criteria) - len(uncovered)) / max(len(criteria), 1) * 100)
 
     if uncovered:
