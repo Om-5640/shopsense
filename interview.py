@@ -10,6 +10,7 @@ Profile is saved as profiles/<category>.json so future runs can reuse it.
 import json
 import logging
 import os
+import re as _re
 from pathlib import Path
 from datetime import datetime
 from agents import run_agent
@@ -27,156 +28,44 @@ MIN_QUESTIONS = 3           # always ask at least this many
 COVERAGE_TARGET = 0.90      # stop when 90% of criteria addressed
 
 
-# ---- Category-specific mandatory question templates ----
-# These are asked first (in shuffled order) before dynamic criteria-based questions.
-# Keys are category slug prefixes (matched with startswith).
+# ---- Budget / brand detection helpers ----
 
-CATEGORY_QUESTION_TEMPLATES: dict[str, list[str]] = {
-    "skincare": [
-        "What's your skin type — oily, dry, combination, or sensitive?",
-        "What are your main skin concerns? (e.g. acne, pigmentation, dullness, uneven tone)",
-        "Do you have any known allergies or ingredients you avoid? (e.g. fragrance, alcohol, parabens)",
-        "What's your current skincare routine like — minimal, moderate, or elaborate?",
-        "Do you prefer fragrance-free products, or is a pleasant scent a bonus?",
-        "What's your approximate budget per product?",
-        "What climate do you live in — humid, dry, cold, or tropical?",
-        "Roughly how old are you? (teens, 20s, 30s, 40s+)",
-    ],
-    "electronics/earbuds": [
-        "Where will you use these most — commuting, gym, office, or home?",
-        "Do you need active noise cancellation, or is passive isolation enough?",
-        "Sound preference — more bass, balanced, or vocal clarity?",
-        "How important is call quality and microphone performance?",
-        "Battery life priority — how many hours between charges do you need?",
-        "In-ear comfort is personal — do you have any fit issues with standard ear tips?",
-        "Which devices will you mainly pair with — Android, iPhone, laptop?",
-        "What's your budget range?",
-    ],
-    "electronics/headphones": [
-        "Over-ear or on-ear preference?",
-        "Primary use: music listening, gaming, calls, or travel?",
-        "Do you need active noise cancellation?",
-        "Wired or wireless — or either?",
-        "Sound signature preference — bass-heavy, balanced, or bright?",
-        "How important is comfort for multi-hour sessions?",
-        "Budget range?",
-        "Any specific ecosystem to match (Xbox, PlayStation, Mac)?",
-    ],
-    "electronics/laptop": [
-        "Primary use: coding, video editing, office work, gaming, or general use?",
-        "How important is portability? Do you carry it daily?",
-        "Windows or macOS — or open to either?",
-        "How long must the battery last on a single charge?",
-        "Screen size preference — 13\", 15\", or 17\"?",
-        "Do you need dedicated GPU for graphics/gaming?",
-        "Budget range?",
-        "Any specific ports you must have (HDMI, USB-A, SD card)?",
-    ],
-    "electronics/phone": [
-        "Android or iOS?",
-        "Camera the top priority, or more balanced?",
-        "Battery life or thin/light design — which wins if you must choose?",
-        "How important is 5G support?",
-        "Screen size preference — compact (~6\") or large (~6.7\")?",
-        "Budget range?",
-        "Any specific features critical for you (stylus, satellite SOS, IP68)?",
-        "How long do you typically keep a phone before upgrading?",
-    ],
-    "electronics/monitor": [
-        "Primary use: gaming, creative work, coding, or general office?",
-        "Screen size preference?",
-        "Resolution priority: 1080p, 1440p, or 4K?",
-        "Panel type preference: IPS (colors), VA (contrast), TN (speed)?",
-        "Refresh rate needed — 60Hz, 144Hz, or 240Hz+?",
-        "Ergonomic adjustability important (height, pivot)?",
-        "Budget range?",
-        "Any connectivity requirements (USB-C PD, HDMI 2.1)?",
-    ],
-    "electronics/keyboard-mechanical": [
-        "What will you use it for most - typing, coding, gaming, or a mix?",
-        "Which layout do you prefer - full-size, TKL, 75%, 65%, or compact?",
-        "Switch preference - linear, tactile, clicky, or not sure yet?",
-        "Do you need wireless/Bluetooth, or is wired fine?",
-        "How important is noise level - quiet enough for shared spaces, or any sound is okay?",
-        "Do you care about hot-swappable switches or customizability?",
-        "Any must-have features like RGB, macro keys, knob, or software support?",
-        "What's your budget range?",
-    ],
-    "electronics/keyboard": [
-        "What will you use it for most - typing, coding, gaming, or a mix?",
-        "Do you specifically want mechanical switches, low-profile keys, or a quieter membrane/scissor keyboard?",
-        "Which layout do you prefer - full-size, TKL, 75%, 65%, or compact?",
-        "Do you need wireless/Bluetooth, or is wired fine?",
-        "How important is noise level - quiet enough for shared spaces, or any sound is okay?",
-        "Any must-have features like RGB, macro keys, knob, or software support?",
-        "Do you need compatibility with Windows, macOS, iPad, or multiple devices?",
-        "What's your budget range?",
-    ],
-    "bedding/mattress": [
-        "What's your primary sleeping position — side, back, stomach, or combo?",
-        "Do you sleep hot or cold?",
-        "Firmness preference — soft, medium, or firm?",
-        "Do you have a partner, and is motion isolation important?",
-        "Any back pain or joint issues that affect what you need?",
-        "Budget range?",
-        "Allergies to latex or specific materials?",
-        "How important is a trial period / returns policy?",
-    ],
-    "watches": [
-        "Analog, smartwatch, or fitness tracker?",
-        "Primary use: everyday wear, sports, formal occasions, or all?",
-        "Case size preference — smaller (~38mm) or larger (~44mm+)?",
-        "Movement preference: automatic, quartz, or smart?",
-        "Budget range?",
-        "Water resistance needed?",
-        "Any brand preferences or things to avoid?",
-        "Will you wear it to formal events or just casual?",
-    ],
-    "kitchen": [
-        "What will you cook most — Indian, continental, baking, or everything?",
-        "Family size — cooking for how many people typically?",
-        "How much counter or storage space is available?",
-        "Daily use or occasional?",
-        "Any power / wattage constraints?",
-        "Budget range?",
-        "Brand preferences or things to avoid?",
-        "Most important feature — speed, capacity, ease of cleaning, or durability?",
-    ],
-    "footwear": [
-        "Primary activity — running, walking, gym training, casual, or formal?",
-        "Any foot conditions — flat feet, wide feet, plantar fasciitis, overpronation?",
-        "Terrain: road, trail, treadmill, or mixed?",
-        "Cushioning preference — maximal, moderate, or minimal (ground feel)?",
-        "Budget range?",
-        "Brand loyalty or anything to avoid?",
-        "How many km/miles per week would you use these?",
-        "Any specific fit concerns — narrow/wide toe box?",
-    ],
-    "furniture/chair": [
-        "Primary use — work-from-home all day, gaming, or occasional seating?",
-        "Any existing back/neck/posture issues to work around?",
-        "Body type / height to consider for sizing?",
-        "Lumbar support or full back support more important?",
-        "Armrest adjustability needed?",
-        "Budget range?",
-        "Material preference — mesh (cooling) or foam/leather (comfort)?",
-        "How many hours per day will you sit in it?",
-    ],
-}
+_BUDGET_PATTERNS = _re.compile(
+    r'₹\s*\d|rs\.?\s*\d|\brs\b|\dinr\b|\d+k\b'
+    r'|under\s+\d|below\s+\d|within\s+\d|upto\s+\d'
+    r'|\$\s*\d|£\s*\d|€\s*\d'
+    r'|\bbudget\b|\bprice\b|\bcost\b|\bspend\b',
+    _re.IGNORECASE,
+)
 
 
-def _get_template_questions(category: str) -> list[str]:
-    """Return mandatory question list for this category, or [] if no template."""
-    cat = category.lower()
-    # Exact match first
-    if cat in CATEGORY_QUESTION_TEMPLATES:
-        return list(CATEGORY_QUESTION_TEMPLATES[cat])
-    # Specific-prefix match only. Avoid matching broad domains like
-    # electronics/* to whichever electronics template appears first.
-    for key, questions in CATEGORY_QUESTION_TEMPLATES.items():
-        if cat.startswith(f"{key}/") or cat.startswith(f"{key}-"):
-            return list(questions)
-    return []
+def _mentions_budget(text: str) -> bool:
+    """True if the text contains a price or budget mention."""
+    return bool(_BUDGET_PATTERNS.search(text)) if text else False
+
+
+def _budget_asked(qa_history: list[dict]) -> bool:
+    """True if budget has been covered in prior Q&A."""
+    for qa in qa_history:
+        combined = (qa.get("question", "") + " " + qa.get("answer", "")).lower()
+        if any(kw in combined for kw in ("budget", "price range", "how much", "spend", "rupee", "₹", "$")):
+            return True
+    return False
+
+
+def _brand_asked(qa_history: list[dict]) -> bool:
+    """True if brand preference has been covered in prior Q&A."""
+    for qa in qa_history:
+        combined = (qa.get("question", "") + " " + qa.get("answer", "")).lower()
+        if any(kw in combined for kw in ("brand", "manufacturer", "prefer", "avoid brand", "company")):
+            return True
+    return False
+
+
+def _product_noun(category: str) -> str:
+    """'electronics/gaming-mouse' → 'gaming mouse'"""
+    parts = category.split("/")
+    return parts[-1].replace("-", " ").replace("_", " ")
 
 
 # ---- profile storage ----
@@ -207,103 +96,43 @@ def save_profile(category: str, profile: dict) -> None:
     print(f"[profile] saved to {path}")
 
 
+
 # ---- question generation ----
 
-def _query_answers_template(template_q: str, query: str) -> bool:
-    """Returns True if the initial query already contains an answer to the template question."""
-    if not query:
-        return False
-    import re
-    q_lower = template_q.lower()
-    query_lower = query.lower()
+QUESTION_SYSTEM = """You are a knowledgeable friend helping someone buy the right product — NOT a survey bot. You know this product category well.
 
-    # Budget / price range questions — any currency or "under/below/within N"
-    if any(kw in q_lower for kw in ["budget", "price range", "how much", "spend", "budget range"]):
-        price_patterns = [
-            r'₹\s*\d+', r'rs\.?\s*\d+', r'inr\s*\d+',
-            r'under\s+\d+', r'below\s+\d+', r'within\s+\d+', r'upto\s+\d+',
-            r'\d[\d,]+\s*(?:rupee|rs|inr)',
-            r'\$\s*\d+', r'usd\s*\d+',
-            r'£\s*\d+', r'gbp\s*\d+',
-            r'€\s*\d+', r'eur\s*\d+',
-            r'\d+k\b',
-        ]
-        return any(re.search(p, query_lower) for p in price_patterns)
+STRICT PRIORITY ORDER — follow this every time:
+1. BUDGET FIRST: If budget hasn't been addressed yet, ask it as your very first question.
+   Natural phrasings: "What's your budget range?" / "How much are you looking to spend?" / "Any price range in mind?"
+   This is NON-NEGOTIABLE — the budget shapes which tier of products to recommend.
 
-    # Watch type — "Analog, smartwatch, or fitness tracker?"
-    if "analog" in q_lower and "smartwatch" in q_lower:
-        return any(kw in query_lower for kw in [
-            "analog", "analogue", "smartwatch", "smart watch", "digital", "fitness tracker", "sports watch"
-        ])
+2. PRIMARY USE CASE: If not obvious from the query, ask how/where they'll use it.
+   Right: "Do you mostly game competitively or casually?" / "Is this for commuting, the gym, or work from home?"
+   Wrong: "What is your primary intended usage pattern for this product?"
 
-    # Phone platform — "Android or iOS?"
-    if "android" in q_lower and "ios" in q_lower:
-        return any(kw in query_lower for kw in [
-            "android", "ios", "iphone", "samsung", "oneplus", "pixel", "realme", "redmi", "poco"
-        ])
+3. MOST IMPORTANT UNCOVERED CRITERION: Pick the single criterion that would most change the recommendation.
+   Ask as if you've been researching this product type: specific, informed, natural.
+   Right: "Do you need wireless, or is wired fine?" / "How many hours of battery do you need in one session?"
+   Wrong: "What are your connectivity preferences?" / "Describe your battery requirements."
 
-    # Wired vs wireless
-    if "wired" in q_lower and "wireless" in q_lower:
-        return any(kw in query_lower for kw in ["wired", "wireless", "bluetooth", "tws"])
+4. BRAND PREFERENCE (if not asked within first 4 questions): "Any brands you'd go for — or ones you want to avoid?"
 
-    # Noise cancellation
-    if "noise cancellation" in q_lower or ("active noise" in q_lower):
-        return any(kw in query_lower for kw in ["anc", "noise cancel", "active noise"])
+RULES:
+- ONE question only. Never combine two questions ("and also...").
+- Skip anything already answered in the user's original search query (e.g. if they said "wireless", don't ask about connectivity).
+- If memory shows a fact about the user (e.g. they always buy Sony), don't ask again.
+- Sound like a friend who knows the product, not a form field.
 
-    # Over-ear vs on-ear headphones
-    if "over-ear" in q_lower and "on-ear" in q_lower:
-        return any(kw in query_lower for kw in ["over-ear", "over ear", "on-ear", "on ear", "in-ear"])
-
-    # Gender / intended user
-    if any(kw in q_lower for kw in ["gender", "for whom", "who will"]):
-        return any(kw in query_lower for kw in ["men", "man", "women", "woman", "boy", "girl", "kids", "child"])
-
-    return False
-
-
-def _get_next_template_question(category: str, asked_questions: list[str], initial_query: str = "") -> str | None:
-    """Return the next unanswered template question, or None if all done."""
-    templates = _get_template_questions(category)
-    if not templates:
-        return None
-    asked_lower = {q.lower().strip() for q in asked_questions}
-    for q in templates:
-        # Check if a semantically close question was already asked (simple keyword check)
-        q_words = set(q.lower().split())
-        already_asked = any(
-            len(q_words & set(asked.split())) / max(len(q_words), 1) > 0.5
-            for asked in asked_lower
-        )
-        if already_asked:
-            continue
-        # Skip questions the user already answered in their initial query
-        if initial_query and _query_answers_template(q, initial_query):
-            continue
-        return q
-    return None
-
-
-QUESTION_SYSTEM = """You are a thoughtful interviewer helping a user find the perfect product for THEIR situation.
-
-You ask one question at a time. Each question must:
-1. Be SPECIFIC - never "what do you want?", always "do you prefer X or Y?"
-2. Be HIGH-SIGNAL - the answer should significantly affect product ranking
-3. Build on previous answers - if user said "I run hot" already, don't ask about temperature again
-4. Feel like a friend asking, not a survey form
-5. Allow for nuance in the answer
-6. TARGET UNADDRESSED CRITERIA - prioritize asking about criteria the user hasn't covered yet
-
-Return ONLY a JSON object:
+Return ONLY JSON:
 {
-  "question": "Your question text here",
-  "why_asking": "Brief internal note on why this matters",
-  "targets_criterion": "snake_case_id of the criterion this question is about (or 'general' if cross-cutting)",
+  "question": "your single question",
+  "why_asking": "one-line internal note: why this matters for ranking",
+  "targets_criterion": "criterion_name or 'budget' or 'brand_preference' or 'general'",
   "is_done": false
 }
 
-Set is_done=true only when 90%+ of criteria are addressed. Don't ask redundant questions. If you've already asked 10+ questions, strongly consider is_done=true unless critical criteria remain uncovered. Never ask two questions that target the same user context.
-
-NO markdown, NO commentary, JSON only."""
+Set is_done=true ONLY when ALL of: budget covered, main use case clear, ≥60% criteria addressed, ≥3 questions asked.
+NO markdown, JSON only."""
 
 
 def _identify_uncovered_criteria(criteria: list[dict], qa_history: list[dict]) -> list[str]:
@@ -334,18 +163,19 @@ def generate_next_question(
 ) -> dict:
     """
     Returns {question, why_asking, targets_criterion, is_done}.
-    Serves category-template questions first, then coverage-aware dynamic questions.
-    initial_query: the user's original search prompt — used to skip already-answered template questions.
-    memory_context: signals from past searches — criteria already answered by memory are deprioritised.
+    Budget is always asked first (unless already in query). All other questions are LLM-driven.
+    initial_query: user's original search — used to skip already-answered topics.
+    memory_context: signals from past searches.
     """
-    # ---- Serve template questions first ----
-    asked_questions = [qa["question"] for qa in previous_qa]
-    template_q = _get_next_template_question(category, asked_questions, initial_query)
-    if template_q and len(previous_qa) < MIN_QUESTIONS:
+    n = len(previous_qa)
+
+    # ---- Always ask budget first if not mentioned in query and not already asked ----
+    if n == 0 and not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
+        noun = _product_noun(category)
         return {
-            "question": template_q,
-            "why_asking": "Category-specific essential context",
-            "targets_criterion": "general",
+            "question": f"What's your budget range for this {noun}?",
+            "why_asking": "Budget is the primary filter — shapes which tier of products to recommend",
+            "targets_criterion": "budget",
             "is_done": False,
         }
 
@@ -358,46 +188,48 @@ def generate_next_question(
     uncovered = _identify_uncovered_criteria(criteria, previous_qa)
     coverage_pct = round((len(criteria) - len(uncovered)) / max(len(criteria), 1) * 100)
 
-    coverage_note = ""
     if uncovered:
         coverage_note = (
-            f"\nUNCOVERED CRITERIA (prioritize these): {', '.join(uncovered)}\n"
-            f"Current coverage: {coverage_pct}% ({len(criteria) - len(uncovered)}/{len(criteria)})"
+            f"\nUNCOVERED CRITERIA (ask about these next): {', '.join(uncovered)}\n"
+            f"Coverage so far: {coverage_pct}% ({len(criteria) - len(uncovered)}/{len(criteria)} criteria addressed)"
         )
     else:
-        coverage_note = f"\nAll criteria covered ({coverage_pct}%). Set is_done=true unless you see a critical gap."
+        coverage_note = f"\nAll criteria covered ({coverage_pct}%). Set is_done=true."
+
+    budget_note = ""
+    if not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
+        budget_note = "\nNOTE: Budget has NOT been asked yet — ask it now as your question.\n"
+
+    brand_note = ""
+    if n >= 3 and not _brand_asked(previous_qa):
+        brand_note = "\nNOTE: Brand preference has NOT been asked yet — ask it now if no higher-priority criterion is uncovered.\n"
 
     initial_context = ""
     if initial_query:
         initial_context = (
-            f"\nUser's original search query (already-stated context — "
-            f"DO NOT ask about anything already answered in it, e.g. budget, product type, brand): "
-            f"{initial_query}\n"
+            f"\nUser's original search (DO NOT re-ask anything already covered in it): {initial_query}\n"
         )
 
-    # Memory context: tell the interviewer what we already know from past searches so it
-    # doesn't ask redundant questions about criteria memory already covers.
     memory_note = ""
     if memory_context:
-        remembered_facts = [s.get("text", "") for s in memory_context if s.get("text")]
-        if remembered_facts:
-            facts_text = "\n".join(f"  - {f}" for f in remembered_facts[:6])
+        facts = [s.get("text", "") for s in memory_context if s.get("text")]
+        if facts:
             memory_note = (
-                f"\nKNOWN FROM PAST SEARCHES (do NOT ask about these — already answered):\n"
-                f"{facts_text}\n"
-                f"Focus questions on criteria NOT already covered by the above facts.\n"
+                f"\nKNOWN FROM PAST SEARCHES (skip these, user already answered them):\n"
+                + "\n".join(f"  - {f}" for f in facts[:6]) + "\n"
             )
 
     prompt = f"""Category: {category}
+Product: {_product_noun(category)}
 
-All buying criteria for this category:
+Buying criteria for this product:
 {criteria_text}
-{initial_context}{memory_note}
-Previous questions asked and answers given:
+{initial_context}{memory_note}{budget_note}{brand_note}
+Interview so far:
 {qa_text}
 {coverage_note}
 
-Generate the next question (or set is_done=true if coverage is sufficient)."""
+Generate the single best next question."""
 
     try:
         raw = run_agent("interview_questioner", user_prompt=prompt, system=QUESTION_SYSTEM)
@@ -410,9 +242,9 @@ Generate the next question (or set is_done=true if coverage is sufficient)."""
         return {"question": "", "why_asking": "", "targets_criterion": "", "is_done": True}
 
     # W-04: dedup guard — if LLM loops back to an already-targeted criterion after MIN_QUESTIONS, declare done
-    if not data.get("is_done") and len(previous_qa) >= MIN_QUESTIONS:
+    if not data.get("is_done") and n >= MIN_QUESTIONS:
         tc = data.get("targets_criterion", "")
-        if tc and tc != "general":
+        if tc and tc not in ("general", "budget", "brand_preference"):
             already_targeted = {qa.get("targets_criterion") for qa in previous_qa} - {None, "", "general"}
             if tc in already_targeted:
                 print(f"[interview] W04: LLM re-targeted '{tc}' already covered — forcing is_done=True")

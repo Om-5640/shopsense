@@ -346,13 +346,19 @@ function ResearchPageContent() {
       const q = await getNextQuestion(cat, crit, history, query)
       setCurrentQuestion(q)
       setCurrentQ(qNum)
+
+      if (!q.question || !q.question.trim()) {
+        // Backend signalled done with no question — finish silently
+        if (q.is_done) await finishInterview(cat, crit, history)
+        return
+      }
+
       setMessages((prev) => [
         ...prev.map((m) => ({ ...m, isTyping: false })),
         { id: `q-${qNum}-${Date.now()}`, role: 'assistant', content: q.question, isTyping: true },
       ])
-      if (q.is_done) {
-        await finishInterview(cat, crit, history)
-      }
+      // If is_done=true but a question was returned, show it and let the user answer.
+      // handleSendMessage checks currentQuestion.is_done and will call finishInterview after the answer.
     } catch (e) {
       handleError(`Interview failed: ${e instanceof Error ? e.message : e}`)
     } finally {
@@ -875,6 +881,7 @@ function ResearchPageContent() {
         typeof savedProfile.preferences_summary === 'string'
           ? savedProfile.preferences_summary
           : 'Saved answers are available for this category.'
+      const savedQuery = typeof savedProfile.source_query === 'string' ? savedProfile.source_query : ''
 
       return (
         <motion.div
@@ -883,16 +890,19 @@ function ResearchPageContent() {
           animate={{ opacity: 1, y: 0 }}
           className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-8"
         >
-          <h3 className="text-lg font-semibold text-[#FAFAFA] mb-2">Use your saved answers?</h3>
+          <h3 className="text-lg font-semibold text-[#FAFAFA] mb-2">I remember your preferences</h3>
           <p className="text-[#A1A1AA] mb-5">
-            I found previous feedback for {categoryLabel(category || pendingProfileSetupRef.current?.cat || 'this category')}.
-            You can reuse it or answer fresh questions for this search.
+            You answered questions about{' '}
+            <span className="text-[#FAFAFA] font-medium">
+              {savedQuery ? `"${savedQuery}"` : categoryLabel(category || pendingProfileSetupRef.current?.cat || 'this category')}
+            </span>{' '}
+            before. Reuse those answers or answer fresh for this search.
           </p>
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 mb-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-[#FAFAFA]">Saved feedback</span>
+              <span className="text-sm font-medium text-[#FAFAFA]">Saved answers</span>
               <Badge variant="outline" className="border-white/[0.1] text-[#A1A1AA]">
-                {savedAnswers} answers
+                {savedAnswers} questions answered
               </Badge>
             </div>
             <p className="text-sm text-[#A1A1AA] line-clamp-4 whitespace-pre-line">{savedSummary}</p>
@@ -900,7 +910,7 @@ function ResearchPageContent() {
           <div className="grid sm:grid-cols-2 gap-3">
             <Button onClick={handleUseSavedProfile} className="h-12 bg-violet-600 hover:bg-violet-500">
               <Check className="w-4 h-4 mr-2" />
-              Use saved feedback
+              Use saved answers
             </Button>
             <Button
               variant="ghost"
@@ -908,7 +918,7 @@ function ResearchPageContent() {
               className="h-12 border border-white/[0.08] text-[#FAFAFA] hover:bg-white/[0.05]"
             >
               <MessageSquare className="w-4 h-4 mr-2" />
-              Answer again
+              Answer fresh questions
             </Button>
           </div>
         </motion.div>

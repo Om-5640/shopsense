@@ -13,29 +13,36 @@ from agents import run_agent
 from llm_client import safe_json_loads as _extract_json
 
 
-SYSTEM = """You are a product research expert. Given a product category, list the things a meticulous buyer should evaluate before purchasing.
+SYSTEM = """You are a product research expert generating evaluation criteria for a specific product type.
 
-Return ONLY a JSON object with this shape:
+These criteria will drive an interview (questions target uncovered criteria) and score products from reviews.
+
+Return ONLY a JSON object:
 {
   "criteria": [
     {
       "name": "snake_case_id",
       "label": "Human Readable Label",
-      "description": "What this criterion measures",
-      "high_score_means": "What a 10/10 looks like",
-      "low_score_means": "What a 0/10 looks like"
+      "description": "One sentence: what this measures",
+      "high_score_means": "What a 10/10 product looks like on this criterion",
+      "low_score_means": "What a 1/10 product looks like on this criterion"
     }
   ]
 }
 
 RULES:
-1. 6-12 criteria. Don't be exhaustive, focus on what actually matters.
-2. Cover the full decision: quality, fit-for-purpose, durability, price, brand trust, ergonomics, etc.
-3. Be category-specific. For blankets: GSM, material, breathability, weight, washability, allergens, temperature regulation, durability, price, sizing. For keyboards: switch type, layout, build quality, key feel, software, price, etc.
-4. Include 1-2 criteria most buyers forget but matter (e.g. "noise level" for keyboards, "off-gassing" for mattresses).
-5. Snake_case names like "temperature_regulation", "switch_type", "build_quality".
+1. Return 6–10 criteria. Only include what actually differentiates products in this EXACT category.
+2. BE PRODUCT-SPECIFIC — use criterion names that only make sense for this product type:
+   - "electronics/gaming-mouse" → sensor_tracking_accuracy, ergonomics_grip_fit, click_latency, polling_rate, weight_and_balance, switch_durability, wireless_performance, programmable_buttons
+   - "electronics/earbuds" → sound_signature, anc_effectiveness, battery_life, call_quality, fit_and_stability, connection_stability, latency_for_video
+   - "electronics/laptop" → cpu_performance, display_quality, battery_endurance, thermal_management, port_selection, keyboard_feel, build_durability
+   - "skincare/sunscreen" → spf_protection_reliability, finish_texture, white_cast_level, skin_type_compatibility, water_resistance, ingredient_safety
+   - "electronics/keyboard" → switch_feel_and_sound, layout_and_size, wireless_and_connectivity, software_and_customisation, typing_comfort, hot_swap_and_modability
+3. FORBIDDEN generic criterion names (apply to every product, tell buyers nothing specific): "build_quality", "value_for_money", "fit_for_purpose", "user_satisfaction", "overall_quality", "durability" alone, "performance" alone. Use SPECIFIC names instead (e.g. "sensor_tracking_accuracy" not "performance").
+4. ALWAYS include "price_to_value" — the one universal criterion that measures whether the product's performance justifies its price tier. This is the only exception to rule 3.
+5. Include 1 "hidden expert criterion" — something casual buyers overlook but that expert reviews always test (e.g. gaming mouse → "debounce_consistency"; earbuds → "codec_support"; mattress → "edge_support"; sunscreen → "photostability").
 
-NO markdown, NO commentary, JSON only."""
+JSON only. No markdown, no commentary."""
 
 
 def generate_criteria(category: str) -> list[dict]:
@@ -86,21 +93,26 @@ def generate_criteria(category: str) -> list[dict]:
 
 
 def _fallback_criteria() -> list[dict]:
-    """Used if generation fails - generic but usable."""
+    """Emergency fallback when LLM generation fails entirely."""
     return [
-        {"name": "quality", "label": "Build Quality", "description": "Materials and construction",
-         "high_score_means": "Premium materials, excellent construction",
-         "low_score_means": "Cheap materials, poor construction"},
-        {"name": "value", "label": "Value for Money", "description": "Quality relative to price",
-         "high_score_means": "Excellent value, punches above price",
-         "low_score_means": "Overpriced for what you get"},
-        {"name": "durability", "label": "Durability", "description": "Lifespan and longevity",
-         "high_score_means": "Lasts years with regular use",
-         "low_score_means": "Wears out quickly"},
-        {"name": "fit_for_purpose", "label": "Fit For Purpose", "description": "Does the core job well",
-         "high_score_means": "Excels at primary use case",
-         "low_score_means": "Struggles at primary use case"},
-        {"name": "user_satisfaction", "label": "User Satisfaction", "description": "Overall reported happiness",
-         "high_score_means": "Users overwhelmingly satisfied",
-         "low_score_means": "Common complaints, regret"},
+        {"name": "core_performance", "label": "Core Performance",
+         "description": "How well the product does its primary job",
+         "high_score_means": "Excels at its main function",
+         "low_score_means": "Fails at its main function"},
+        {"name": "reliability", "label": "Reliability",
+         "description": "Consistency and absence of defects over time",
+         "high_score_means": "Zero reported failures, consistent results",
+         "low_score_means": "Frequent failures, inconsistent performance"},
+        {"name": "ergonomics_and_usability", "label": "Ergonomics & Ease of Use",
+         "description": "How comfortable and intuitive it is to use",
+         "high_score_means": "Effortless to use, well-designed",
+         "low_score_means": "Uncomfortable or confusing to use"},
+        {"name": "price_to_value", "label": "Price-to-Value Ratio",
+         "description": "Whether the performance justifies the price tier",
+         "high_score_means": "Punches above its price class",
+         "low_score_means": "Overpriced relative to what you get"},
+        {"name": "user_reported_satisfaction", "label": "Owner Satisfaction",
+         "description": "What verified buyers say after extended use",
+         "high_score_means": "Owners overwhelmingly recommend it",
+         "low_score_means": "Common regret, frequent complaints"},
     ]
