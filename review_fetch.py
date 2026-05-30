@@ -62,6 +62,15 @@ SCRAPER_HEADERS = {"User-Agent": _USER_AGENTS[0], "Accept": "text/html,applicati
 
 MAX_CONTENT_CHARS = 10_000
 
+# Jina Reader — renders JS-heavy pages server-side, returns clean markdown
+_JINA_BASE = "https://r.jina.ai"
+_JINA_HEADERS = {
+    "User-Agent": "ShopSense/1.0",
+    "Accept": "text/plain",
+    "X-Return-Format": "markdown",
+    "X-Timeout": "15",
+}
+
 
 # ---- Category-aware review site lists ----
 
@@ -348,6 +357,23 @@ def _normalize_url(url: str) -> str:
 
 # ---- scrape page content ----
 
+def _fetch_via_jina(url: str) -> str | None:
+    """Fetch page via Jina Reader — handles JS-heavy sites and some 403 blocks."""
+    try:
+        resp = requests.get(
+            f"{_JINA_BASE}/{url}",
+            headers=_JINA_HEADERS,
+            timeout=25,
+        )
+        if resp.status_code == 200:
+            text = resp.text.strip()
+            if len(text) > 300:
+                return text[:MAX_CONTENT_CHARS]
+    except Exception:
+        pass
+    return None
+
+
 def fetch_review_page(url: str) -> dict | None:
     """Scrape a single review page. Returns {url, domain, title, content} or None on failure."""
     domain = urlparse(url).netloc.lower().replace("www.", "")
@@ -361,30 +387,48 @@ def fetch_review_page(url: str) -> dict | None:
     if cached is not None:
         return cached
 
+    raw_html_ok = True
     try:
         resp = requests.get(url, headers=_scraper_headers(), timeout=15)
-        if resp.status_code >= 400:
+        if resp.status_code == 403 or resp.status_code == 401:
+            print(f"[scrape] {resp.status_code} for {url}, trying Jina Reader...")
+            raw_html_ok = False
+        elif resp.status_code >= 400:
             print(f"[scrape] {resp.status_code} for {url}")
             _db.record_failure(domain, status_code=resp.status_code)
             return None
-        resp.encoding = resp.apparent_encoding or "utf-8"
-        html = resp.text
+        else:
+            resp.encoding = resp.apparent_encoding or "utf-8"
+            html = resp.text
     except Exception as e:
         print(f"[scrape] failed {url}: {e}")
-        _db.record_failure(domain)
-        return None
+        raw_html_ok = False
 
-    try:
-        result = _extract_content(html, url)
-    except Exception as e:
-        print(f"[scrape] parse error {url}: {e}")
-        _db.record_failure(domain)
-        return None
+    result = None
+    if raw_html_ok:
+        try:
+            result = _extract_content(html, url)
+        except Exception as e:
+            print(f"[scrape] parse error {url}: {e}")
 
+    # Fallback to Jina Reader for JS-heavy sites or 403 blocks
     if not result or len(result["content"]) < 300:
-        print(f"[scrape] too little content from {url} (likely paywall/JS)")
-        _db.record_failure(domain)
-        return None
+        jina_content = _fetch_via_jina(url)
+        if jina_content:
+            from source_filter import get_authority_tier
+            title = url.split("/")[-1].replace("-", " ").replace("_", " ")
+            result = {
+                "url": url,
+                "domain": domain,
+                "title": title[:300],
+                "content": jina_content,
+                "authority_tier": get_authority_tier(url),
+            }
+            print(f"[scrape] Jina Reader succeeded for {domain}")
+        else:
+            print(f"[scrape] too little content from {url} (paywall/JS, Jina also failed)")
+            _db.record_failure(domain)
+            return None
 
     _db.record_success(domain)
     cache.set("review_page", url, result)
