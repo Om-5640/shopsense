@@ -172,10 +172,14 @@ def generate_next_question(
     # ---- Always ask budget first if not mentioned in query and not already asked ----
     if n == 0 and not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
         noun = _product_noun(category)
+        # Target the price_to_value criterion if it exists, so the coverage tracker
+        # marks it as covered once the user answers — preventing a redundant follow-up.
+        criteria_names = {c["name"] for c in criteria}
+        budget_target = "price_to_value" if "price_to_value" in criteria_names else "budget"
         return {
             "question": f"What's your budget range for this {noun}?",
             "why_asking": "Budget is the primary filter — shapes which tier of products to recommend",
-            "targets_criterion": "budget",
+            "targets_criterion": budget_target,
             "is_done": False,
         }
 
@@ -198,7 +202,7 @@ def generate_next_question(
 
     budget_note = ""
     if not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
-        budget_note = "\nNOTE: Budget has NOT been asked yet — ask it now as your question.\n"
+        budget_note = "\nNOTE: Budget has NOT been asked yet — make it your question.\n"
 
     brand_note = ""
     if n >= 3 and not _brand_asked(previous_qa):
