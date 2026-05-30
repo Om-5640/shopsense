@@ -13,7 +13,7 @@ import { InsightsPanel } from '@/components/results/insights-panel'
 import { DiagnosticsPanel } from '@/components/results/diagnostics-panel'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -593,7 +593,7 @@ export default function ResultsPage() {
           <div className="pt-2 pb-6">
             <div className="flex items-center gap-2 mb-1">
               <Activity className="w-4 h-4 text-violet-400" />
-              <h2 className="text-base font-semibold text-[#FAFAFA]">Pipeline Diagnostics</h2>
+              <SheetTitle className="text-base font-semibold text-[#FAFAFA]">Pipeline Diagnostics</SheetTitle>
             </div>
             <p className="text-xs text-[#71717A] mb-6">
               Timing, resource usage, and warnings from this research run.

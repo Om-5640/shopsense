@@ -45,32 +45,18 @@ RULES:
 JSON only. No markdown, no commentary."""
 
 
-def generate_criteria(category: str) -> list[dict]:
-    """
-    Returns list of criterion dicts. Cached forever per category.
-    """
-    cached = cache.get("criteria", category)
-    if cached is not None:
-        print(f"[criteria] cache hit for {category}")
-        return cached
+_MIN_CRITERIA = 6
 
-    print(f"[criteria] generating for {category}...")
-    prompt = f'Product category: "{category}"\n\nGenerate the buying criteria.'
-    raw = run_agent("criteria_generator", user_prompt=prompt, system=SYSTEM)
 
+def _parse_and_clean_criteria(raw: str) -> list[dict]:
+    """Parse LLM output and return clean criterion dicts. Returns [] on any failure."""
     try:
         data = _extract_json(raw)
         criteria = data.get("criteria", [])
-    except Exception as e:
-        print(f"[criteria] JSON parse failed: {e}")
-        return _fallback_criteria()
-
-    # Validate
-    if not isinstance(criteria, list) or len(criteria) < 4:
-        print(f"[criteria] too few criteria ({len(criteria)}), using fallback")
-        return _fallback_criteria()
-
-    # Sanity check each one has required fields
+    except Exception:
+        return []
+    if not isinstance(criteria, list):
+        return []
     clean = []
     for c in criteria:
         if not isinstance(c, dict):
@@ -84,8 +70,44 @@ def generate_criteria(category: str) -> list[dict]:
             "high_score_means": c.get("high_score_means", ""),
             "low_score_means": c.get("low_score_means", ""),
         })
+    return clean
+
+
+def generate_criteria(category: str) -> list[dict]:
+    """
+    Returns list of criterion dicts. Cached per category.
+    Retries once if LLM returns fewer than _MIN_CRITERIA items.
+    """
+    cached = cache.get("criteria", category)
+    if cached is not None:
+        # Invalidate stale cache entries with too few criteria
+        if isinstance(cached, list) and len(cached) >= _MIN_CRITERIA:
+            print(f"[criteria] cache hit for {category} ({len(cached)} criteria)")
+            return cached
+        print(f"[criteria] cache has only {len(cached) if isinstance(cached, list) else '?'} criteria — regenerating")
+
+    print(f"[criteria] generating for {category}...")
+    prompt = f'Product category: "{category}"\n\nGenerate the buying criteria.'
+    raw = run_agent("criteria_generator", user_prompt=prompt, system=SYSTEM)
+    clean = _parse_and_clean_criteria(raw)
+
+    # Retry once if too few criteria returned
+    if len(clean) < _MIN_CRITERIA:
+        print(f"[criteria] only {len(clean)} criteria returned, retrying with stricter prompt...")
+        retry_prompt = (
+            f'Product category: "{category}"\n\n'
+            f'Generate the buying criteria. '
+            f'IMPORTANT: You MUST return at least {_MIN_CRITERIA} criteria (target 8). '
+            f'Do not stop early — include all differentiating factors for this product type.'
+        )
+        raw2 = run_agent("criteria_generator", user_prompt=retry_prompt, system=SYSTEM)
+        clean2 = _parse_and_clean_criteria(raw2)
+        if len(clean2) >= len(clean):
+            clean = clean2
+        print(f"[criteria] after retry: {len(clean)} criteria")
 
     if len(clean) < 4:
+        print(f"[criteria] too few criteria ({len(clean)}), using fallback")
         return _fallback_criteria()
 
     cache.set("criteria", category, clean)
@@ -99,20 +121,32 @@ def _fallback_criteria() -> list[dict]:
          "description": "How well the product does its primary job",
          "high_score_means": "Excels at its main function",
          "low_score_means": "Fails at its main function"},
-        {"name": "reliability", "label": "Reliability",
+        {"name": "reliability_and_longevity", "label": "Reliability & Longevity",
          "description": "Consistency and absence of defects over time",
-         "high_score_means": "Zero reported failures, consistent results",
+         "high_score_means": "Zero reported failures, consistent results after months of use",
          "low_score_means": "Frequent failures, inconsistent performance"},
         {"name": "ergonomics_and_usability", "label": "Ergonomics & Ease of Use",
          "description": "How comfortable and intuitive it is to use",
-         "high_score_means": "Effortless to use, well-designed",
+         "high_score_means": "Effortless to use, well-designed for long sessions",
          "low_score_means": "Uncomfortable or confusing to use"},
+        {"name": "build_and_materials", "label": "Build Quality & Materials",
+         "description": "Physical construction quality, feel in hand, resistance to wear",
+         "high_score_means": "Solid, premium-feeling construction with no flex or rattle",
+         "low_score_means": "Cheap plastics, creaking, poor fit and finish"},
         {"name": "price_to_value", "label": "Price-to-Value Ratio",
          "description": "Whether the performance justifies the price tier",
-         "high_score_means": "Punches above its price class",
+         "high_score_means": "Punches above its price class, strong community consensus on value",
          "low_score_means": "Overpriced relative to what you get"},
-        {"name": "user_reported_satisfaction", "label": "Owner Satisfaction",
-         "description": "What verified buyers say after extended use",
-         "high_score_means": "Owners overwhelmingly recommend it",
-         "low_score_means": "Common regret, frequent complaints"},
+        {"name": "setup_and_compatibility", "label": "Setup & Compatibility",
+         "description": "How easy it is to set up, driver/software requirements, OS/device support",
+         "high_score_means": "Plug-and-play, works everywhere, no driver headaches",
+         "low_score_means": "Complicated setup, limited compatibility, buggy software"},
+        {"name": "community_reputation", "label": "Community Reputation",
+         "description": "What expert reviewers and experienced users say after extended use",
+         "high_score_means": "Consistently recommended by experts and long-term owners",
+         "low_score_means": "Common regret, frequently flagged issues in community"},
+        {"name": "expert_hidden_criterion", "label": "Expert Edge Factor",
+         "description": "The under-the-radar detail that separates good from great for experts",
+         "high_score_means": "Nails the detail most buyers overlook",
+         "low_score_means": "Fails on the subtle factor experts always test"},
     ]
