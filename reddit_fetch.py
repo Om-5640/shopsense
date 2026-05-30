@@ -38,6 +38,10 @@ HEADERS = {
 _PULLPUSH = "https://api.pullpush.io/reddit"
 _PULLPUSH_HEADERS = {"User-Agent": "ShopSense/1.0"}
 
+# Arctic Shift — more complete Reddit archive, better coverage for 2024+ posts
+_ARCTIC = "https://arctic-shift.photon-reddit.com/api"
+_ARCTIC_HEADERS = {"User-Agent": "ShopSense/1.0", "Accept": "application/json"}
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 from models import GEMINI_MODEL, gemini_url
 GEMINI_URL = gemini_url()
@@ -500,6 +504,8 @@ def _fetch_raw_comments(permalink: str, sort: str, limit: int) -> list:
     for attempt in range(3):
         try:
             resp = requests.get(json_url, headers=HEADERS, timeout=15)
+            if resp.status_code == 403:
+                return []
             if resp.status_code == 429:
                 raise requests.HTTPError("429 Rate Limited")
             resp.raise_for_status()
@@ -527,18 +533,19 @@ def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
     try:
         resp = requests.get(
             f"{_PULLPUSH}/search/submission/?ids={post_id}",
-            headers=_PULLPUSH_HEADERS, timeout=15,
+            headers=_PULLPUSH_HEADERS, timeout=10,
         )
         resp.raise_for_status()
         posts = resp.json().get("data", [])
         if not posts:
+            print(f"[reddit] pullpush: post {post_id} not in archive, trying arctic")
             return None
         post = posts[0]
 
         resp2 = requests.get(
             f"{_PULLPUSH}/search/comment/?link_id={post_id}"
             f"&limit={max_comments}&sort_type=score&order=desc",
-            headers=_PULLPUSH_HEADERS, timeout=20,
+            headers=_PULLPUSH_HEADERS, timeout=12,
         )
         resp2.raise_for_status()
         raw_comments = resp2.json().get("data", [])
@@ -582,6 +589,70 @@ def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
         return None
 
 
+def _arctic_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
+    """Fetch thread via Arctic Shift — better coverage for recent posts (2024+)."""
+    post_id = _extract_post_id(permalink)
+    if not post_id:
+        return None
+    try:
+        resp = requests.get(
+            f"{_ARCTIC}/posts/ids?ids={post_id}",
+            headers=_ARCTIC_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        posts = resp.json().get("data", []) or []
+        if not posts:
+            print(f"[reddit] arctic: no post found for {post_id}")
+            return None
+        post = posts[0]
+
+        resp2 = requests.get(
+            f"{_ARCTIC}/comments/search?link_id=t3_{post_id}&limit={max_comments}",
+            headers=_ARCTIC_HEADERS, timeout=15,
+        )
+        resp2.raise_for_status()
+        raw_comments = resp2.json().get("data", []) or []
+        raw_comments.sort(key=lambda c: (c.get("score") or 0), reverse=True)
+
+        comments = []
+        seen_ids: set = set()
+        for c in raw_comments:
+            body = (c.get("body") or "").strip()
+            if not body or body in ("[deleted]", "[removed]"):
+                continue
+            if len(body) < MIN_COMMENT_CHARS:
+                continue
+            score = c.get("score", 0) or c.get("ups", 0) or 0
+            if score < MIN_COMMENT_SCORE:
+                continue
+            cid = c.get("id", "")
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+            comments.append({
+                "id": cid,
+                "body": body[:1500],
+                "score": score,
+                "depth": 0,
+                "from_controversial": bool((c.get("controversiality") or 0) > 0),
+            })
+
+        controversial_count = sum(1 for c in comments if c.get("from_controversial"))
+        return {
+            "title": post.get("title", ""),
+            "subreddit": post.get("subreddit", ""),
+            "body": (post.get("selftext") or "")[:3000],
+            "score": post.get("score", 0) or post.get("ups", 0) or 0,
+            "url": permalink,
+            "comments": comments,
+            "total_comment_count_in_thread": post.get("num_comments", 0),
+            "controversial_comments_added": controversial_count,
+        }
+    except Exception as e:
+        print(f"[reddit] arctic failed for {permalink}: {e}")
+        return None
+
+
 def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_THREAD) -> dict | None:
     """Fetch thread JSON.
 
@@ -603,13 +674,23 @@ def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_T
         cache.set("reddit_thread", permalink, result)
         return result
 
-    # ---- Fallback: direct Reddit JSON endpoint ----
+    # ---- Secondary: Arctic Shift (better coverage for 2024+ posts) ----
+    result = _arctic_fetch_thread(permalink, max_comments)
+    if result is not None:
+        cache.set("reddit_thread", permalink, result)
+        return result
+
+    # ---- Last resort: direct Reddit JSON endpoint (no retries on 403 — Cloudflare won't relent) ----
     json_url = permalink.rstrip("/") + f"/.json?sort=top&limit={max_comments}"
     last_err = None
     post_data = None
     for attempt in range(3):
         try:
             resp = requests.get(json_url, headers=HEADERS, timeout=15)
+            if resp.status_code == 403:
+                print(f"   [reddit] JSON 403 (Cloudflare block) — skipping retries")
+                last_err = requests.HTTPError(f"403 Blocked for url: {json_url}")
+                break
             if resp.status_code == 429:
                 raise requests.HTTPError("429 Rate Limited")
             resp.raise_for_status()
@@ -691,7 +772,7 @@ def _praw_credentials_set() -> bool:
 def fetch_all_threads(
     query: str,
     limit: int = 15,
-    delay: float = 1.5,
+    delay: float = 0.3,
     profile: dict | None = None,
 ) -> list[dict]:
     """
