@@ -34,6 +34,10 @@ HEADERS = {
     "Referer": "https://www.reddit.com/",
 }
 
+# Pullpush — community Reddit data API, no credentials required
+_PULLPUSH = "https://api.pullpush.io/reddit"
+_PULLPUSH_HEADERS = {"User-Agent": "ShopSense/1.0"}
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 from models import GEMINI_MODEL, gemini_url
 GEMINI_URL = gemini_url()
@@ -510,6 +514,74 @@ def _fetch_raw_comments(permalink: str, sort: str, limit: int) -> list:
     return []
 
 
+def _extract_post_id(permalink: str) -> "str | None":
+    m = re.search(r"/comments/([a-z0-9]+)/", permalink)
+    return m.group(1) if m else None
+
+
+def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
+    """Fetch thread via Pullpush.io — no Reddit credentials needed, bypasses Cloudflare."""
+    post_id = _extract_post_id(permalink)
+    if not post_id:
+        return None
+    try:
+        resp = requests.get(
+            f"{_PULLPUSH}/search/submission/?ids={post_id}",
+            headers=_PULLPUSH_HEADERS, timeout=15,
+        )
+        resp.raise_for_status()
+        posts = resp.json().get("data", [])
+        if not posts:
+            return None
+        post = posts[0]
+
+        resp2 = requests.get(
+            f"{_PULLPUSH}/search/comment/?link_id={post_id}"
+            f"&limit={max_comments}&sort_type=score&order=desc",
+            headers=_PULLPUSH_HEADERS, timeout=20,
+        )
+        resp2.raise_for_status()
+        raw_comments = resp2.json().get("data", [])
+
+        comments = []
+        seen_ids: set = set()
+        for c in raw_comments:
+            body = (c.get("body") or "").strip()
+            if not body or body in ("[deleted]", "[removed]"):
+                continue
+            if len(body) < MIN_COMMENT_CHARS:
+                continue
+            score = c.get("score", 0) or 0
+            if score < MIN_COMMENT_SCORE:
+                continue
+            cid = c.get("id", "")
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+            comments.append({
+                "id": cid,
+                "body": body[:1500],
+                "score": score,
+                "depth": 0,
+                "from_controversial": bool((c.get("controversiality") or 0) > 0),
+            })
+
+        controversial_count = sum(1 for c in comments if c.get("from_controversial"))
+        return {
+            "title": post.get("title", ""),
+            "subreddit": post.get("subreddit", ""),
+            "body": (post.get("selftext") or "")[:3000],
+            "score": post.get("score", 0),
+            "url": permalink,
+            "comments": comments,
+            "total_comment_count_in_thread": post.get("num_comments", 0),
+            "controversial_comments_added": controversial_count,
+        }
+    except Exception as e:
+        print(f"[reddit] pullpush failed for {permalink}: {e}")
+        return None
+
+
 def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_THREAD) -> dict | None:
     """Fetch thread JSON.
 
@@ -525,7 +597,13 @@ def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_T
     if cached is not None:
         return cached
 
-    # Fetch post metadata using top sort
+    # ---- Primary: Pullpush (no credentials, bypasses Reddit Cloudflare) ----
+    result = _pullpush_fetch_thread(permalink, max_comments)
+    if result is not None:
+        cache.set("reddit_thread", permalink, result)
+        return result
+
+    # ---- Fallback: direct Reddit JSON endpoint ----
     json_url = permalink.rstrip("/") + f"/.json?sort=top&limit={max_comments}"
     last_err = None
     post_data = None
