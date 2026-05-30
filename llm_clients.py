@@ -475,7 +475,9 @@ def call_cerebras(prompt: str, system: str = "", json_mode: bool = False, max_to
         "Content-Type": "application/json",
     }
 
-    resp = _smart_post_with_retry(CEREBRAS_URL, headers, body, "cerebras", timeout=CEREBRAS_TIMEOUT)
+    # max_attempts=1: Cerebras failures are quota-related, retrying wastes 8s with no benefit.
+    # Fail fast and let the agent chain immediately try the next provider.
+    resp = _smart_post_with_retry(CEREBRAS_URL, headers, body, "cerebras", timeout=CEREBRAS_TIMEOUT, max_attempts=1)
     data = resp.json()
 
     try:

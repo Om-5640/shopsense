@@ -94,8 +94,8 @@ AGENTS = {
     },
     "thread_summarizer": {
         "provider": "pool",
-        "provider_pool": ["groq", "cerebras", "gemini", "mistral"],
-        "fallback_chain": ["groq", "cerebras", "gemini", "mistral", _MASTER],
+        "provider_pool": ["groq", "gemini", "mistral"],
+        "fallback_chain": ["groq", "gemini", "mistral", _MASTER],
         "temperature": 0.2,
         "max_tokens": 2048,
         "json_mode": True,
@@ -163,6 +163,26 @@ _pool_counters: dict = {}
 _dead_providers: set = set()
 _dead_lock = threading.Lock()
 
+# Consecutive failure counter — auto-dead after _CONSEC_FAIL_THRESHOLD failures
+_consec_failures: dict[str, int] = {}
+_consec_lock = threading.Lock()
+_CONSEC_FAIL_THRESHOLD = 3
+
+
+def _record_provider_outcome(provider: str, success: bool) -> None:
+    """Track consecutive failures; auto-dead after _CONSEC_FAIL_THRESHOLD in a row."""
+    with _consec_lock:
+        if success:
+            _consec_failures[provider] = 0
+        else:
+            _consec_failures[provider] = _consec_failures.get(provider, 0) + 1
+            if _consec_failures[provider] >= _CONSEC_FAIL_THRESHOLD:
+                mark_provider_dead(provider)
+                _logger.warning(
+                    "[provider:%s] %d consecutive failures — auto-marking dead for this session",
+                    provider, _consec_failures[provider],
+                )
+
 
 def mark_provider_dead(provider: str) -> None:
     """Mark a provider as dead for the rest of this run. Subsequent calls skip it."""
@@ -177,9 +197,11 @@ def is_provider_dead(provider: str) -> bool:
 
 
 def reset_dead_providers() -> None:
-    """Clear the dead set. Useful for tests or long-running sessions across days."""
+    """Clear the dead set and consecutive counters. Useful for tests or long-running sessions."""
     with _dead_lock:
         _dead_providers.clear()
+    with _consec_lock:
+        _consec_failures.clear()
 
 
 def _available_for_pool(pool: list) -> list:
@@ -253,14 +275,18 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
     last_err = None
     for i, provider in enumerate(available):
         try:
-            return _dispatch(provider, user_prompt, system, json_mode, max_tokens, temperature)
+            result = _dispatch(provider, user_prompt, system, json_mode, max_tokens, temperature)
+            _record_provider_outcome(provider, success=True)
+            return result
         except GroqQuotaExhausted as e:
+            _record_provider_outcome("groq", success=False)
             mark_provider_dead("groq")
             last_err = e
             if i < len(available) - 1:
                 _logger.warning("[%s] groq quota exhausted, trying %s", agent_name, available[i + 1])
         except ProviderAuthError as e:
             # Auth failure = permanently bad key; mark dead for entire session
+            _record_provider_outcome(provider, success=False)
             mark_provider_dead(provider)
             last_err = e
             if i < len(available) - 1:
@@ -268,6 +294,7 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
             else:
                 _logger.warning("[%s] %s auth failed (no more providers)", agent_name, provider)
         except Exception as e:
+            _record_provider_outcome(provider, success=False)
             last_err = e
             err_type = type(e).__name__
             err_str = str(e).lower()
