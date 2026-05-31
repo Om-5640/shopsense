@@ -1,4 +1,4 @@
-# ShopSense — AI-Powered Personal Shopping Research
+# ShopSense — Multi-Agent AI Shopping Research System
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
@@ -6,213 +6,406 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> Stop reading 50 Reddit threads. Get personalized buying recommendations from 15 Reddit threads + expert reviews, scored against what **you** specifically care about.
+> **12 specialized AI agents. 5 LLM providers with automatic failover. 15 Reddit threads + expert reviews synthesized in parallel. Personalized rubric scoring. Live re-ranking with zero API calls.**
+>
+> Not a chatbot. Not a product listing aggregator. A research pipeline that does what a thorough human researcher would do in 3 hours — in 85 seconds.
 
 ---
 
-## What This Does (The Honest Version)
+## The Problem
 
-Most "best X" articles are SEO content farms. Reddit has real opinions but reading 15 threads to find one product takes hours.
+Every "best X" article is SEO bait. Reddit has real signal but reading 15 threads to find one product takes hours. AI chatbots hallucinate prices, recommend discontinued items, and give the same answer to everyone regardless of their specific needs.
 
-**ShopSense does it for you.**
+**ShopSense is different at the architectural level:**
 
-Type `"best earbuds under ₹3000"` → answer 8 questions about what matters to you → get a ranked list with real prices, evidence quotes from real users, and sliders to instantly re-rank if your priorities change.
+- Fetches real data (Reddit + trusted review sites) instead of relying on training knowledge
+- Personalizes through a structured interview — builds a weighted rubric per user, not generic recommendations
+- Runs deterministic mention counting using Aho-Corasick automaton — no LLM estimation of "how many people mentioned this"
+- Detects community bias by comparing sentiment across subreddits before surfacing conclusions
+- Learns across searches via vector memory — never asks what you already told it
+
+---
+
+## End-to-End Pipeline
 
 ```
-User query: "best wireless earbuds under ₹3000"
-     ↓
-Category detection → earphones/wireless/budget-india
-     ↓  
-8-question interview → you care about: bass (high), comfort (high), mic quality (low)
-     ↓
-15 Reddit threads + 6 review sites fetched in parallel
-     ↓
-12 specialized AI agents analyze, summarize, score
-     ↓
-Results: 8 ranked products with prices, evidence, live sliders
-     ↓  
-Total wall time: ~85 seconds
+Query: "best wireless earbuds under ₹3000 for gym"
+  │
+  ├─ [1] CATEGORY DETECTION  ──────────────────────── Groq Llama 70B
+  │       earphones · wireless · budget-india
+  │
+  ├─ [2] CRITERIA GENERATION ──────────────────────── Gemini (cached)
+  │       6–10 buying criteria specific to this category
+  │       e.g. sound_quality, comfort, battery_life, mic_quality, fit_security
+  │
+  ├─ [3] ADAPTIVE INTERVIEW ───────────────────────── Mistral Small
+  │       4–8 questions, coverage-aware termination
+  │       Builds UserIntent: {hard_constraints, budget, preferences, exclusions}
+  │       Memory injection: skips questions user answered in past searches
+  │
+  ├─ [4] RUBRIC GENERATION ────────────────────────── Gemini
+  │       Assigns weight 0–10 per criterion based on interview
+  │       Gap-fill: infers weights for uncovered criteria using research signal
+  │       e.g. sound_quality: 9, comfort: 8, mic_quality: 3, price_to_value: 7
+  │
+  ├─ [5] PARALLEL RESEARCH ────────────────────────── ThreadPoolExecutor
+  │   │
+  │   ├─ REDDIT (15 threads)
+  │   │   3 query variants × 5 subreddit targets
+  │   │   Budget/region/use-case variants injected from UserIntent
+  │   │   Comment tree flattening (3 levels, top-sorted, 100 comments max)
+  │   │   Jaccard dedup: overlapping threads removed before summarization
+  │   │
+  │   └─ REVIEWS (6–8 sites)
+  │       Gemini grounding (live Google Search) finds authoritative sources
+  │       Jina Reader fallback for JS-heavy or 403-blocked pages
+  │       Authority tier tagging: TRUSTED / GOOD / UNKNOWN
+  │
+  ├─ [6] PARALLEL SUMMARIZATION ───────────────────── Provider Pool (4×)
+  │       1 sub-agent per Reddit thread (ThreadPoolExecutor, max 5 workers)
+  │       Round-robin across [Groq, Gemini, Mistral] → 4× effective rate limit
+  │       Input: 10K chars raw thread → Output: structured summary
+  │       {products_mentioned, key_takeaways, top_comments, controversial_signals}
+  │       150K chars raw → 30K chars structured (80% compression, higher quality)
+  │
+  ├─ [7] MENTION COUNTING ─────────────────────────── Python (no LLM)
+  │       Alias discovery: LLM extracts all names for each product
+  │       Aho-Corasick automaton: O(n) single-pass match across all aliases
+  │       Overlapping-span dedup: "Buds Air 7 Pro" beats "Buds Air 7" at same position
+  │       Distinct recommenders counted (comments, not raw mentions)
+  │
+  ├─ [8] CROSS-SUBREDDIT VALIDATION ──────────────── Groq
+  │       Compares product sentiment across communities
+  │       Flags split signal: "praised in r/budgetaudiophile, mixed in r/audiophile"
+  │       Requires 2+ subreddits AND 3+ total mentions before firing
+  │       Result: consistent / split / single_source per product
+  │
+  ├─ [9] MAIN ANALYSIS ────────────────────────────── Gemini 2.5 Flash (1M ctx)
+  │       Aggregates structured summaries + authority-tagged reviews
+  │       Separates materials (category types) from products (buyable items)
+  │       Applies source weighting: TRUSTED > GOOD > UNKNOWN
+  │       Budget enforcement: rejects out-of-range products at prompt level
+  │
+  ├─ [10] SCORING (hybrid mode) ───────────────────── Groq (parallel batches)
+  │        Top 10 products: full LLM scoring — 0–10 per criterion with evidence
+  │        Remaining products: instant heuristic (sentiment ratio × volume bonus)
+  │        Hard constraint enforcement: MUST violation → forced 1–3 score
+  │        Batch mode: 3 products per LLM call → 3× fewer requests
+  │
+  ├─ [11] ENRICHMENT ──────────────────────────────── Parallel
+  │        Price fetch: Amazon.in / Flipkart via Serper (real-time)
+  │        Memory lookup: pgvector cosine similarity (k=5, threshold 0.7)
+  │        Explanation: "Why this fits you" per product (Groq)
+  │
+  └─ [12] RESULTS UI
+          Products ranked by weighted score
+          Live sliders → instant re-ranking (pure JS, <5ms, zero API calls)
+          Framer Motion spring physics animates position changes
+          ⌘K command palette, compare mode, community signal badges
 ```
 
 ---
 
-## What Makes This Different
+## 12 Specialized Agents
 
-| Feature | ShopSense | Typical AI shopping tool |
+Each agent is tuned to its task — different provider, temperature, and prompt strategy.
+
+| Agent | Primary Provider | Temperature | Task |
+|---|---|---|---|
+| `category_detector` | Groq Llama 70B | 0.1 | Query classification + region detection |
+| `criteria_generator` | Gemini 2.5 Flash | 0.4 | Generate 6–10 buying criteria per category |
+| `interview_questioner` | Mistral Small | 0.7 | Generate conversational interview questions |
+| `interview_classifier` | Groq Llama 70B | 0.1 | Classify message: ANSWER/QUESTION/SKIP/COMMAND |
+| `preference_summarizer` | Groq Llama 70B | 0.2 | Extract structured UserIntent from Q&A |
+| `rubric_generator` | Gemini 2.5 Flash | 0.3 | Build weighted scorecard from criteria + profile |
+| `gap_filler` | Groq Llama 70B | 0.3 | Infer weights for uncovered criteria |
+| `thread_summarizer` | Pool (Groq/Gemini/Mistral) | 0.2 | Summarize one Reddit thread → structured data |
+| `main_analyzer` | Gemini 2.5 Flash | 0.3 | Aggregate summaries + reviews → product list |
+| `product_scorer` | Groq Llama 70B | 0.1 | Score product 0–10 per criterion with evidence |
+| `explanation_writer` | Groq Llama 70B | 0.5 | "Why this product fits you" per result |
+| `cross_validator` | Groq Llama 70B | 0.2 | Explain community sentiment disagreement |
+
+---
+
+## 5-Provider Failover Architecture
+
+All 5 providers use free tiers. No paid API required.
+
+```
+Groq (llama-3.3-70b-versatile)          ← fastest, primary for most agents
+  │  fail: quota / 429
+  ▼
+Cerebras (llama-3.1-8b)                  ← ultra-fast inference, 1 attempt only
+  │  fail: quota / 429
+  ▼
+Gemini 2.5 Flash (google/gemini-flash)  ← 1M context, best for large payloads
+  │  fail: quota / 429
+  ▼
+Mistral Small (mistral-small-latest)    ← natural conversational tone
+  │  fail: quota / 429
+  ▼
+OpenRouter (routed to best available)   ← master fallback, never skipped
+```
+
+**Circuit Breaker**: 429/502/503 errors trip a provider for 60–120 seconds. After cooldown, it auto-retries. If a provider returns 401/403, it's marked session-dead and skipped for the entire run.
+
+**Consecutive Failure Threshold**: 3 consecutive failures on any provider → auto-marked dead. `reset_dead_providers()` clears counters between searches.
+
+**Provider-Aware Token Budgets**: Before each call, the active provider's context limit is checked. Research text windows resize dynamically — Groq gets 2.5K chars/product, Gemini gets 6K chars/product.
+
+**Round-Robin Pool** (thread summarization): `thread_summarizer` uses `provider="pool"` cycling across [Groq, Gemini, Mistral]. 15 threads × 4 providers = 4× effective rate limit. Thread-safe cycling counter per pool agent.
+
+---
+
+## Structured UserIntent Model
+
+The interview produces a typed intent object, not a flat text blob. Every downstream component reads fields directly instead of re-parsing unstructured text.
+
+```python
+UserIntent = {
+    "hard_constraints": ["lightweight — must be under 30g", "no in-ear style"],
+    "budget":           "under ₹3000",
+    "preferences":      ["bass-heavy", "good for gym/running", "long battery"],
+    "exclusions":       ["prefers no Chinese brands"],
+    "uncertainties":    ["maybe ANC if in budget"]
+}
+```
+
+**How intent flows through the system:**
+
+- `rubric_generator` → hard constraints weight to 9–10; exclusions weight to 1–2
+- `main_analyzer` → MUST/Budget/Wants/Excludes injected as structured override block
+- `product_scorer` → constraint violations force score to 1–3 regardless of evidence
+- `gap_filler` → uses intent + research signal to infer weights for criteria user didn't address
+- `criteria.py` → `price_to_value` auto-marked covered when budget is in query (budget implies price awareness)
+
+---
+
+## Aho-Corasick Mention Counting
+
+One of the most underrated parts of the system. LLM-estimated mention counts are unreliable — they conflate "X" and "Brand X" and miss abbreviations. ShopSense uses a deterministic automaton instead.
+
+**Three-phase pipeline:**
+
+1. **Alias Discovery** — per-thread LLM call finds all ways a product was referred to: "WF-1000XM5", "XM5", "Sony XM5", "the Sony ones", etc.
+
+2. **Automaton Build** — all product names + aliases compiled into an Aho-Corasick multi-pattern automaton. Single O(n) pass over the full comment corpus, no nested regex loops.
+
+3. **Span Deduplication** — when overlapping matches exist at the same position ("Buds Air 7 Pro" and "Buds Air 7"), the longer match wins. Exclusion-pattern cancellation: "Air 7 Pro" suppresses any nearby "Air 7" match within a 30-character window.
+
+**Result**: deterministic integer counts — not LLM estimates. Distinct recommenders counted per comment (prevents 1 user with 10 mentions counting as 10 recommenders).
+
+---
+
+## Cross-Subreddit Bias Detection
+
+A product praised in r/budgetaudiophile but criticized in r/audiophile needs investigation — they may be evaluating it against different reference points.
+
+```
+Product: Sony WF-C700N
+
+  r/IndianGaming       →  positive  (3 mentions)
+  r/budgetaudiophile   →  positive  (4 mentions)
+  r/audiophile         →  mixed     (1 pos, 3 neg)
+
+  Signal: "split"
+  Explanation: "Audiophile community criticizes compressed soundstage vs similarly-priced
+                wired options; gaming and budget communities weigh ANC and price more heavily."
+  Context note: "If audio accuracy matters, research further. If ANC and call quality are
+                 the priority, community consensus is positive."
+```
+
+Requires 2+ subreddits AND 3+ total mentions before firing the LLM call. Single-source products get `"signal": "single_source"` rather than a forced explanation.
+
+---
+
+## Parallel Thread Summarization
+
+The naive approach — dump 15 threads (≈150K chars) into one LLM call — wastes context and produces lower-quality extraction. The cognitive load on the model is too high.
+
+**ShopSense approach:**
+- Spawn one `thread_summarizer` sub-agent per thread
+- Each agent sees ≤10K chars (one focused thread)
+- All run in parallel (`ThreadPoolExecutor`, max 5 workers)
+- Total wall time = slowest thread, not sum of all threads
+
+**Per-thread output:**
+```python
+{
+  "thread_summary":       "2-sentence neutral summary",
+  "products_mentioned":   [{"name": ..., "sentiment": ..., "mention_count": ..., "key_quotes": [...]}],
+  "key_takeaways":        ["top insight", "notable disagreement"],
+  "top_comments":         [{"text": "verbatim quote", "upvotes": N}],
+  "controversial_signals":["specific complaint with high upvotes despite disagreement"]
+}
+```
+
+**Compression ratio**: 150K chars raw → ~30K chars structured. Main analyzer gets clean, focused input rather than noisy raw comments.
+
+---
+
+## Three-Mode Scoring System
+
+| Mode | Method | Speed | Quality |
+|---|---|---|---|
+| `fast` | Pure Python heuristic | Instant | Lower |
+| `hybrid` | LLM for top 10, heuristic for rest | ~45s | High where it matters |
+| `llm` | Full LLM for every product | ~90s | Highest |
+
+**Default: `hybrid`**. Products the user is most likely to care about get rigorous LLM scoring. The long tail gets a fast heuristic that's accurate enough for filtering.
+
+**Heuristic formula (fast/hybrid tail):**
+```
+base_score = (positive_mentions / total_mentions) × 10
+volume_bonus:  +1.0 if 20+ mentions  |  +0.5 if 10+  |  +0.2 if 5+  |  -0.5 if <5
+signal_mod:    +0.5 high/medium  |  -0.5 low
+final = clamp(base_score + volume_bonus + signal_mod, 0, 10)
+```
+
+**LLM scoring features:**
+- Batch mode: 3 products per call (3× fewer requests)
+- Evidence citations: "8 users report 6+ hours battery" not generic praise
+- Constraint override: MUST violation → forced 1–3 regardless of evidence
+- Rate-limited: 6s between calls for free-tier Groq
+
+---
+
+## Live Re-ranking: Zero API Calls
+
+The full rubric (criteria + weights) and per-product scores are loaded into the browser once. When a user drags a slider, `rerank.ts` recomputes the weighted sum across all products:
+
+```
+weighted_score = Σ (criterion_score × criterion_weight) / Σ weights
+```
+
+Products animate into new positions using Framer Motion spring physics. No debounce required — computation finishes in <5ms for 20 products. No server contact, no API cost.
+
+This means users can explore "what if I cared more about battery life?" or "what if price doesn't matter?" instantly, without waiting for a new research run.
+
+---
+
+## Vector Memory Across Searches
+
+Durable user signals are embedded and stored between searches. Transient context (current budget, current search intent) is never persisted.
+
+**What gets saved:**
+- Physical traits: "has sensitive ears", "allergic to latex"
+- Lifestyle patterns: "gym 5 days/week", "commutes 2 hours daily"
+- Strong preferences: "always prefers Japanese brands", "never buys open-back"
+
+**What doesn't:**
+- Current budget (changes per search)
+- Current query intent
+- Scores and results from past searches
+
+**Retrieval:** `find_relevant_signals(query, k=5, min_similarity=0.7)` — pgvector cosine similarity at the DB layer. Cross-category signals filtered before injection. When surfaced, the interview questioner uses them to skip redundant questions or pre-fill context.
+
+**Embedding chain:** Gemini `text-embedding-004` (768-dim) → Cohere → HuggingFace → local `sentence-transformers`
+
+---
+
+## Smart Caching Strategy
+
+| What | Key | TTL |
 |---|---|---|
-| Data sources | 15 Reddit threads + 8 expert reviews | Product listings only |
-| Personalization | 8-question interview → weighted rubric | None or basic filters |
-| Re-ranking | Live sliders, zero API calls, <50ms | Re-query the LLM ($$$) |
-| LLM providers | 5 providers, auto-failover | Single provider, hard fails |
-| Pricing | Real Amazon/Flipkart scrape | "Check Google" |
-| Memory | Cross-search preference learning | Session-only |
-| Mentions | Community signal: X mentions, Y recommenders | Star ratings only |
+| Pipeline results | SHA256(query + category + rubric weights + Q&A) | 4h |
+| Thread content | URL hash | 24h |
+| Review page content | URL hash | 24h |
+| Review URLs | query + category | 4h |
+| Criteria | category slug | Until count <6 |
+| Embeddings | text SHA256 | No expiry |
 
-### The Technical Highlights
-
-**12 Specialized Agents, Each Tuned for Its Task**  
-A `rubric_generator` runs at 0.3 temperature on Gemini (creative weights). A `product_scorer` runs at 0.1 on Groq (deterministic, fast). A `thread_summarizer` uses a pool of 4 providers cyclically for 4× the rate limit. Not one model doing everything — each agent is matched to the right provider and temperature.
-
-**5-Provider Failover Chain**  
-Groq → Cerebras → Gemini → Mistral → OpenRouter. Every agent has a fallback chain. If Groq rate-limits mid-run, the next call transparently moves to Cerebras. A circuit breaker trips a provider for 60–120 seconds after repeated failures, then auto-retries. Session-dead tracking marks providers that return 401/403 as permanently unavailable for that run.
-
-**Hybrid Scoring: 100× Faster Than Pure LLM Ranking**  
-`SCORING_MODE=fast` — pure heuristic (mention count × sentiment ratio × signal modifier). Instant.  
-`SCORING_MODE=hybrid` — LLM scores only the top 10 products; the rest use fast heuristics.  
-`SCORING_MODE=llm` — full LLM scoring for every product (highest quality, slowest).  
-Default is `hybrid`. The math runs entirely in Python — no ML framework needed.
-
-**Live Re-ranking With Zero API Calls**  
-The full rubric + evidence is loaded into the browser. Dragging a slider triggers `rerank.ts` which recomputes the weighted sum across all products in <5ms. Products animate into new positions using Framer Motion spring physics. No server contact.
-
-**Vector Memory That Learns Across Categories**  
-Every interview answer is embedded and stored. "I have sensitive ears" from an earbuds search surfaces when you search headphones next month. Uses pgvector for production (cosine similarity at the DB layer) with in-memory fallback for SQLite. Embedding chain: Gemini → Cohere → HuggingFace → local `sentence-transformers`.
+**Key insight on pipeline cache key:** the key includes interview Q&A (not `preferences_summary`). Memory context injection changes the summary text but not the Q&A, so memory augmentation never busts the cache.
 
 ---
 
 ## Tech Stack
 
-**Backend** — `api/` + root Python modules
-- Python 3.11+, FastAPI, Uvicorn
-- SQLite (default) / PostgreSQL + pgvector (production)
-- Server-Sent Events for live pipeline streaming
-- `ThreadPoolExecutor` for parallel agent calls
-- No PyTorch, no heavy ML frameworks — pure Python math
+### Backend
+- Python 3.11+, FastAPI 0.115, Uvicorn
+- PostgreSQL 16 + pgvector (production) | SQLite (dev)
+- Server-Sent Events for real-time pipeline streaming
+- `ThreadPoolExecutor` — no async overhead, simple parallel execution
+- `pyahocorasick` — Aho-Corasick multi-pattern automaton
+- BeautifulSoup, requests, Jina Reader (JS-heavy page fallback)
+- slowapi rate limiting (200 req/min per IP)
 
-**Frontend** — `web/`
-- Next.js 16 (App Router) + TypeScript strict
-- Tailwind CSS v4 + shadcn/ui (47 Radix-based components)
-- Framer Motion for physics-based animations
-- Zustand for client state, SWR for server cache
-- `cmdk` for ⌘K command palette, `sonner` for toasts
+### Frontend
+- Next.js 16 (App Router), TypeScript strict
+- Tailwind CSS v4, shadcn/ui (47 Radix-based components)
+- Framer Motion (spring physics for live re-ranking animation)
+- Zustand (client state), SWR (server cache)
+- `cmdk` — ⌘K command palette
+- `recharts` — score visualization
 
-**AI / LLM**
-- 5 providers: Groq (llama-3.1-8b), Cerebras (llama-3.1-8b), Gemini (flash-1.5), Mistral (mistral-small), OpenRouter (llama-3.3-70b)
-- All free tiers — no paid API required to run
-- Embeddings: Gemini `text-embedding-004` (768-dim), with 3-provider fallback
+### LLM Providers (all free tier)
+| Provider | Model | Primary Use |
+|---|---|---|
+| Groq | llama-3.3-70b-versatile | Scoring, classification, interview |
+| Cerebras | llama-3.1-8b | Alternate fast inference |
+| Google Gemini | gemini-2.5-flash | Source analysis (1M ctx), rubric |
+| Mistral | mistral-small-latest | Interview questions (conversational) |
+| OpenRouter | routed | Master fallback |
+
+### External APIs
+| API | Use | Cost |
+|---|---|---|
+| Gemini grounding | Review site discovery via Google Search | Free |
+| Serper | Reddit thread search, review URL backup | 2500/mo free |
+| PRAW (optional) | Deep Reddit archive (200+ comments/thread) | Free |
+| Gemini Embeddings | `text-embedding-004` (768-dim) | Free |
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- At minimum: one free API key from [Groq](https://console.groq.com) **or** [Gemini](https://aistudio.google.com/apikey)
+- Python 3.11+, Node.js 18+
+- At minimum: one free key from [Groq](https://console.groq.com) or [Gemini](https://aistudio.google.com/apikey)
 
 ### 1. Clone and configure
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/shopsense.git
+git clone https://github.com/Om-5640/shopsense.git
 cd shopsense
-
-# Copy the example env file and fill in your keys
 cp .env.example .env
 ```
 
-Edit `.env` — you need at minimum one LLM key and one search key:
-
+Edit `.env` — minimum viable setup:
 ```bash
-GEMINI_API_KEY=AIza...       # free at aistudio.google.com
-GROQ_API_KEY=gsk_...         # free at console.groq.com
-SERPER_API_KEY=...           # free at serper.dev (2500 searches/mo)
-OPENROUTER_API_KEY=sk-or-... # free at openrouter.ai (master fallback)
+GEMINI_API_KEY=AIza...        # free at aistudio.google.com
+GROQ_API_KEY=gsk_...          # free at console.groq.com
+SERPER_API_KEY=...            # free at serper.dev (2500/mo)
+OPENROUTER_API_KEY=sk-or-...  # free at openrouter.ai
 ```
 
-### 2. Start the API server
-
+### 2. Start the API
 ```bash
 cd api
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### 3. Start the web UI
-
+### 3. Start the UI
 ```bash
 cd web
-cp .env.example .env.local   # sets NEXT_PUBLIC_API_URL=http://localhost:8000
-pnpm install
-pnpm dev
+cp .env.example .env.local
+pnpm install && pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000)
 
-### 4. Or use the CLI directly
-
+### 4. Or use the CLI
 ```bash
-# From project root (pip install -r api/requirements.txt first)
-python run.py "best face wash under 500"
+python run.py "best earbuds under ₹3000"
 python run.py "best mechanical keyboard" --no-reviews
-python run.py "best blanket for winter" --skip-interview
-python run.py "best earbuds under 3000" --output results.json
+python run.py "best winter blanket" --skip-interview
+python run.py "best budget laptop" --output results.json --scoring-mode llm
 ```
 
----
-
-## Pipeline Walkthrough
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User Query                                │
-│              "best earbuds under ₹3000 for gym"                  │
-└──────────────────────┬──────────────────────────────────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   1. Category Detect     │  groq → cerebras fallback
-          │   earphones/wireless/    │  Outputs: category slug + region
-          │   budget-india           │
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   2. Interview (4-8 Qs) │  mistral (conversational)
-          │   • "Bass or clarity?"  │  Builds: profile dict
-          │   • "Daily commute?"    │  Saves to DB for reuse
-          │   • "ANC important?"    │
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   3. Rubric Generation  │  gemini
-          │   Weighted scorecard    │  e.g. sound_quality: 0.35
-          │   from profile          │       comfort: 0.28
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   4. Research (parallel)│
-          │   ├── 15 Reddit threads │  PRAW or Serper search
-          │   │   fetched, 5 agents │  → thread_summarizer pool
-          │   │   running in //     │
-          │   └── 6-8 review sites  │  Wirecutter, RTINGS, etc.
-          │       scraped via       │  domain blacklist skips 403s
-          │       Gemini + Serper   │
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   5. Main Analysis      │  gemini (1M context)
-          │   Merges all summaries  │  Extracts: products, materials,
-          │   Cross-validates       │  mention counts, complaints,
-          │   subreddit signals     │  confidence labels
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   6. Scoring            │  hybrid mode (default)
-          │   Top 10: LLM score     │  groq (fast, parallel)
-          │   Rest: heuristic score │  Outputs: 0-10 per criterion
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   7. Enrichment         │
-          │   ├── Price fetch       │  Amazon.in / Flipkart via Serper
-          │   ├── Memory context    │  pgvector similarity search
-          │   └── Explanation write │  "Why this fits you" per product
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   Results Page          │
-          │   Live sliders → rerank │  Pure JS, no API call
-          │   ⌘K command palette   │  Jump to any product
-          │   Compare mode          │  Side-by-side grid
-          └─────────────────────────┘
+### 5. With Docker (PostgreSQL + pgvector)
+```bash
+docker-compose up -d
+# Postgres on 5433, pgvector enabled
 ```
 
 ---
@@ -221,44 +414,40 @@ python run.py "best earbuds under 3000" --output results.json
 
 | Route | Description |
 |---|---|
-| `/` | Search home with recent history |
+| `/` | Search home, recent history |
 | `/research?q=` | Live pipeline with SSE progress stream |
-| `/results/:id` | Ranked products, sliders, community data |
+| `/results/:id` | Ranked products, live sliders, community data |
 | `/compare?ids=` | Side-by-side product comparison grid |
 | `/history` | All past searches, resumable |
 | `/memory` | Your preference signals + product memories |
-| `/settings` | Provider status, circuit breaker state |
+| `/settings` | Provider health, circuit breaker state |
 
 ---
 
-## API Endpoints
-
-Full reference in [ARCHITECTURE.md](ARCHITECTURE.md). Quick summary:
+## API Reference
 
 ```
-POST /api/search                → start pipeline, returns search_id
-GET  /api/search/:id/stream    → SSE: live pipeline events
-GET  /api/search/:id           → full result JSON
-GET  /api/searches             → paginated history
-POST /api/prices               → real-time price lookup
-GET  /api/memory/context       → relevant signals for a query
-GET  /api/providers/status     → per-provider health + circuit state
-GET  /api/health               → liveness check
+POST /api/search              → start pipeline, returns search_id
+GET  /api/search/:id/stream   → SSE: live stage events + progress
+GET  /api/search/:id          → full result JSON
+GET  /api/searches            → paginated history
+POST /api/prices              → real-time price lookup
+GET  /api/memory/context      → relevant signals for a query
+GET  /api/providers/status    → per-provider health + circuit state
+GET  /api/health              → liveness check
 ```
 
 ---
 
-## Configuration
-
-All options are in `.env`. See [.env.example](.env.example) for the full list with descriptions.
-
-**Key toggles:**
+## Key Configuration
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SCORING_MODE` | `hybrid` | `fast` (instant heuristic) / `hybrid` (LLM top 10) / `llm` (full LLM) |
-| `USE_PRAW` | `false` | Enable PRAW for 200+ comments/thread (needs Reddit app credentials) |
+| `SCORING_MODE` | `hybrid` | `fast` / `hybrid` / `llm` |
+| `USE_PRAW` | `false` | Enable PRAW deep Reddit (needs Reddit app creds) |
 | `POSTGRES_URL` | unset | Use PostgreSQL + pgvector instead of SQLite |
+| `MAX_REDDIT_THREADS` | `15` | Threads fetched per search |
+| `MAX_REVIEW_SITES` | `8` | Review pages scraped per search |
 
 ---
 
@@ -267,53 +456,55 @@ All options are in `.env`. See [.env.example](.env.example) for the full list wi
 ```
 shopsense/
 ├── api/
-│   ├── main.py              21 REST + SSE endpoints
-│   ├── db.py                SQLite/Postgres dual-backend ORM
-│   └── pipeline_runner.py   Background thread + SSE event queue
+│   ├── main.py              REST + SSE endpoints, rate limiting, session management
+│   ├── db.py                Dual-backend ORM (SQLite / Postgres + pgvector)
+│   └── pipeline_runner.py   Pipeline orchestration, SSE event queue, stage timing
 │
-├── web/                     Next.js 16 frontend
-│   ├── app/                 App Router pages
+├── web/
+│   ├── app/                 Next.js App Router pages
 │   ├── components/          47 Radix-backed UI components
-│   └── lib/                 store.ts, api.ts, rerank.ts, hooks.ts
+│   └── lib/                 store.ts · api.ts · rerank.ts · hooks.ts
 │
-├── agents.py                Agent registry + provider round-robin
-├── llm_clients.py           5-provider facade + circuit breaker
-├── thread_summarizer.py     Parallel per-thread summarization
-├── scorer.py                Hybrid deterministic + LLM scoring
-├── memory.py                Cross-search personalization layer
-├── embeddings.py            Multi-provider embedding service
-├── price_fetcher.py         Real Amazon/Flipkart price scraping
-├── reddit_fetch.py          Reddit thread fetcher (Serper + PRAW)
-├── review_fetch.py          Review site scraper with category routing
-├── domain_blacklist.py      Auto-blacklist for failing domains
-├── cross_validate.py        Cross-subreddit bias detection
-├── models.py                Central model config (swap models here)
+├── agents.py                Agent registry, fallback chains, provider pool
+├── llm_clients.py           5-provider facade, circuit breaker, retry logic
+├── llm_client.py            Gemini primary analyzer, SUMMARIES_ANALYZER_SYSTEM
+├── interview.py             Adaptive interview, coverage-aware termination, UserIntent
+├── criteria.py              Category-specific buying criteria (cached)
+├── rubric.py                Personalized weighted scorecard + gap-fill
+├── scorer.py                3-mode scoring: llm / hybrid / fast heuristic
+├── thread_summarizer.py     Parallel sub-agent summarization, provider pool
+├── cross_validate.py        Cross-subreddit community bias detection
+├── mention_counter.py       Aho-Corasick automaton, alias resolution
+├── alias_resolver.py        Per-thread LLM alias discovery
+├── memory.py                Signal extraction, pgvector storage + retrieval
+├── embeddings.py            Multi-provider embedding service with fallback
+├── reddit_fetch.py          Multi-variant Reddit search (Serper + PRAW)
+├── review_fetch.py          Gemini grounding + Serper, Jina Reader fallback
+├── source_filter.py         Domain authority tiers, affiliate junk filter
+├── domain_blacklist.py      Auto-blacklist for high-failure-rate domains
+├── prompt_builder.py        Research context assembly, token budget management
+├── price_fetcher.py         Real-time Amazon.in / Flipkart price scraping
 └── run.py                   CLI orchestrator
 ```
 
 ---
 
-## Extending the System
+## Design Decisions Worth Knowing
 
-**Add a new LLM provider** — edit `agents.py`: add the provider to `_PROVIDER_FACTORIES`, add it to the fallback chain of any agent that should use it.
+**Why parallel summarization instead of one big LLM call?**
+Focused context produces better extraction. A model reading one 8K-char thread finds products more accurately than one reading 15 threads in 150K chars. Parallel execution means total wall time is bounded by the slowest thread, not their sum.
 
-**Add a new region** — edit `review_fetch.py`: add the region to `_get_category_sites()`. Edit `price_fetcher.py`: add region-appropriate retailers.
+**Why Aho-Corasick instead of asking the LLM to count mentions?**
+LLM mention counts are estimates. They conflate product aliases, miss abbreviations, and hallucinate counts under pressure. Aho-Corasick gives exact integers — deterministic, auditable, fast.
 
-**Add a new agent** — add an entry to `AGENTS` dict in `agents.py`, write your prompt, call `run_agent("your_agent_name", ...)`.
+**Why structured UserIntent instead of flat preferences text?**
+Every downstream component (rubric generator, scorer, analyzer) needs to act differently on hard constraints vs. soft preferences vs. exclusions. A flat text blob forces each component to re-parse. A typed dict with known fields means constraint enforcement is reliable and explicit.
 
-**Swap the default model** — edit `models.py`. One file, one change, all agents that use that provider pick it up.
+**Why not async?**
+Thread pools are simpler, debuggable, and sufficient for the I/O profile. No async libraries, no event loop debugging, no `await` chains. Rate limiting is handled at the provider layer, not at the concurrency layer.
 
----
-
-## Roadmap
-
-- [ ] Multi-user auth (currently single-user, `userId = "default"`)
-- [ ] Postgres as default (currently SQLite default, Postgres opt-in)
-- [ ] Export to PDF / shareable link
-- [ ] Mobile-responsive UI polish
-- [ ] Streaming token output on interview answers
-- [ ] Agent-level observability dashboard
-- [ ] Scheduled re-research ("alert me if prices drop")
+**Why hybrid scoring instead of always LLM?**
+A user searching earbuds cares about the top 5 results, not whether #18 scored 4.2 or 4.4. LLM scoring where it matters (top 10), fast heuristics where it doesn't. 45 seconds instead of 120 seconds for the default path.
 
 ---
 
