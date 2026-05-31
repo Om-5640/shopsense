@@ -19,6 +19,7 @@ import json
 import time
 import re
 import random
+import hashlib
 import collections
 import threading
 import requests
@@ -130,6 +131,62 @@ def get_circuit_breaker_status() -> dict:
     return _cb.get_status()
 
 
+# ---- In-flight request deduplication ----
+# When N parallel callers (e.g. thread_summarizer pool) send identical prompts to the same
+# provider, only the first call fires an HTTP request. The rest wait and share its result.
+# Keyed on SHA256(provider + system + prompt + json_mode + temperature).
+
+_dedup_lock = threading.Lock()
+_dedup_pending: dict[str, threading.Event] = {}
+_dedup_results: dict[str, tuple[Any, BaseException | None]] = {}
+_dedup_refcount: dict[str, int] = {}
+
+
+def _dedup_key(provider: str, system: str, prompt: str, json_mode: bool, temperature: float) -> str:
+    raw = f"{provider}|{system}|{prompt}|{json_mode}|{temperature:.3f}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+def _dedup_join(key: str, timeout: float = 200.0) -> tuple[Any, BaseException | None] | None:
+    """If key is in-flight, wait and return (result, err). Returns None if not in-flight."""
+    with _dedup_lock:
+        if key not in _dedup_pending:
+            return None
+        ev = _dedup_pending[key]
+        _dedup_refcount[key] = _dedup_refcount.get(key, 1) + 1
+    ev.wait(timeout=timeout)
+    with _dedup_lock:
+        result = _dedup_results.get(key)
+        _dedup_refcount[key] -= 1
+        if _dedup_refcount[key] <= 0:
+            _dedup_pending.pop(key, None)
+            _dedup_results.pop(key, None)
+            _dedup_refcount.pop(key, None)
+    return result
+
+
+def _dedup_start(key: str) -> threading.Event:
+    """Register key as in-flight. Returns event to signal on completion."""
+    ev = threading.Event()
+    with _dedup_lock:
+        _dedup_pending[key] = ev
+        _dedup_refcount[key] = 1
+    return ev
+
+
+def _dedup_finish(key: str, ev: threading.Event, result: Any, err: BaseException | None):
+    """Publish result, notify all waiters, decrement originator refcount."""
+    with _dedup_lock:
+        _dedup_results[key] = (result, err)
+    ev.set()
+    with _dedup_lock:
+        _dedup_refcount[key] = _dedup_refcount.get(key, 1) - 1
+        if _dedup_refcount[key] <= 0:
+            _dedup_pending.pop(key, None)
+            _dedup_results.pop(key, None)
+            _dedup_refcount.pop(key, None)
+
+
 # ---- Smart POST helper with error-type-aware retry ----
 
 def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180, max_attempts: int = 3):
@@ -161,9 +218,17 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
                     pass
                 wait = retry_after if retry_after else (_BACKOFFS[min(attempt, 1)] + random.uniform(0, 1))
                 last_err = requests.HTTPError(f"429 Too Many Requests", response=resp)
-                if attempt < max_attempts - 1 and wait <= 30:
-                    print(f"  [{provider}] 429 rate limit, backing off {wait:.1f}s...")
-                    time.sleep(wait)
+                # Retry-After > 5 min means quota exhaustion, not a transient burst limit.
+                # Block the provider for the full requested duration (capped at 1h) and fail fast.
+                if retry_after and retry_after > 300:
+                    block_secs = min(int(retry_after), 3600)
+                    _cb.block_temporarily(provider, block_secs, f"429 quota exhaustion (retry-after={retry_after:.0f}s)")
+                    _cb.record_failure(provider, 429)
+                    raise last_err
+                if attempt < max_attempts - 1:
+                    actual_wait = min(wait, 120)  # respect Retry-After header, cap at 2 min
+                    print(f"  [{provider}] 429 rate limit, backing off {actual_wait:.1f}s...")
+                    time.sleep(actual_wait)
                     continue
                 _cb.block_temporarily(provider, _cb._COOLDOWN_SHORT, "429 repeated")
                 _cb.record_failure(provider, 429)
@@ -216,6 +281,31 @@ def call_gemini(
     if not GEMINI_API_KEY:
         raise RuntimeError("Set GEMINI_API_KEY env var. Get one at https://aistudio.google.com/apikey")
 
+    _key = _dedup_key("gemini", system, prompt, json_mode, temperature)
+    _joined = _dedup_join(_key)
+    if _joined is not None:
+        _res, _err = _joined
+        if _err:
+            raise _err
+        return _res
+
+    _ev = _dedup_start(_key)
+    try:
+        result = _call_gemini_inner(prompt, system, json_mode, max_tokens, temperature)
+        _dedup_finish(_key, _ev, result, None)
+        return result
+    except Exception as _e:
+        _dedup_finish(_key, _ev, None, _e)
+        raise
+
+
+def _call_gemini_inner(
+    prompt: str,
+    system: str,
+    json_mode: bool,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[str, str]:
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -290,11 +380,29 @@ def call_groq(prompt: str, system: str = "", json_mode: bool = False, max_tokens
     Groq's free tier: ~14,400 req/day, very fast, generous rate limits.
     """
     if not GROQ_API_KEY:
-        # Fallback to Gemini if Groq not configured
         print("[groq] not configured, falling back to Gemini")
         text, _ = call_gemini(prompt, system=system, json_mode=json_mode)
         return text
 
+    _key = _dedup_key("groq", system, prompt, json_mode, temperature)
+    _joined = _dedup_join(_key)
+    if _joined is not None:
+        _res, _err = _joined
+        if _err:
+            raise _err
+        return _res
+
+    _ev = _dedup_start(_key)
+    try:
+        result = _call_groq_inner(prompt, system, json_mode, max_tokens, temperature)
+        _dedup_finish(_key, _ev, result, None)
+        return result
+    except Exception as _e:
+        _dedup_finish(_key, _ev, None, _e)
+        raise
+
+
+def _call_groq_inner(prompt: str, system: str, json_mode: bool, max_tokens: int, temperature: float) -> str:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -314,7 +422,6 @@ def call_groq(prompt: str, system: str = "", json_mode: bool = False, max_tokens
         "Content-Type": "application/json",
     }
 
-    # Smart retry: Groq returns a Retry-After header on 429. Respect it instead of fixed backoff.
     resp = _groq_post_with_smart_retry(GROQ_URL, headers, body, max_attempts=4)
     data = resp.json()
 
@@ -415,37 +522,47 @@ def call_mistral(prompt: str, system: str = "", json_mode: bool = False, max_tok
     Mistral has a more natural conversational style than Gemini.
     """
     if not MISTRAL_API_KEY:
-        # Fallback to Gemini if Mistral not configured
         print("[mistral] not configured, falling back to Gemini")
         text, _ = call_gemini(prompt, system=system, json_mode=json_mode)
         return text
 
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    _key = _dedup_key("mistral", system, prompt, json_mode, temperature)
+    _joined = _dedup_join(_key)
+    if _joined is not None:
+        _res, _err = _joined
+        if _err:
+            raise _err
+        return _res
 
-    body: dict[str, Any] = {
-        "model": MISTRAL_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
-
-    headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    resp = _smart_post_with_retry(MISTRAL_URL, headers, body, "mistral", timeout=MISTRAL_TIMEOUT)
-    data = resp.json()
-
+    _ev = _dedup_start(_key)
     try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Unexpected Mistral response: {json.dumps(data)[:500]}") from e
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict[str, Any] = {
+            "model": MISTRAL_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        resp = _smart_post_with_retry(MISTRAL_URL, headers, body, "mistral", timeout=MISTRAL_TIMEOUT)
+        data = resp.json()
+        try:
+            result = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Unexpected Mistral response: {json.dumps(data)[:500]}") from e
+        _dedup_finish(_key, _ev, result, None)
+        return result
+    except Exception as _e:
+        _dedup_finish(_key, _ev, None, _e)
+        raise
 
 
 # ---- CEREBRAS (alternative fast Llama provider, separate quota from Groq) ----
@@ -459,34 +576,44 @@ def call_cerebras(prompt: str, system: str = "", json_mode: bool = False, max_to
     if not CEREBRAS_API_KEY:
         raise RuntimeError("CEREBRAS_API_KEY not set. Get free key at https://cloud.cerebras.ai")
 
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    _key = _dedup_key("cerebras", system, prompt, json_mode, temperature)
+    _joined = _dedup_join(_key)
+    if _joined is not None:
+        _res, _err = _joined
+        if _err:
+            raise _err
+        return _res
 
-    body: dict[str, Any] = {
-        "model": CEREBRAS_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
-
-    headers = {
-        "Authorization": f"Bearer {CEREBRAS_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    # max_attempts=1: Cerebras failures are quota-related, retrying wastes 8s with no benefit.
-    # Fail fast and let the agent chain immediately try the next provider.
-    resp = _smart_post_with_retry(CEREBRAS_URL, headers, body, "cerebras", timeout=CEREBRAS_TIMEOUT, max_attempts=1)
-    data = resp.json()
-
+    _ev = _dedup_start(_key)
     try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Unexpected Cerebras response: {json.dumps(data)[:500]}") from e
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict[str, Any] = {
+            "model": CEREBRAS_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        headers = {
+            "Authorization": f"Bearer {CEREBRAS_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        # max_attempts=1: Cerebras failures are quota-related, retrying wastes 8s with no benefit.
+        resp = _smart_post_with_retry(CEREBRAS_URL, headers, body, "cerebras", timeout=CEREBRAS_TIMEOUT, max_attempts=1)
+        data = resp.json()
+        try:
+            result = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Unexpected Cerebras response: {json.dumps(data)[:500]}") from e
+        _dedup_finish(_key, _ev, result, None)
+        return result
+    except Exception as _e:
+        _dedup_finish(_key, _ev, None, _e)
+        raise
 
 
 def has_cerebras() -> bool:
@@ -504,35 +631,45 @@ def call_openrouter(prompt: str, system: str = "", json_mode: bool = False, max_
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY not set. Get free key at https://openrouter.ai/keys")
 
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    _key = _dedup_key("openrouter", system, prompt, json_mode, temperature)
+    _joined = _dedup_join(_key)
+    if _joined is not None:
+        _res, _err = _joined
+        if _err:
+            raise _err
+        return _res
 
-    body: dict[str, Any] = {
-        "model": OPENROUTER_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        # OpenRouter recommended headers for tracking
-        "HTTP-Referer": "https://github.com/local/shopping-agent",
-        "X-Title": "Shopping Research Agent",
-    }
-
-    resp = _smart_post_with_retry(OPENROUTER_URL, headers, body, "openrouter", timeout=OPENROUTER_TIMEOUT)
-    data = resp.json()
-
+    _ev = _dedup_start(_key)
     try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Unexpected OpenRouter response: {json.dumps(data)[:500]}") from e
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict[str, Any] = {
+            "model": OPENROUTER_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/local/shopping-agent",
+            "X-Title": "Shopping Research Agent",
+        }
+        resp = _smart_post_with_retry(OPENROUTER_URL, headers, body, "openrouter", timeout=OPENROUTER_TIMEOUT)
+        data = resp.json()
+        try:
+            result = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Unexpected OpenRouter response: {json.dumps(data)[:500]}") from e
+        _dedup_finish(_key, _ev, result, None)
+        return result
+    except Exception as _e:
+        _dedup_finish(_key, _ev, None, _e)
+        raise
 
 
 def has_openrouter() -> bool:
