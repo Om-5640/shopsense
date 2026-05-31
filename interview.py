@@ -116,7 +116,7 @@ STRICT PRIORITY ORDER — follow this every time:
    Right: "Do you need wireless, or is wired fine?" / "How many hours of battery do you need in one session?"
    Wrong: "What are your connectivity preferences?" / "Describe your battery requirements."
 
-4. BRAND PREFERENCE (if not asked within first 4 questions): "Any brands you'd go for — or ones you want to avoid?"
+4. BRAND PREFERENCE (once ≥3 questions asked and brand not yet covered): "Any brands you'd go for — or ones you want to avoid?"
 
 RULES:
 - ONE question only. Never combine two questions ("and also...").

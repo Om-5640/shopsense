@@ -120,9 +120,11 @@ def generate_rubric(category: str, criteria: list[dict], profile: dict) -> dict:
         for c in criteria
     )
     prefs = profile.get("preferences_summary", "")
+    _skip_tokens = {"[Skipped]", "(skipped)"}
     qa_text = "\n".join(
         f"Q: {qa['question']}\nA: {qa['answer']}"
         for qa in profile.get("interview", [])
+        if qa.get("answer", "") not in _skip_tokens
     )
 
     constraint_block = _build_intent_context(profile)

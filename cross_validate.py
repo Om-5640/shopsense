@@ -56,17 +56,12 @@ def _call_cross_validator(product_name: str, by_subreddit: dict[str, list[str]])
 
     prompt = "\n".join(lines) + """
 
-Analyze why the sentiment differs across these communities. Consider:
-- Use-case differences (e.g., gaming vs audiophile vs casual use)
-- Price/value perception differences by community
-- Brand loyalty or bias in specific communities
-- Different feature priorities
+Return JSON explaining the sentiment split. In the explanation, state the most likely reason (use-case fit, price-tier perception, brand bias, or feature trade-off). In context_note, say why a buyer should care.
 
-Return JSON:
 {
   "signal": "split",
-  "explanation": "1-2 sentences summarizing the disagreement",
-  "context_note": "Why a buyer should care about this split"
+  "explanation": "1-2 sentences: why communities disagree (specific reason, not generic)",
+  "context_note": "1 sentence: what this means for a buyer deciding on this product"
 }"""
 
     try:

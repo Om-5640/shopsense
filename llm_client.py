@@ -128,6 +128,77 @@ OTHER:
 - Return STRICT JSON only - no fences, no commentary."""
 
 
+# Dedicated system prompt for the summaries-based analysis path (analyze_with_summaries).
+# EXTRACT_SYSTEM above is for the raw-sources path (analyze_sources) and tells the model it
+# is "reading Reddit threads" — wrong when the input is already structured summaries.
+# This prompt: (a) correctly frames the task, (b) embeds the output schema (EXTRACT_SYSTEM
+# has no schema; schema is only in EXTRACT_PROMPT_TEMPLATE used by the raw path),
+# (c) replaces raw-anecdote weighting guidance with structured-summary weighting guidance.
+SUMMARIES_ANALYZER_SYSTEM = """You aggregate pre-processed Reddit summaries and review articles into shopping recommendations.
+
+INPUTS:
+- PART 1 (Reddit): Structured thread summaries — each has products_mentioned (name, sentiment, mention_count, key_quotes), key_takeaways, thread_score (post upvotes), controversial_signals.
+- PART 2 (Reviews): Raw article content tagged [AUTHORITY: TRUSTED/GOOD/UNKNOWN].
+
+OUTPUT — return ONLY this JSON shape (no fences, no commentary):
+{
+  "materials": [
+    {
+      "name": "Material or category type",
+      "mention_count": 0,
+      "distinct_recommenders": 0,
+      "praise": ["short point"],
+      "complaints": [{"text": "...", "confidence": "confirmed|reported|single"}],
+      "example_products": ["Brand Model from research"],
+      "sources": ["reddit:SubName", "review:domain.com"]
+    }
+  ],
+  "products": [
+    {
+      "name": "Brand Product Name",
+      "mention_count": 0,
+      "distinct_recommenders": 0,
+      "positive_mentions": 0,
+      "negative_mentions": 0,
+      "praise": ["short point"],
+      "complaints": [{"text": "...", "confidence": "confirmed|reported|single"}],
+      "representative_quote": "under 15 words",
+      "sources": ["reddit:SubName", "review:domain.com"],
+      "signal_strength": "high|medium|low"
+    }
+  ],
+  "summary": "2-3 sentence plain string overview"
+}
+
+signal_strength: "high" = appears in Reddit summaries + reviews + 5+ distinct recommenders; "medium" = one source type + 3+ recommenders; "low" = fewer than 3 recommenders or single-source.
+
+SOURCE WEIGHTING:
+- Strongest signal: product in multiple Reddit summaries AND review articles
+- [AUTHORITY: TRUSTED] (Wirecutter, RTINGS, Consumer Reports) — weight heavily
+- [AUTHORITY: GOOD] — weight moderately; [AUTHORITY: UNKNOWN] — treat like one Reddit mention
+- High thread_score amplifies that thread's products signal
+- Review-only product with no Reddit corroboration: flag as potentially SEO-pushed
+- Products with "negative" summary sentiment: surface with their downsides documented
+
+SEPARATION:
+- "materials" = category types: "cotton blanket", "bamboo sheets" (never specific brands)
+- "products" = specific buyable items: "Buffy Breeze Comforter" (never generic types)
+- For each material, include 2-3 example_products drawn from the actual research
+- Never mix them in the same list
+
+BUDGET (critical):
+- Surface ONLY products fitting the stated budget.
+- "under ₹5000" (≈$60 USD): exclude Rolex, Omega, Tudor, Grand Seiko.
+- "under $50": exclude AirPods Pro, Sony WF-1000XM5 ($200+).
+- Currency: ₹/Rs = INR (1 USD ≈ 83), £ = GBP (1 USD ≈ 0.78), € = EUR (1 USD ≈ 0.92).
+
+COMPLAINTS: Surface all. Confidence: "confirmed" = 3+ users, "reported" = 2, "single" = 1.
+Check controversial_signals in summaries — these are high-upvote disagreements worth surfacing.
+Never censor complaints.
+
+OTHER: Subreddits WITHOUT 'r/'. Quotes ≤15 words. Ignore affiliate/marketing language."""
+
+
 EXTRACT_PROMPT_TEMPLATE = """Researching: "{query}"
 
 Below are {n} sources: a mix of Reddit threads and review articles. Extract recommendations.
@@ -374,7 +445,7 @@ Apply your system instructions and return the final JSON object with materials, 
 
     raw = ""
     try:
-        raw = run_agent("main_analyzer", user_prompt=prompt, system=EXTRACT_SYSTEM)
+        raw = run_agent("main_analyzer", user_prompt=prompt, system=SUMMARIES_ANALYZER_SYSTEM)
         parsed = _try_repair_json(raw)
         result = normalize_analysis(parsed)
     except Exception as e:
