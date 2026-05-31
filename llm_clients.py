@@ -283,7 +283,8 @@ def call_gemini_with_groq_fallback(
 
 # ---- GROQ (used for scoring) ----
 
-def call_groq(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 4096) -> str:
+def call_groq(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 4096,
+              temperature: float = 0.2) -> str:
     """
     Returns text. Used for: per-product scoring.
     Groq's free tier: ~14,400 req/day, very fast, generous rate limits.
@@ -302,7 +303,7 @@ def call_groq(prompt: str, system: str = "", json_mode: bool = False, max_tokens
     body: dict[str, Any] = {
         "model": GROQ_MODEL,
         "messages": messages,
-        "temperature": 0.2,
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if json_mode:
@@ -407,7 +408,8 @@ def _groq_post_with_smart_retry(url, headers, body, max_attempts=3):
 
 # ---- MISTRAL (used for interview) ----
 
-def call_mistral(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048) -> str:
+def call_mistral(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048,
+                 temperature: float = 0.7) -> str:
     """
     Returns text. Used for: interview question generation.
     Mistral has a more natural conversational style than Gemini.
@@ -426,7 +428,7 @@ def call_mistral(prompt: str, system: str = "", json_mode: bool = False, max_tok
     body: dict[str, Any] = {
         "model": MISTRAL_MODEL,
         "messages": messages,
-        "temperature": 0.7,  # higher temp = more natural conversation
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if json_mode:
@@ -448,7 +450,8 @@ def call_mistral(prompt: str, system: str = "", json_mode: bool = False, max_tok
 
 # ---- CEREBRAS (alternative fast Llama provider, separate quota from Groq) ----
 
-def call_cerebras(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048) -> str:
+def call_cerebras(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048,
+                  temperature: float = 0.3) -> str:
     """
     Returns text. Cerebras has free Llama 3.3 70B with a separate quota from Groq.
     Used in the parallel provider pool to multiply effective rate limit.
@@ -464,7 +467,7 @@ def call_cerebras(prompt: str, system: str = "", json_mode: bool = False, max_to
     body: dict[str, Any] = {
         "model": CEREBRAS_MODEL,
         "messages": messages,
-        "temperature": 0.3,
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if json_mode:
@@ -492,7 +495,8 @@ def has_cerebras() -> bool:
 
 # ---- OPENROUTER (master fallback - gateway to many free models) ----
 
-def call_openrouter(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048) -> str:
+def call_openrouter(prompt: str, system: str = "", json_mode: bool = False, max_tokens: int = 2048,
+                    temperature: float = 0.3) -> str:
     """
     Returns text. OpenRouter is the master fallback - it has multiple free models
     behind one endpoint, so even if a specific model is rate-limited, others work.
@@ -508,7 +512,7 @@ def call_openrouter(prompt: str, system: str = "", json_mode: bool = False, max_
     body: dict[str, Any] = {
         "model": OPENROUTER_MODEL,
         "messages": messages,
-        "temperature": 0.3,
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if json_mode:

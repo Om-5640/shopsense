@@ -291,7 +291,7 @@ function ResearchPageContent() {
         }
         // Start interview — seed with checkpoint (or disambiguation pre-answers)
         if (startQA.length > 0) setQaHistory(startQA)
-        await askNextQuestion(cat, crit, startQA, startQA.length + 1)
+        await askNextQuestion(cat, crit, startQA, startQA.length + 1, pNoun)
       }
     } catch (e) {
       handleError(`Setup failed: ${e instanceof Error ? e.message : e}`)
@@ -335,15 +335,17 @@ function ResearchPageContent() {
     clarificationCountRef.current = 0
     inClarificationRef.current = false
     setPhase('interview')
-    await askNextQuestion(setup.cat, setup.criteria, setup.preQA, setup.preQA.length + 1)
+    await askNextQuestion(setup.cat, setup.criteria, setup.preQA, setup.preQA.length + 1, setup.pNoun)
   }
 
-  async function askNextQuestion(cat: string, crit: Criterion[], history: QAEntry[], qNum: number) {
+  async function askNextQuestion(cat: string, crit: Criterion[], history: QAEntry[], qNum: number, pNoun?: string) {
     clarificationCountRef.current = 0
     inClarificationRef.current = false
     setWaiting(true)
+    // pNoun is explicitly passed on the first call so we don't rely on stale React state
+    const effectivePNoun = pNoun !== undefined ? pNoun : primaryNoun
     try {
-      const q = await getNextQuestion(cat, crit, history, query, primaryNoun)
+      const q = await getNextQuestion(cat, crit, history, query, effectivePNoun)
       setCurrentQuestion(q)
       setCurrentQ(qNum)
 
@@ -494,7 +496,7 @@ function ResearchPageContent() {
     setQaHistory(newHistory)
     setCurrentQ((n) => n + 1)
     // W-01: persist progress so a browser crash doesn't lose all answers
-    try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
+    _saveCkpt(query, newHistory)
 
     if (currentQuestion.is_done || currentQ >= totalQ) {
       await finishInterview(category, criteria, newHistory)
@@ -508,6 +510,8 @@ function ResearchPageContent() {
     const entry: QAEntry = {
       question: currentQuestion?.question ?? '',
       answer: '[Skipped]',
+      why_asked: currentQuestion?.why_asking ?? '',
+      targets_criterion: currentQuestion?.targets_criterion ?? '',
     }
     const newHistory = [...qaHistory, entry]
     setQaHistory(newHistory)
@@ -515,7 +519,7 @@ function ResearchPageContent() {
       ...prev.map((m) => ({ ...m, isTyping: false })),
       { id: `skip-${currentQ}`, role: 'user', content: '[Skipped]' },
     ])
-    try { localStorage.setItem(`shopsense_ckpt_${query}`, JSON.stringify(newHistory)) } catch { /* ignore */ }
+    _saveCkpt(query, newHistory)
     if (currentQ >= totalQ) {
       await finishInterview(category, criteria, newHistory)
     } else {

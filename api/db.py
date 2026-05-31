@@ -20,6 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+# Load .env before reading any env vars — POSTGRES_URL is evaluated at module
+# import time, so dotenv must be loaded here (not in main.py which imports us).
+from dotenv import load_dotenv
+load_dotenv()
+
 _ROOT = Path(__file__).parent.parent
 _SQLITE_PATH = _ROOT / "web" / "prisma" / "shopping.db"
 

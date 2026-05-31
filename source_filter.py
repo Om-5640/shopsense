@@ -32,13 +32,12 @@ TRUSTED_DOMAINS = {
     "theverge.com",
     "engadget.com",
     "wired.com",
-    "ars technica.com", "arstechnica.com",
+    "arstechnica.com",
     "consumerreports.org",
     "goodhousekeeping.com",
     "forbes.com",
     "businessinsider.com",
     "wsj.com",
-    "nytimes.com",
     "bloomberg.com",
 
     # Bedding / home

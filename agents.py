@@ -340,17 +340,16 @@ def _dispatch(
     if provider == "groq":
         # Cap at safe limit to prevent mid-JSON truncation; Groq's hard output limit is 8192 tokens
         safe = min(max_tokens, _GROQ_SAFE_MAX_TOKENS)
-        return call_groq(prompt, system=system, json_mode=json_mode, max_tokens=safe)
+        return call_groq(prompt, system=system, json_mode=json_mode, max_tokens=safe, temperature=temperature)
     elif provider == "gemini":
-        # Pass agent-configured temperature rather than Gemini hardcoded 0.3 (PROVIDER-04)
         text, _ = call_gemini(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens, temperature=temperature)
         return text
     elif provider == "mistral":
-        return call_mistral(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)
+        return call_mistral(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens, temperature=temperature)
     elif provider == "cerebras":
-        return call_cerebras(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)
+        return call_cerebras(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens, temperature=temperature)
     elif provider == "openrouter":
-        return call_openrouter(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens)
+        return call_openrouter(prompt, system=system, json_mode=json_mode, max_tokens=max_tokens, temperature=temperature)
     else:
         raise ValueError(f"Unknown provider: {provider}")
 

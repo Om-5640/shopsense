@@ -157,9 +157,6 @@ def resolve_region_interactively(query: str, profile: dict | None = None) -> tup
     return "global", query
 
 
-import re  # needed for has_ambiguous_price
-
-
 # Usage-pattern keywords → short label injected into query variant
 _USAGE_KEYWORD_MAP: list[tuple[list[str], str]] = [
     (["gaming", "game", "fps", "esports", "ps5", "xbox"], "gaming"),

@@ -110,7 +110,9 @@ def _build_thread_prompt(thread: dict, query: str) -> str:
     lines.append("COMMENTS (most upvoted first, indented = reply, [C] = controversial):")
 
     chars_used = sum(len(line) for line in lines)
-    for c in thread.get("comments", []):
+    all_comments = thread.get("comments", [])
+    comments_added = 0
+    for c in all_comments:
         depth = c.get("depth", 0)
         indent = "  " * (depth + 1)
         tag = ""
@@ -120,10 +122,12 @@ def _build_thread_prompt(thread: dict, query: str) -> str:
             tag += "[C] "
         line = f"{indent}[+{c.get('score', 0)}] {tag}{c.get('body', '')}"
         if chars_used + len(line) > MAX_CHARS_PER_THREAD:
-            lines.append(f"{indent}[... {len(thread.get('comments', [])) - lines.count('') - 1} more comments truncated for length]")
+            remaining = len(all_comments) - comments_added
+            lines.append(f"{indent}[... {remaining} more comments truncated for length]")
             break
         lines.append(line)
         chars_used += len(line)
+        comments_added += 1
 
     lines.append("")
     lines.append("Summarize this thread into the JSON schema above.")
