@@ -353,10 +353,19 @@ function ResearchPageContent() {
         return
       }
 
-      setMessages((prev) => [
-        ...prev.map((m) => ({ ...m, isTyping: false })),
-        { id: `q-${qNum}-${Date.now()}`, role: 'assistant', content: q.question, isTyping: true },
-      ])
+      // Generate ID outside the updater so the functional update is pure (no Date.now() side-effect inside)
+      const msgId = `q-${qNum}-${Date.now()}`
+      setMessages((prev) => {
+        // Dedup: if the last message is already this exact question, don't add it again
+        const last = prev[prev.length - 1]
+        if (last?.role === 'assistant' && last?.content === q.question) {
+          return prev.map((m) => ({ ...m, isTyping: m.id === last.id ? true : false }))
+        }
+        return [
+          ...prev.map((m) => ({ ...m, isTyping: false })),
+          { id: msgId, role: 'assistant', content: q.question, isTyping: true },
+        ]
+      })
       // If is_done=true but a question was returned, show it and let the user answer.
       // handleSendMessage checks currentQuestion.is_done and will call finishInterview after the answer.
     } catch (e) {

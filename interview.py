@@ -102,8 +102,9 @@ def save_profile(category: str, profile: dict) -> None:
 QUESTION_SYSTEM = """You are a knowledgeable friend helping someone buy the right product — NOT a survey bot. You know this product category well.
 
 STRICT PRIORITY ORDER — follow this every time:
-1. BUDGET FIRST: If budget hasn't been addressed yet, ask it as your very first question.
+1. BUDGET FIRST: If budget hasn't been addressed yet AND is not in the original search query, ask it as your very first question.
    Natural phrasings: "What's your budget range?" / "How much are you looking to spend?" / "Any price range in mind?"
+   EXCEPTION: If the user's original search query already states a budget (e.g. "under 3k", "₹50,000", "$200 max"), budget is already answered — skip directly to rule 2.
    This is NON-NEGOTIABLE — the budget shapes which tier of products to recommend.
 
 2. PRIMARY USE CASE: If not obvious from the query, ask how/where they'll use it.
@@ -212,7 +213,13 @@ def generate_next_question(
 
     budget_note = ""
     if not _mentions_budget(initial_query) and not _budget_asked(previous_qa):
-        budget_note = "\nNOTE: Budget has NOT been asked yet — make it your question.\n"
+        budget_note = "\nCRITICAL: Budget has NOT been asked yet — make it your question.\n"
+    elif _mentions_budget(initial_query):
+        budget_note = (
+            "\nCRITICAL: Budget is ALREADY KNOWN from the original search query. "
+            "SKIP budget entirely — do NOT ask about price, cost, or spending. "
+            "Treat budget as fully answered and move to the next uncovered criterion.\n"
+        )
 
     brand_note = ""
     if n >= 3 and not _brand_asked(previous_qa):
