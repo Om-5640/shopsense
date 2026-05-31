@@ -72,132 +72,12 @@ _JINA_HEADERS = {
 }
 
 
-# ---- Category-aware review site lists ----
-
-def _get_category_sites(q_lower: str, region: str) -> list[str]:
-    """Return authoritative review sites for this query's category and region."""
-    if region == "india":
-        if any(t in q_lower for t in ["skincare", "skin care", "facewash", "face wash",
-                                        "moisturizer", "serum", "sunscreen", "toner", "makeup",
-                                        "beauty", "foundation", "lipstick", "cleanser", "bodylotion",
-                                        "body lotion", "face cream", "eye cream", "vitamin c"]):
-            return ["nykaa.com", "purplle.com", "bebeautiful.in", "incidecoder.com", "cosdna.com"]
-        if any(t in q_lower for t in ["phone", "smartphone", "mobile"]):
-            return ["smartprix.com", "91mobiles.com", "gsmarena.com", "gadgets360.com"]
-        if any(t in q_lower for t in ["laptop", "notebook", "ultrabook"]):
-            return ["digit.in", "91mobiles.com", "gadgets360.com", "smartprix.com", "notebookcheck.net"]
-        if any(t in q_lower for t in ["monitor", "display screen"]):
-            return ["digit.in", "gadgets360.com", "smartprix.com", "rtings.com"]
-        if any(t in q_lower for t in ["tv", "television", "oled", "qled", "projector"]):
-            return ["smartprix.com", "digit.in", "gadgets360.com", "rtings.com"]
-        if any(t in q_lower for t in ["ac", "air conditioner", "refrigerator", "fridge",
-                                        "washing machine", "dishwasher", "appliance", "geyser", "water heater"]):
-            return ["smartprix.com", "compare.in", "gadgets360.com", "indianexpress.com", "livemint.com"]
-        if any(t in q_lower for t in ["headphone", "earbud", "earpod", "earphone", "speaker", "soundbar", "audio"]):
-            return ["smartprix.com", "91mobiles.com", "soundguys.com", "gadgets360.com", "rtings.com"]
-        if any(t in q_lower for t in ["keyboard", "mouse", "peripheral", "gaming"]):
-            return ["digit.in", "gadgets360.com", "smartprix.com", "rtings.com"]
-        if any(t in q_lower for t in ["watch", "wristwatch", "smartwatch", "fitness band", "fitness tracker"]):
-            return ["91mobiles.com", "smartprix.com", "gadgets360.com", "dcrainmaker.com"]
-        if any(t in q_lower for t in ["camera", "dslr", "mirrorless", "lens"]):
-            return ["digit.in", "dpreview.com", "gadgets360.com", "imaging-resource.com"]
-        if any(t in q_lower for t in ["kitchen", "cookware", "pressure cooker", "pan", "pot",
-                                        "mixer", "blender", "juicer", "oven", "microwave", "air fryer"]):
-            return ["gadgets360.com", "indianexpress.com", "seriouseats.com", "wirecutter.com"]
-        if any(t in q_lower for t in ["fitness", "gym", "treadmill", "cycle", "workout", "exercise"]):
-            return ["gadgets360.com", "dcrainmaker.com", "healthshots.com", "t3.com"]
-        if any(t in q_lower for t in ["mattress", "bed", "pillow", "blanket", "bedding"]):
-            return ["sleepopolis.com", "sleepfoundation.org", "theindusparent.com"]
-        if any(t in q_lower for t in ["shoe", "footwear", "sneaker", "boot", "sandal"]):
-            return ["runrepeat.com", "runnersworld.com", "ndtv.com"]
-        if any(t in q_lower for t in ["bag", "backpack", "luggage", "suitcase"]):
-            return ["wirecutter.com", "indianexpress.com", "gadgets360.com"]
-        if any(t in q_lower for t in ["vacuum", "robot vacuum", "air purifier"]):
-            return ["wirecutter.com", "rtings.com", "gadgets360.com"]
-        if any(t in q_lower for t in ["supplement", "protein", "vitamin", "nutrition", "whey"]):
-            return ["examine.com", "healthshots.com", "thehealthsite.com"]
-        return ["smartprix.com", "91mobiles.com", "gadgets360.com", "digit.in", "indianexpress.com"]
-
-    elif region == "uk":
-        if any(t in q_lower for t in ["skincare", "skin care", "facewash", "beauty", "makeup", "serum", "sunscreen"]):
-            return ["lookfantastic.com", "beautybay.com", "incidecoder.com", "allure.com", "byrdie.com"]
-        if any(t in q_lower for t in ["phone", "smartphone"]):
-            return ["techradar.com", "trustedreviews.com", "gsmarena.com", "expertreviews.co.uk"]
-        if any(t in q_lower for t in ["laptop", "notebook"]):
-            return ["techradar.com", "trustedreviews.com", "notebookcheck.net", "expertreviews.co.uk"]
-        if any(t in q_lower for t in ["headphone", "earbud", "earphone", "speaker", "audio"]):
-            return ["whathifi.com", "techradar.com", "rtings.com", "soundguys.com"]
-        if any(t in q_lower for t in ["tv", "television"]):
-            return ["rtings.com", "whathifi.com", "techradar.com", "trustedreviews.com"]
-        if any(t in q_lower for t in ["mattress", "bed", "pillow", "blanket", "bedding"]):
-            return ["which.co.uk", "goodhousekeeping.com", "sleepopolis.com"]
-        if any(t in q_lower for t in ["kitchen", "cookware", "appliance", "air fryer", "coffee"]):
-            return ["which.co.uk", "goodhousekeeping.com", "bbcgoodfood.com", "seriouseats.com"]
-        if any(t in q_lower for t in ["fitness", "gym", "running", "cycling", "smartwatch"]):
-            return ["dcrainmaker.com", "techradar.com", "wareable.com", "runnersworld.com"]
-        return ["which.co.uk", "techradar.com", "trustedreviews.com", "expertreviews.co.uk", "whathifi.com"]
-
-    elif region == "australia":
-        return ["choice.com.au", "finder.com.au", "techradar.com", "rtings.com", "gsmarena.com"]
-
-    elif region == "canada":
-        return ["techradar.com", "rtings.com", "notebookcheck.net", "pcmag.com", "cnet.com"]
-
-    else:  # global / US
-        if any(t in q_lower for t in ["skincare", "skin care", "facewash", "face wash",
-                                        "moisturizer", "serum", "sunscreen", "toner", "makeup",
-                                        "beauty", "foundation", "lipstick", "cleanser"]):
-            return ["incidecoder.com", "cosdna.com", "allure.com", "byrdie.com", "paulaschoice.com"]
-        if any(t in q_lower for t in ["headphone", "earbud", "earphone", "speaker", "soundbar", "audio", "dac", "amp"]):
-            return ["rtings.com", "soundguys.com", "headphonesaddict.com", "stereophile.com", "whathifi.com"]
-        if any(t in q_lower for t in ["tv", "television", "oled", "qled"]):
-            return ["rtings.com", "displayspecifications.com", "cnet.com", "wirecutter.com"]
-        if any(t in q_lower for t in ["monitor", "display"]):
-            return ["rtings.com", "displayspecifications.com", "notebookcheck.net", "tftcentral.co.uk"]
-        if any(t in q_lower for t in ["phone", "smartphone", "mobile"]):
-            return ["gsmarena.com", "rtings.com", "notebookcheck.net", "techradar.com"]
-        if any(t in q_lower for t in ["laptop", "notebook"]):
-            return ["notebookcheck.net", "rtings.com", "laptopmag.com", "pcmag.com", "wirecutter.com"]
-        if any(t in q_lower for t in ["camera", "dslr", "mirrorless", "lens"]):
-            return ["dpreview.com", "imaging-resource.com", "cameralabs.com", "photographylife.com"]
-        if any(t in q_lower for t in ["keyboard", "mechanical keyboard"]):
-            return ["rtings.com", "switchandclick.com", "deskthority.net", "keebtalk.com"]
-        if any(t in q_lower for t in ["mouse", "trackball"]):
-            return ["rtings.com", "techradar.com", "pcmag.com"]
-        if any(t in q_lower for t in ["kitchen", "cookware", "knife", "pan", "pot", "mixer",
-                                        "blender", "coffee", "espresso", "oven", "microwave", "air fryer"]):
-            return ["seriouseats.com", "wirecutter.com", "cooksillustrated.com", "seriouseats.com"]
-        if any(t in q_lower for t in ["fitness", "gym", "treadmill", "cycle", "rowing", "workout",
-                                        "running watch", "gps watch", "smart watch"]):
-            return ["dcrainmaker.com", "t3.com", "runnersworld.com", "wareable.com"]
-        if any(t in q_lower for t in ["mattress", "bed", "pillow", "blanket", "bedding", "sleep"]):
-            return ["sleepopolis.com", "sleepfoundation.org", "goodhousekeeping.com", "wirecutter.com"]
-        if any(t in q_lower for t in ["shoe", "footwear", "sneaker", "running shoe", "hiking boot"]):
-            return ["runrepeat.com", "runnersworld.com", "cleverhiker.com", "wirecutter.com"]
-        if any(t in q_lower for t in ["bag", "backpack", "luggage", "suitcase", "carry-on"]):
-            return ["wirecutter.com", "outdoorgearlab.com", "cleverhiker.com"]
-        if any(t in q_lower for t in ["vacuum", "robot vacuum", "air purifier"]):
-            return ["wirecutter.com", "rtings.com", "consumerreports.org"]
-        if any(t in q_lower for t in ["gaming", "game", "console", "xbox", "playstation", "nintendo"]):
-            return ["ign.com", "eurogamer.net", "pcmag.com", "techradar.com"]
-        if any(t in q_lower for t in ["bike", "bicycle", "cycling", "mtb", "road bike"]):
-            return ["bikeradar.com", "bikeperfect.com", "cyclingnews.com"]
-        if any(t in q_lower for t in ["watch", "wristwatch", "smartwatch"]):
-            return ["rtings.com", "wareable.com", "dcrainmaker.com", "techradar.com"]
-        if any(t in q_lower for t in ["supplement", "protein", "vitamin", "nutrition", "whey"]):
-            return ["examine.com", "labdoor.com", "consumerlab.com", "healthline.com"]
-        if any(t in q_lower for t in ["baby", "toddler", "infant", "stroller", "diaper"]):
-            return ["babygearlab.com", "whattoexpect.com", "babylist.com"]
-        if any(t in q_lower for t in ["pet", "dog", "cat", "fish", "bird", "pet food"]):
-            return ["dogfoodadvisor.com", "petmd.com", "thesprucepets.com"]
-        return ["wirecutter.com", "rtings.com", "cnet.com", "pcmag.com", "techradar.com"]
-
-
 # ---- find review URLs ----
 
 def find_review_urls_via_gemini(query: str, limit: int = 10) -> list[str]:
     """Use Gemini grounding to find non-Reddit review/article URLs.
-    Region-aware: prioritizes regional sources if currency hints detected."""
+    Gemini's Google Search grounding discovers the best current sources for any query dynamically.
+    No hardcoded site lists — grounding knows what's authoritative for each product type."""
     if not GEMINI_API_KEY:
         return []
 
@@ -207,60 +87,49 @@ def find_review_urls_via_gemini(query: str, limit: int = 10) -> list[str]:
         print(f"[reviews] cache hit for: {query}")
         return cached
 
-    # Detect region from query (₹/Rs = India, £ = UK, € = Europe, etc.)
     from reddit_fetch import detect_region
     region = detect_region(query)
-    region_instruction = ""
-    q_lower = query.lower()
 
+    region_clause = ""
     if region == "india":
-        category_sites = _get_category_sites(q_lower, "india")
-        sites_str = ", ".join(category_sites)
-        region_instruction = (
-            f"\n\nCRITICAL: This is an INDIAN market query (₹/Rs currency). "
-            f"You MUST prioritize these category-relevant Indian/authoritative sites: {sites_str}. "
-            f"Indian sites cover India-available models with Indian prices. "
-            f"DO NOT return US-only sources unless they explicitly review Indian-market products."
+        region_clause = (
+            "\n- This is an Indian market query (₹/Rs). Prioritize sources that cover "
+            "India-available models with ₹ pricing. Include Indian tech/review publications "
+            "alongside global authorities. Exclude US-only sources unless they explicitly cover "
+            "Indian-market availability."
         )
     elif region == "uk":
-        category_sites = _get_category_sites(q_lower, "uk")
-        sites_str = ", ".join(category_sites)
-        region_instruction = (
-            f"\n\nCRITICAL: This is a UK market query (£ currency). Prioritize: {sites_str}. "
-            f"Avoid US-only sources unless they cover UK-available models."
+        region_clause = (
+            "\n- This is a UK market query (£). Prioritize UK-focused sources with £ pricing "
+            "and UK model availability. Avoid US-only sources."
         )
     elif region == "europe":
-        region_instruction = (
-            f"\n\nCRITICAL: This is a European market query (€ currency). Prioritize European tech publications "
-            f"covering EU-available models with EU prices and warranties."
+        region_clause = (
+            "\n- This is a European market query (€). Prioritize European sources covering "
+            "EU availability and € pricing."
         )
     elif region == "australia":
-        category_sites = _get_category_sites(q_lower, "australia")
-        sites_str = ", ".join(category_sites)
-        region_instruction = (
-            f"\n\nThis is an Australian market query (A$). Prioritize: {sites_str}."
+        region_clause = (
+            "\n- This is an Australian market query (A$). Prioritize Australian sources "
+            "covering AU availability and A$ pricing."
         )
     elif region == "canada":
-        category_sites = _get_category_sites(q_lower, "canada")
-        sites_str = ", ".join(category_sites)
-        region_instruction = (
-            f"\n\nThis is a Canadian market query (C$). Prioritize: {sites_str}."
+        region_clause = (
+            "\n- This is a Canadian market query (C$). Prioritize Canadian sources "
+            "covering CA availability and C$ pricing."
         )
-    else:
-        # Global: still give category-specific guidance
-        category_sites = _get_category_sites(q_lower, "global")
-        if category_sites:
-            sites_str = ", ".join(category_sites)
-            region_instruction = (
-                f"\n\nFor this product category, prioritize the most authoritative sources: {sites_str}."
-            )
 
     prompt = (
-        f"Find the top {limit} review articles and buying guides for: {query}\n\n"
-        f"Look at trusted review sites (like Wirecutter, RTINGS, Strategist, specialist blogs, "
-        f"industry publications - whichever are most respected for this product category). "
-        f"Do NOT include Reddit, YouTube, Instagram, or social media."
-        f"{region_instruction}"
+        f"Find the top {limit} most authoritative review articles and buying guides for: {query}\n\n"
+        f"Requirements:\n"
+        f"- Expert or professional reviews with hands-on testing, not spec summaries or listicles\n"
+        f"- From specialist publications, trusted review outlets, or well-regarded enthusiast communities\n"
+        f"- Recent content (2023–2025) covering current models\n"
+        f"- Diverse sources: mix of mainstream press and specialist/niche review sites\n"
+        f"- Exclude: Reddit, YouTube, Instagram, TikTok, Amazon/Flipkart listings, social media\n"
+        f"- Exclude thin affiliate blogs and generic keyword-stuffed SEO aggregators{region_clause}\n\n"
+        f"Use search to find the best currently active, most trusted review sources for this "
+        f"specific product type and return their direct article URLs."
     )
 
     body = {
@@ -492,30 +361,36 @@ def _extract_content(html: str, url: str) -> dict | None:
 
 def _find_review_urls_via_serper(query: str, limit: int) -> list[str]:
     """Serper fallback for review URL discovery when Gemini grounding fails.
-    Category-aware: uses _get_category_sites for all regions."""
+    Uses a dynamic search query — no hardcoded site lists. Google ranking surfaces
+    the best current sources naturally."""
     import google_search
     if not google_search.is_configured():
         return []
 
     from reddit_fetch import detect_region
     region = detect_region(query)
-    q_lower = query.lower()
-    sites_list = _get_category_sites(q_lower, region or "global")
 
-    if sites_list:
-        site_filter = " OR ".join(f"site:{s}" for s in sites_list[:5])
-        search_query = f"{query} review {site_filter}"
-    else:
-        search_query = f"{query} best review buying guide"
+    region_term = {
+        "india": " india",
+        "uk": " uk",
+        "europe": " europe",
+        "australia": " australia",
+        "canada": " canada",
+    }.get(region or "", "")
 
-    results = google_search.search(search_query, num=limit)
+    search_query = f"{query}{region_term} expert review buying guide"
+    results = google_search.search(search_query, num=limit * 2)
+
     urls = []
+    seen = set()
     for r in results:
         link = r.get("link", "")
-        if not link or "reddit.com" in link:
+        if not link or "reddit.com" in link or link in seen:
             continue
+        seen.add(link)
         urls.append(link)
-    print(f"[reviews] serper fallback ({region or 'global'}): {len(urls)} review URLs")
+
+    print(f"[reviews] serper fallback ({region or 'global'}): {len(urls[:limit])} review URLs")
     return urls[:limit]
 
 
