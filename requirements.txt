@@ -1,0 +1,57 @@
+# ── Core web framework ────────────────────────────────────────────────────────
+fastapi==0.136.1
+uvicorn==0.46.0
+slowapi==0.1.9
+pydantic==2.11.7
+python-dotenv==1.1.1
+
+# ── HTTP / scraping ───────────────────────────────────────────────────────────
+requests==2.32.4
+httpx==0.28.1
+aiohttp==3.13.5
+beautifulsoup4==4.13.4
+lxml==6.0.0
+
+# ── Date parsing ─────────────────────────────────────────────────────────────
+python-dateutil==2.9.0.post0    # used by review_freshness.py for article date extraction
+
+# ── String / text utilities ───────────────────────────────────────────────────
+pyahocorasick==2.3.1            # used by mention_counter.py for fast keyword matching
+json-repair==0.59.10            # used by llm_client.py to fix malformed LLM JSON responses
+
+# ── LLM providers ────────────────────────────────────────────────────────────
+openai==1.93.3                  # also covers OpenRouter (same client, different base URL)
+google-generativeai==0.8.6      # Gemini Flash — primary LLM + embeddings
+groq==0.37.1                    # Groq (llama-3.1-8b) — fast scoring
+langchain-groq==1.1.2           # used alongside groq SDK
+
+# ── Optional LLM providers (install if you set the matching API key) ──────────
+# pip install mistralai          # MISTRAL_API_KEY — interview question generation
+# pip install cerebras-cloud-sdk # CEREBRAS_API_KEY — parallel thread summarization
+# pip install cohere             # COHERE_API_KEY   — embeddings fallback #2
+
+# ── Google APIs ───────────────────────────────────────────────────────────────
+google-api-python-client==2.176.0
+google-auth==2.40.3
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+
+# ── Reddit ───────────────────────────────────────────────────────────────────
+praw==7.8.1                     # set USE_PRAW=true + credentials in .env for deep comments
+
+# ── Embeddings / ML (optional — needed for vector memory) ────────────────────
+# pip install sentence-transformers   # HuggingFace embeddings fallback #3
+
+# ── Database ─────────────────────────────────────────────────────────────────
+psycopg2-binary==2.9.12         # only needed if POSTGRES_URL is set; SQLite works without it
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+numpy==2.3.5
+pandas==2.3.3
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+redis==6.4.0                    # optional — not required for local SQLite dev
+
+# ── Review Intelligence — YouTube transcript extraction (Phase 4) ─────────────
+youtube-transcript-api==1.2.4   # extracts YouTube review transcripts without an API key
+                                 # YOUTUBE_API_KEY in .env gives better search; transcripts work without it

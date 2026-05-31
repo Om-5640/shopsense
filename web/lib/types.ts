@@ -126,6 +126,7 @@ export interface SearchResult {
     summary: string
     products: AnalysisProduct[]
     materials: unknown[]
+    review_intelligence?: ReviewIntelligence
   }
   scoredProducts?: ScoredProduct[]
 }
@@ -254,6 +255,46 @@ export interface ProcessMessageResult {
   question_answer: string | null
   clarification_question: string | null
   command_action: string | null
+}
+
+// ── Review Intelligence (Phases 1–9) ─────────────────────────────────────────
+
+export interface ReviewSource {
+  domain: string
+  title: string
+  url: string
+  trust_score: number          // 0.0–1.0 continuous
+  freshness_score: number      // 0.0–1.0 time-decay
+  review_rank_score: number    // composite rank
+  source_type: 'gemini_grounding' | 'expert_editorial' | 'news' | 'youtube' | string
+  authority_tier: 'trusted' | 'good' | 'unknown' | string
+  published_date?: string | null
+  rating?: number | null       // extracted by review_extractor (normalized to /10)
+  verdict?: string | null      // extracted verdict snippet
+}
+
+export interface ReviewConflict {
+  topic: string
+  agreement_score: number      // fraction that agree with majority view
+  conflict: boolean            // true when agreement < 0.75
+  positive_count: number
+  negative_count: number
+}
+
+export interface ReviewIntelligenceStats {
+  total: number
+  trusted_count: number
+  editorial_count: number
+  youtube_count: number
+  avg_trust: number
+  avg_freshness: number
+  conflicts_found: number
+}
+
+export interface ReviewIntelligence {
+  sources: ReviewSource[]
+  conflict_signals: ReviewConflict[]
+  stats: ReviewIntelligenceStats
 }
 
 // ── Phase 11: Pipeline diagnostics ───────────────────────────────────────────

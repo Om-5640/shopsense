@@ -541,6 +541,60 @@ def _dedup_threads(threads: list[dict]) -> list[dict]:
     return unique
 
 
+def _build_review_intel_summary(review_pages: list[dict]) -> dict:
+    """
+    Extract review intelligence metadata from enriched review pages for the UI.
+    Stored under analysis["review_intelligence"] so it flows through the existing
+    JSON column with zero schema changes.  Non-fatal: returns empty structure on failure.
+    """
+    try:
+        if not review_pages:
+            return {"sources": [], "conflict_signals": [], "stats": {}}
+
+        sources = []
+        for page in review_pages:
+            sr = page.get("structured_review") or {}
+            sources.append({
+                "domain": page.get("domain", ""),
+                "title": (page.get("title") or "")[:120],
+                "url": page.get("url", ""),
+                "trust_score": round(float(page.get("domain_trust_score", 0.5)), 3),
+                "freshness_score": round(float(page.get("freshness_score", 0.5)), 3),
+                "review_rank_score": round(float(page.get("review_rank_score", 0.5)), 3),
+                "source_type": page.get("source_type", "gemini_grounding"),
+                "authority_tier": page.get("authority_tier", "unknown"),
+                "published_date": page.get("published_date"),
+                "rating": sr.get("rating"),
+                "verdict": (sr.get("verdict") or "")[:200] or None,
+            })
+
+        conflict_signals = (review_pages[0].get("conflict_signals") or []) if review_pages else []
+        total = len(sources)
+        trusted = sum(1 for s in sources if s["authority_tier"] == "trusted")
+        editorial = sum(1 for s in sources if s["source_type"] in ("gemini_grounding", "expert_editorial"))
+        youtube = sum(1 for s in sources if s["source_type"] == "youtube")
+        avg_trust = round(sum(s["trust_score"] for s in sources) / total, 3) if total else 0.0
+        avg_freshness = round(sum(s["freshness_score"] for s in sources) / total, 3) if total else 0.0
+        conflicts_found = sum(1 for c in conflict_signals if c.get("conflict"))
+
+        return {
+            "sources": sources,
+            "conflict_signals": conflict_signals,
+            "stats": {
+                "total": total,
+                "trusted_count": trusted,
+                "editorial_count": editorial,
+                "youtube_count": youtube,
+                "avg_trust": avg_trust,
+                "avg_freshness": avg_freshness,
+                "conflicts_found": conflicts_found,
+            },
+        }
+    except Exception as _e:
+        _logger.debug("[review_intel] summary failed (non-fatal): %s", _e)
+        return {"sources": [], "conflict_signals": [], "stats": {}}
+
+
 def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
     """
     Phase 11: Write a structured JSON log entry for this pipeline run.
@@ -711,6 +765,9 @@ def _execute_pipeline(
         "elapsed_s": _stage_timings["summarize"],
     })
     _check_cancelled(session)
+
+    # Review intelligence summary — built once after fetch, embedded into analysis before save
+    _review_intel = _build_review_intel_summary(review_pages)
 
     # ---- Stage 4: Main analysis aggregation ----
     _t0 = time.time()
@@ -942,6 +999,10 @@ def _execute_pipeline(
             )
     except Exception as sig_err:
         session.emit_log(f"[memory] signal extraction non-fatal: {sig_err}")
+
+    # Embed review intelligence into analysis so it flows through the existing JSON column
+    # without any DB schema changes.  Frontend reads it as data.analysis.review_intelligence.
+    analysis["review_intelligence"] = _review_intel
 
     # ---- Persist result ----
     session.result = {

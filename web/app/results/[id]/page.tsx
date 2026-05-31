@@ -23,7 +23,7 @@ import {
 import { toast } from 'sonner'
 import { deleteProductMemory, getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
 import { useResultsStore, useAppStore, deriveSidebarCriteria } from '@/lib/store'
-import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord, ProductPrice } from '@/lib/types'
+import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord, ProductPrice, ReviewIntelligence } from '@/lib/types'
 import { fmtRelative } from '@/lib/utils'
 
 // ─── Adapters ─────────────────────────────────────────────────────────────────
@@ -120,6 +120,7 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [searchMeta, setSearchMeta] = useState<{ query: string; category: string; region: string; createdAt: string } | null>(null)
+  const [reviewIntelligence, setReviewIntelligence] = useState<ReviewIntelligence | null>(null)
   const [activeCriterionId, setActiveCriterionId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'score' | 'price' | 'rating'>('score')
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
@@ -200,6 +201,10 @@ export default function ResultsPage() {
             region: result.region,
             createdAt: result.createdAt,
           })
+          // Review intelligence — embedded in analysis by the pipeline
+          if (result.analysis?.review_intelligence) {
+            setReviewIntelligence(result.analysis.review_intelligence)
+          }
           // Save to home-page history
           const top = result.scoredProducts[0]
           addSearchHistory({
@@ -462,7 +467,7 @@ export default function ResultsPage() {
                 </Button>
               </SheetTrigger>
               <SheetContent side="right" className="w-[280px] bg-[#0F0F12] border-white/[0.06]">
-                <InsightsPanel {...insightsProps} />
+                <InsightsPanel {...insightsProps} reviewIntelligence={reviewIntelligence} />
               </SheetContent>
             </Sheet>
           </div>
@@ -581,7 +586,7 @@ export default function ResultsPage() {
 
             {/* Right — Insights */}
             <div className="hidden lg:block lg:sticky lg:top-[76px] lg:h-[calc(100vh-108px)] overflow-y-auto pl-2">
-              <InsightsPanel {...insightsProps} />
+              <InsightsPanel {...insightsProps} reviewIntelligence={reviewIntelligence} />
             </div>
           </div>
         </div>

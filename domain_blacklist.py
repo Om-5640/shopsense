@@ -149,3 +149,11 @@ def remove(domain: str):
 
 def get_all() -> set[str]:
     return _bl.get_all()
+
+
+def get_history(domain: str) -> list[bool]:
+    """Return scrape history for a domain as a list of bool (True=success, False=failure).
+    Used by domain_trust.py to compute reliability scores. Returns [] if no history."""
+    d = _bl._norm(domain)
+    with _bl._lock:
+        return list(_bl._history.get(d, []))

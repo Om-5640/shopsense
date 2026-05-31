@@ -21,6 +21,49 @@ from dotenv import load_dotenv
 import cache
 import domain_blacklist as _db
 
+# Phase 1–9 enhancement modules — all optional; failures are non-fatal.
+try:
+    from review_extractor import extract_review_structure as _extract_structure
+    _HAS_EXTRACTOR = True
+except Exception:
+    _HAS_EXTRACTOR = False
+
+try:
+    from review_freshness import extract_article_date as _extract_date, compute_freshness_score as _freshness
+    _HAS_FRESHNESS = True
+except Exception:
+    _HAS_FRESHNESS = False
+
+try:
+    from domain_trust import get_domain_trust_score as _trust_score
+    _HAS_TRUST = True
+except Exception:
+    _HAS_TRUST = False
+
+try:
+    from review_ranker import compute_review_rank_score as _rank_score
+    _HAS_RANKER = True
+except Exception:
+    _HAS_RANKER = False
+
+try:
+    from contradiction_detector import detect_review_conflicts as _detect_conflicts
+    _HAS_CONTRADICTION = True
+except Exception:
+    _HAS_CONTRADICTION = False
+
+try:
+    from review_candidates import retrieve_review_candidates as _retrieve_candidates
+    _HAS_CANDIDATES = True
+except Exception:
+    _HAS_CANDIDATES = False
+
+try:
+    from youtube_review_fetch import fetch_youtube_reviews as _fetch_youtube
+    _HAS_YOUTUBE = True
+except Exception:
+    _HAS_YOUTUBE = False
+
 load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -282,6 +325,8 @@ def fetch_review_page(url: str) -> dict | None:
 
     # Fallback to Jina Reader for JS-heavy sites or 403 blocks
     if not result or len(result["content"]) < 300:
+        # Phase 2: preserve any date extracted from original HTML before overwriting result
+        _prior_pub_date = (result or {}).get("published_date")
         jina_content = _fetch_via_jina(url)
         if jina_content:
             from source_filter import get_authority_tier
@@ -292,6 +337,7 @@ def fetch_review_page(url: str) -> dict | None:
                 "title": title[:300],
                 "content": jina_content,
                 "authority_tier": get_authority_tier(url),
+                "published_date": _prior_pub_date,  # carry date from original HTML if found
             }
             print(f"[scrape] Jina Reader succeeded for {domain}")
         else:
@@ -300,12 +346,53 @@ def fetch_review_page(url: str) -> dict | None:
             return None
 
     _db.record_success(domain)
+
+    # ---- Phase 1–8 per-page enrichment (all additive, all non-fatal) ----
+
+    # Phase 2: freshness score from published date
+    if _HAS_FRESHNESS:
+        try:
+            result.setdefault("published_date", None)
+            result["freshness_score"] = _freshness(result.get("published_date"))
+        except Exception:
+            result.setdefault("freshness_score", 0.5)
+    else:
+        result.setdefault("freshness_score", 0.5)
+
+    # Phase 3: continuous domain trust score
+    if _HAS_TRUST:
+        try:
+            result["domain_trust_score"] = _trust_score(url)
+        except Exception:
+            result.setdefault("domain_trust_score", 0.5)
+    else:
+        result.setdefault("domain_trust_score", 0.5)
+
+    # Phase 5: structured review extraction
+    if _HAS_EXTRACTOR:
+        try:
+            result["structured_review"] = _extract_structure(result.get("content", ""), url)
+        except Exception:
+            result.setdefault("structured_review", None)
+
+    # source_type defaults (overwritten by fetch_all_reviews when known)
+    result.setdefault("source_type", "gemini_grounding")
+    result.setdefault("retrieval_confidence", 0.80)
+
     cache.set("review_page", url, result)
     return result
 
 
 def _extract_content(html: str, url: str) -> dict | None:
     soup = BeautifulSoup(html, "html.parser")
+
+    # Phase 2: extract publish date from HTML metadata BEFORE stripping tags
+    pub_date: str | None = None
+    if _HAS_FRESHNESS:
+        try:
+            pub_date = _extract_date(html, url)
+        except Exception:
+            pass
 
     # Remove junk
     for tag in soup(["script", "style", "nav", "footer", "header", "aside",
@@ -356,6 +443,7 @@ def _extract_content(html: str, url: str) -> dict | None:
         "title": title[:300],
         "content": content,
         "authority_tier": get_authority_tier(url),
+        "published_date": pub_date,   # Phase 2: may be None
     }
 
 
@@ -398,22 +486,51 @@ def fetch_all_reviews(query: str, limit: int = 10, delay: float = 1.0) -> list[d
     """End-to-end: find review URLs, filter junk, scrape each, return what worked.
     Primary: Gemini grounding (knows authoritative sites per category)
     Fallback: Serper search for review sites (when Gemini quota is hit)
+
+    Phase 1 enhancement: additional expert editorial + news candidates are merged
+    when Serper is configured.  Gemini grounding behavior is unchanged.
     """
     from source_filter import filter_review_urls
 
-    urls = find_review_urls_via_gemini(query, limit=limit)
+    gemini_urls = find_review_urls_via_gemini(query, limit=limit)
+    gemini_fallback_used = False
 
     # Serper fallback if Gemini returned nothing
-    if not urls:
+    if not gemini_urls:
         print("[reviews] Gemini returned 0 URLs, trying Serper fallback...")
-        urls = _find_review_urls_via_serper(query, limit=limit)
+        gemini_urls = _find_review_urls_via_serper(query, limit=limit)
+        gemini_fallback_used = True
 
-    if not urls:
+    # Phase 1: augment with expert editorial + news candidates (additive only)
+    # Maps url → source metadata so we can tag results after scraping.
+    url_metadata: dict[str, dict] = {}
+    for u in gemini_urls:
+        url_metadata[u] = {
+            "source_type": "serper_fallback" if gemini_fallback_used else "gemini_grounding",
+            "discovered_from": "serper_fallback" if gemini_fallback_used else "gemini",
+            "retrieval_confidence": 0.65 if gemini_fallback_used else 0.90,
+        }
+
+    if _HAS_CANDIDATES:
+        try:
+            extra = _retrieve_candidates(query, gemini_urls=[], extra_limit=limit // 2)
+            for cand in extra:
+                if cand.url not in url_metadata:
+                    url_metadata[cand.url] = {
+                        "source_type": cand.source_type,
+                        "discovered_from": cand.discovered_from,
+                        "retrieval_confidence": cand.retrieval_confidence,
+                    }
+                    gemini_urls.append(cand.url)
+        except Exception as e:
+            print(f"[reviews] Phase 1 candidate augmentation failed (non-fatal): {e}")
+
+    if not gemini_urls:
         print("[reviews] no review URLs found from any source")
         return []
 
     # Filter affiliate junk — conservative, whitelist always wins
-    urls = filter_review_urls(urls)
+    urls = filter_review_urls(gemini_urls)
     if not urls:
         print("[reviews] all URLs filtered as junk — check source_filter.py whitelist")
         return []
@@ -423,7 +540,56 @@ def fetch_all_reviews(query: str, limit: int = 10, delay: float = 1.0) -> list[d
         print(f"[scrape] {i}/{len(urls)}: {url}")
         page = fetch_review_page(url)
         if page:
+            # Phase 1: tag with discovery metadata (not cached — context-specific)
+            meta = url_metadata.get(url, {})
+            page["source_type"] = meta.get("source_type", page.get("source_type", "gemini_grounding"))
+            page["discovered_from"] = meta.get("discovered_from", "gemini")
+            page["retrieval_confidence"] = meta.get("retrieval_confidence", page.get("retrieval_confidence", 0.80))
+
+            # Phase 8: compute rank score now that retrieval_confidence is known
+            if _HAS_RANKER:
+                try:
+                    page["review_rank_score"] = _rank_score(
+                        trust_score=page.get("domain_trust_score", 0.5),
+                        freshness_score=page.get("freshness_score", 0.5),
+                        content=page.get("content", ""),
+                        retrieval_confidence=page["retrieval_confidence"],
+                    )
+                except Exception:
+                    pass
+
             results.append(page)
         time.sleep(delay)
     print(f"[scrape] {len(results)}/{len(urls)} succeeded")
+
+    # Phase 4: YouTube intelligence — supplementary evidence, appended after web reviews
+    if _HAS_YOUTUBE:
+        try:
+            yt_reviews = _fetch_youtube(query)
+            for yt in yt_reviews:
+                # Enrich YouTube results with freshness/trust defaults
+                yt.setdefault("freshness_score", 0.80)  # transcripts are always current
+                yt.setdefault("domain_trust_score", yt.get("trust_score", 0.55))
+                yt.setdefault("review_rank_score", 0.60 if yt.get("channel_is_trusted") else 0.45)
+                yt.setdefault("structured_review", None)
+                yt.setdefault("authority_tier", "good" if yt.get("channel_is_trusted") else "unknown")
+                # Remap 'transcript_snippet' → 'content' so downstream code works unchanged
+                if "content" not in yt and "transcript_snippet" in yt:
+                    yt["content"] = yt["transcript_snippet"]
+            results.extend(yt_reviews)
+            if yt_reviews:
+                print(f"[youtube] appended {len(yt_reviews)} YouTube review(s)")
+        except Exception as e:
+            print(f"[reviews] YouTube fetch failed (non-fatal): {e}")
+
+    # Phase 7: contradiction detection — stored on every result dict so the caller
+    # (and analyzer) can access it from the first element.
+    if _HAS_CONTRADICTION and len(results) >= 2:
+        try:
+            conflicts = _detect_conflicts(results)
+            for r in results:
+                r["conflict_signals"] = conflicts
+        except Exception as e:
+            print(f"[reviews] contradiction detection failed (non-fatal): {e}")
+
     return results
