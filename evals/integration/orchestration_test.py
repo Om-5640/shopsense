@@ -258,7 +258,8 @@ def test_rubric_save_lock_exists():
     if lock_a is lock_c:
         _fail("rubric_save_lock_exists",
               "different categories must return different Lock instances")
-    if not isinstance(lock_a, threading.Lock):
+    _lock_type = type(threading.Lock())
+    if not isinstance(lock_a, _lock_type):
         _fail("rubric_save_lock_exists",
               f"expected threading.Lock, got {type(lock_a)}")
     _pass("rubric_save_lock_exists")
