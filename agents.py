@@ -20,6 +20,7 @@ import itertools
 import logging
 import os
 import threading
+import time
 
 _logger = logging.getLogger(__name__)
 
@@ -163,25 +164,36 @@ _pool_counters: dict = {}
 _dead_providers: set = set()
 _dead_lock = threading.Lock()
 
-# Consecutive failure counter — auto-dead after _CONSEC_FAIL_THRESHOLD failures
-_consec_failures: dict[str, int] = {}
+# Consecutive failure counter — auto-dead after _CONSEC_FAIL_THRESHOLD failures.
+# Stored as (count, last_failure_timestamp). Failures older than _CONSEC_WINDOW seconds
+# are discarded, preventing stale state from one search bleeding into the next.
+# After auto-deading, the entry is removed — the _dead_providers set handles blocking.
+_consec_failures: dict[str, tuple[int, float]] = {}  # provider → (count, last_failure_ts)
 _consec_lock = threading.Lock()
 _CONSEC_FAIL_THRESHOLD = 3
+_CONSEC_WINDOW = 300  # seconds; failures outside this window don't count
 
 
 def _record_provider_outcome(provider: str, success: bool) -> None:
     """Track consecutive failures; auto-dead after _CONSEC_FAIL_THRESHOLD in a row."""
     with _consec_lock:
         if success:
-            _consec_failures[provider] = 0
+            _consec_failures.pop(provider, None)
         else:
-            _consec_failures[provider] = _consec_failures.get(provider, 0) + 1
-            if _consec_failures[provider] >= _CONSEC_FAIL_THRESHOLD:
+            now = time.time()
+            count, last_ts = _consec_failures.get(provider, (0, 0.0))
+            if now - last_ts > _CONSEC_WINDOW:
+                count = 0  # failures too old to count as consecutive
+            count += 1
+            if count >= _CONSEC_FAIL_THRESHOLD:
                 mark_provider_dead(provider)
+                _consec_failures.pop(provider, None)  # dead flag takes over; counter no longer needed
                 _logger.warning(
                     "[provider:%s] %d consecutive failures — auto-marking dead for this session",
-                    provider, _consec_failures[provider],
+                    provider, count,
                 )
+            else:
+                _consec_failures[provider] = (count, now)
 
 
 def mark_provider_dead(provider: str) -> None:
