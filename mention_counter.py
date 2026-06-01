@@ -371,8 +371,7 @@ def count_across_threads(
                         mr.sentiment_records.append({
                             "comment_text": comment_body[:300],
                             "sentiment": s,
-                            "confidence": score_obj.confidence,
-                            "reason": score_obj.reason,
+                            "source": score_obj.source,
                         })
                 except Exception as exc:
                     logger.warning("[mention_counter] sentiment failed for comment: %s", exc)
