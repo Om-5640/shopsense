@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, SkipForward, User } from 'lucide-react'
+import { Send, SkipForward, User, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +19,7 @@ interface InterviewChatProps {
   messages: Message[]
   onSendMessage: (message: string) => void
   onSkip: () => void
+  onEndInterview: () => void
   isWaitingForResponse: boolean
 }
 
@@ -28,9 +29,11 @@ export function InterviewChat({
   messages,
   onSendMessage,
   onSkip,
+  onEndInterview,
   isWaitingForResponse,
 }: InterviewChatProps) {
   const [input, setInput] = useState('')
+  const [confirmEnd, setConfirmEnd] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   
@@ -64,15 +67,62 @@ export function InterviewChat({
           <span className="text-sm text-[#A1A1AA]">
             Question {currentQuestion} of {totalQuestions}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onSkip}
-            className="text-[#71717A] hover:text-[#FAFAFA]"
-          >
-            <SkipForward className="w-4 h-4 mr-1" />
-            Skip
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSkip}
+              disabled={isWaitingForResponse}
+              className="text-[#71717A] hover:text-[#FAFAFA]"
+            >
+              <SkipForward className="w-4 h-4 mr-1" />
+              Skip
+            </Button>
+
+            {/* End Interview — two-step confirm to prevent accidental clicks */}
+            <AnimatePresence mode="wait">
+              {confirmEnd ? (
+                <motion.div
+                  key="confirm"
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.92 }}
+                  className="flex items-center gap-1"
+                >
+                  <span className="text-xs text-[#A1A1AA] mr-1">End interview?</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setConfirmEnd(false); onEndInterview() }}
+                    className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 px-2"
+                  >
+                    Yes, end
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmEnd(false)}
+                    className="text-[#71717A] hover:text-[#FAFAFA] px-2"
+                  >
+                    Cancel
+                  </Button>
+                </motion.div>
+              ) : (
+                <motion.div key="btn" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmEnd(true)}
+                    disabled={isWaitingForResponse}
+                    className="text-[#71717A] hover:text-rose-400"
+                  >
+                    <LogOut className="w-4 h-4 mr-1" />
+                    End
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
         <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
           <motion.div

@@ -966,6 +966,7 @@ function ResearchPageContent() {
             messages={messages}
             onSendMessage={handleSendMessage}
             onSkip={handleSkip}
+            onEndInterview={() => finishInterview(category, criteria, qaHistory)}
             isWaitingForResponse={waiting}
           />
         </motion.div>
