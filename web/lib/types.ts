@@ -42,6 +42,35 @@ export interface RetailerPrice {
   image_url?: string
   title?: string
   is_search?: boolean
+  match_score?: number          // product matcher score 0.0–1.0 (additive)
+}
+
+// ── Product Link Intelligence (Phases 1–13) ───────────────────────────────────
+export interface CanonicalProductData {
+  brand: string | null
+  model: string | null
+  storage: string | null
+  ram: string | null
+  color: string | null
+  variant: string | null
+  screen_size?: string | null
+  canonical_name: string
+  parse_confidence: number
+}
+
+export interface LinkIntelligence {
+  confidence: number            // 0.0–1.0 combined score
+  consensus_score: number       // multi-marketplace agreement
+  match_score: number           // best candidate match score
+  source_trust: number          // trust of winning source
+  price_consistency: number     // price variance score
+  status: 'confident' | 'uncertain' | 'fallback' | string
+  canonical: CanonicalProductData
+  best_url: string | null
+  best_title: string | null
+  best_image: string | null
+  best_rating: number | null
+  best_review_count: number | null
 }
 
 export interface ProductPrice {
@@ -52,6 +81,7 @@ export interface ProductPrice {
   currency: string
   fetched_at: string
   is_fallback?: boolean
+  intelligence?: LinkIntelligence   // present when Link Intelligence ran successfully
 }
 
 // Rich community data extracted from Reddit + review sources

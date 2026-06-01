@@ -19,6 +19,7 @@ import {
   Quote,
   LayoutGrid,
   Minus,
+  ShieldCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -77,6 +78,8 @@ interface Product {
   sentimentScore?: number | null
   dominantSentiment?: string | null
   sentimentRecords?: SentimentRecord[]
+  // Link Intelligence
+  matchScore?: number | null
 }
 
 interface ProductCardProps {
@@ -494,7 +497,7 @@ export function ProductCard({
 
       {/* Price & Store */}
       <div className="ml-6 mb-4">
-        <div className="flex items-baseline gap-2 mb-1">
+        <div className="flex items-baseline gap-2 flex-wrap mb-1">
           {product.price > 0 ? (
             <>
               <span className="text-2xl font-bold text-[#FAFAFA]">
@@ -515,18 +518,64 @@ export function ProductCard({
             <span className="text-sm text-[#71717A] italic">Price unavailable</span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-sm text-[#A1A1AA]">
-          <span>on {product.store}</span>
-          {product.rating && (
+
+        {/* Store + Rating row */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-[#A1A1AA]">on {product.store}</span>
+
+          {product.rating != null && product.rating > 0 && (
             <>
-              <span className="text-[#71717A]">•</span>
-              <span className="flex items-center gap-1">
-                <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                {product.rating} ({product.reviewCount?.toLocaleString()})
+              <span className="text-[#3F3F46]">•</span>
+              {/* Star row */}
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-0.5">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <Star
+                      key={i}
+                      className={cn(
+                        'w-3.5 h-3.5',
+                        i <= Math.floor(product.rating!)
+                          ? 'text-amber-400 fill-amber-400'
+                          : i === Math.ceil(product.rating!) && product.rating! % 1 >= 0.5
+                          ? 'text-amber-400 fill-amber-400/50'
+                          : 'text-white/10',
+                      )}
+                    />
+                  ))}
+                </div>
+                <span className="text-sm font-semibold text-amber-300">
+                  {product.rating.toFixed(1)}
+                </span>
+                {product.reviewCount != null && product.reviewCount > 0 && (
+                  <span className="text-xs text-[#71717A]">
+                    ({product.reviewCount.toLocaleString()} ratings)
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Match confidence badge — shown when intelligence data present */}
+          {product.matchScore != null && product.matchScore > 0 && (
+            <>
+              <span className="text-[#3F3F46]">•</span>
+              <span
+                className={cn(
+                  'flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border',
+                  product.matchScore >= 0.85
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                    : product.matchScore >= 0.65
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+                    : 'bg-white/[0.05] text-[#71717A] border-white/[0.10]',
+                )}
+              >
+                <ShieldCheck className="w-3 h-3" />
+                {Math.round(product.matchScore * 100)}% match
               </span>
             </>
           )}
         </div>
+
         {product.alternativePrices && product.alternativePrices.length > 0 && (
           <div className="mt-2 text-sm text-[#71717A]">
             Also:{' '}

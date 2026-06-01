@@ -11,6 +11,7 @@ import { RubricSidebar } from '@/components/results/rubric-sidebar'
 import { ProductCard } from '@/components/results/product-card'
 import { InsightsPanel } from '@/components/results/insights-panel'
 import { DiagnosticsPanel } from '@/components/results/diagnostics-panel'
+import { ProductSpotlight } from '@/components/results/product-spotlight'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -47,10 +48,17 @@ function productClientKey(p: ScoredProduct, index: number) {
 function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id: string; label: string }[], analysisMap: Record<string, AnalysisProduct> = {}) {
   const currency = p.price?.currency ?? 'INR'
   const sym = toCurrencySymbol(currency)
-  const retailer = bestRetailer(p)
+  const intelConf = p.price?.intelligence?.status === 'confident'
+  // When intelligence is confident, use the matched retailer so price and link stay in sync
+  const retailer = intelConf
+    ? (p.price?.retailers?.find((r) => r.url === p.price?.intelligence?.best_url) ?? bestRetailer(p))
+    : bestRetailer(p)
   const bestPrice = p.price?.best_price
-  const rawPrice = bestPrice?.price_inr ?? bestPrice?.price_usd ?? retailer?.price_inr ?? retailer?.price_usd ?? 0
-  // 0 means price unavailable — keep as 0 and let ProductCard handle display
+  // Price: use retailer price directly when intelligence is confident (avoids showing
+  // a cheaper wrong-variant price alongside the correct-variant link)
+  const rawPrice = intelConf
+    ? (retailer?.price_inr ?? retailer?.price_usd ?? bestPrice?.price_inr ?? bestPrice?.price_usd ?? 0)
+    : (bestPrice?.price_inr ?? bestPrice?.price_usd ?? retailer?.price_inr ?? retailer?.price_usd ?? 0)
   const priceNum = rawPrice
 
   const criteriaScores: Record<string, { score: number; evidence?: string }> = {}
@@ -108,6 +116,8 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     sentimentScore: ap.sentiment_score ?? p.sentiment_score ?? null,
     dominantSentiment: ap.dominant_sentiment ?? p.dominant_sentiment ?? null,
     sentimentRecords: (ap.sentiment_records ?? p.sentiment_records ?? []) as SentimentRecord[],
+    // Link Intelligence match score (from best retailer)
+    matchScore: p.price?.intelligence?.match_score ?? null,
   }
 }
 
@@ -559,6 +569,23 @@ export default function ResultsPage() {
                   )}
                 </div>
               )}
+
+              {/* Product Link Intelligence Spotlight — shown for #1 product when confidence ≥ 0.72 */}
+              <AnimatePresence>
+                {(() => {
+                  const topProduct = displayProducts[0]
+                  const intel = topProduct?.price?.intelligence
+                  if (!topProduct || !topProduct.price || !intel || intel.status !== 'confident') return null
+                  return (
+                    <ProductSpotlight
+                      key={`spotlight-${topProduct.name}`}
+                      productName={topProduct.name}
+                      price={topProduct.price}
+                      rank={1}
+                    />
+                  )
+                })()}
+              </AnimatePresence>
 
               {/* Product cards */}
               <div className="space-y-4">

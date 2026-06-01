@@ -49,6 +49,15 @@ import cache
 
 logger = logging.getLogger(__name__)
 
+# ── Product Link Intelligence Engine (fail-safe import) ──────────────────────
+try:
+    from product_link_intel import run_link_intelligence, LINK_INTEL_ENABLED
+    from product_canonicalizer import canonicalize_product as _canonicalize
+    _HAS_LINK_INTEL = True
+except ImportError:
+    _HAS_LINK_INTEL = False
+    LINK_INTEL_ENABLED = False
+
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 AMAZON_AFFILIATE_TAG = os.environ.get("AMAZON_AFFILIATE_TAG", "")
 
@@ -222,12 +231,14 @@ def _apply_affiliate_tag(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _fetch_amazon_india(product_name: str) -> dict | None:
-    """Search Amazon.in via Serper Shopping and extract the top result."""
+    """Search Amazon.in via Serper Shopping — collect top-5 candidates for intelligence."""
     query = f"{product_name} site:amazon.in"
-    results = _serper_shopping_search(query, num=3)
+    results = _serper_shopping_search(query, num=5)
     if not results:
-        # Fall back to organic search
-        results = _serper_google_search(f"{product_name} amazon.in buy", num=3)
+        results = _serper_google_search(f"{product_name} amazon.in buy", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
 
     for r in results:
         url = r.get("link") or r.get("url") or ""
@@ -236,15 +247,13 @@ def _fetch_amazon_india(product_name: str) -> dict | None:
 
         price_raw = r.get("price") or r.get("extracted_price")
         price = _parse_inr(str(price_raw)) if price_raw else None
-
         if not price:
             continue
 
-        title = r.get("title", "")
         rating_raw = r.get("rating")
         review_count_raw = r.get("ratingCount") or r.get("reviews")
 
-        return {
+        entry = {
             "name": "Amazon India",
             "price_inr": price,
             "mrp_inr": None,
@@ -254,17 +263,26 @@ def _fetch_amazon_india(product_name: str) -> dict | None:
             "rating": float(rating_raw) if rating_raw else None,
             "review_count": int(re.sub(r"[^\d]", "", str(review_count_raw))) if review_count_raw else None,
             "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
-            "title": title,
+            "title": r.get("title", ""),
         }
-    return None
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
 
 
 def _fetch_flipkart(product_name: str) -> dict | None:
-    """Search Flipkart via Serper Shopping."""
+    """Search Flipkart via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:flipkart.com"
-    results = _serper_shopping_search(query, num=3)
+    results = _serper_shopping_search(query, num=5)
     if not results:
-        results = _serper_google_search(f"{product_name} flipkart.com buy online", num=3)
+        results = _serper_google_search(f"{product_name} flipkart.com buy online", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
 
     for r in results:
         url = r.get("link") or r.get("url") or ""
@@ -276,7 +294,8 @@ def _fetch_flipkart(product_name: str) -> dict | None:
         if not price:
             continue
 
-        return {
+        review_raw = r.get("ratingCount") or r.get("reviews")
+        entry = {
             "name": "Flipkart",
             "price_inr": price,
             "mrp_inr": None,
@@ -284,26 +303,35 @@ def _fetch_flipkart(product_name: str) -> dict | None:
             "url": url,
             "in_stock": True,
             "rating": float(r["rating"]) if r.get("rating") else None,
-            "review_count": None,
+            "review_count": int(re.sub(r"[^\d]", "", str(review_raw))) if review_raw else None,
             "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
             "title": r.get("title", ""),
         }
-    return None
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
 
 
 def _fetch_croma(product_name: str) -> dict | None:
-    """Search Croma.com via Google Serper."""
-    results = _serper_google_search(f"{product_name} site:croma.com buy price", num=3)
+    """Search Croma.com via Google Serper — collect top-5 candidates."""
+    results = _serper_google_search(f"{product_name} site:croma.com buy price", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
+
     for r in results:
         url = r.get("link") or ""
         if "croma.com" not in url.lower():
             continue
-        # Try to extract price from the snippet
         snippet = r.get("snippet", "")
         price = _parse_inr(snippet)
         if not price:
             continue
-        return {
+        entry = {
             "name": "Croma",
             "price_inr": price,
             "mrp_inr": None,
@@ -315,15 +343,24 @@ def _fetch_croma(product_name: str) -> dict | None:
             "image_url": None,
             "title": r.get("title", ""),
         }
-    return None
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
 
 
 def _fetch_amazon_usa(product_name: str) -> dict | None:
-    """Search Amazon.com via Serper Shopping."""
+    """Search Amazon.com via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:amazon.com"
-    results = _serper_shopping_search(query, num=3)
+    results = _serper_shopping_search(query, num=5)
     if not results:
-        results = _serper_google_search(f"{product_name} amazon.com buy", num=3)
+        results = _serper_google_search(f"{product_name} amazon.com buy", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
 
     for r in results:
         url = r.get("link") or r.get("url") or ""
@@ -333,25 +370,35 @@ def _fetch_amazon_usa(product_name: str) -> dict | None:
         price = _parse_usd(str(price_raw)) if price_raw else None
         if not price:
             continue
-        return {
+        review_raw = r.get("ratingCount") or r.get("reviews")
+        entry = {
             "name": "Amazon US",
             "price_usd": price,
             "url": _apply_affiliate_tag(url),
             "in_stock": True,
             "rating": float(r["rating"]) if r.get("rating") else None,
-            "review_count": None,
-            "image_url": r.get("imageUrl"),
+            "review_count": int(re.sub(r"[^\d]", "", str(review_raw))) if review_raw else None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
             "title": r.get("title", ""),
         }
-    return None
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
 
 
 def _fetch_bestbuy(product_name: str) -> dict | None:
-    """Search Best Buy via Serper Shopping."""
+    """Search Best Buy via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:bestbuy.com"
-    results = _serper_shopping_search(query, num=3)
+    results = _serper_shopping_search(query, num=5)
     if not results:
-        results = _serper_google_search(f"{product_name} bestbuy.com buy", num=3)
+        results = _serper_google_search(f"{product_name} bestbuy.com buy", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
 
     for r in results:
         url = r.get("link") or r.get("url") or ""
@@ -361,17 +408,24 @@ def _fetch_bestbuy(product_name: str) -> dict | None:
         price = _parse_usd(str(price_raw)) if price_raw else None
         if not price:
             continue
-        return {
+        review_raw = r.get("ratingCount") or r.get("reviews")
+        entry = {
             "name": "Best Buy",
             "price_usd": price,
             "url": url,
             "in_stock": True,
             "rating": float(r["rating"]) if r.get("rating") else None,
-            "review_count": None,
-            "image_url": r.get("imageUrl"),
+            "review_count": int(re.sub(r"[^\d]", "", str(review_raw))) if review_raw else None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
             "title": r.get("title", ""),
         }
-    return None
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
 
 
 # ---------------------------------------------------------------------------
@@ -419,10 +473,47 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         _price_cache_set(cache_key, result)
         return result
 
-    # Determine best price
+    # ── Product Link Intelligence (additive, fail-safe) ──────────────────────
+    intel_data: dict | None = None
+    if _HAS_LINK_INTEL and LINK_INTEL_ENABLED:
+        try:
+            canonical = _canonicalize(product_name)
+            if canonical.parse_confidence >= 0.30:
+                intel = run_link_intelligence(canonical, retailers, price_field)
+                if intel:
+                    intel_data = intel.to_dict()
+                    # If intelligence found a better-matching result, promote it
+                    # by reordering retailers so best match appears first.
+                    if intel.best_candidate and intel.status == "confident":
+                        best_url = intel.best_candidate.url
+                        retailers.sort(
+                            key=lambda r: 0 if r.get("url") == best_url else 1
+                        )
+                        # Tag each retailer with its match score
+                        for r in retailers:
+                            for cand in intel.all_candidates:
+                                if r.get("url") == cand.url:
+                                    r["match_score"] = round(cand.match_score, 3)
+                                    break
+        except Exception as _ie:
+            logger.debug("Link intelligence failed (non-fatal): %s", _ie)
+
+    # Determine best price — prefer intelligence-selected retailer when confident
     priced = [r for r in retailers if r.get(price_field)]
     if priced:
-        best = min(priced, key=lambda r: r[price_field])
+        if (
+            intel_data
+            and intel_data.get("status") == "confident"
+            and intel_data.get("best_url")
+        ):
+            # Use the intelligence-selected retailer as "best"
+            intel_best = next(
+                (r for r in priced if r.get("url") == intel_data["best_url"]),
+                min(priced, key=lambda r: r[price_field]),  # fallback to cheapest
+            )
+            best = intel_best
+        else:
+            best = min(priced, key=lambda r: r[price_field])
         prices = [r[price_field] for r in priced]
         price_range = [min(prices), max(prices)]
         best_price = {"retailer": best["name"], price_field: best[price_field]}
@@ -435,7 +526,11 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         if r.get("price_inr") and r.get("mrp_inr") and r["mrp_inr"] > r["price_inr"]:
             r["discount_pct"] = round((r["mrp_inr"] - r["price_inr"]) / r["mrp_inr"] * 100)
 
-    output = {
+    # Strip internal _candidates lists before storing (not needed downstream)
+    for r in retailers:
+        r.pop("_candidates", None)
+
+    output: dict = {
         "product_name": product_name,
         "retailers": retailers,
         "best_price": best_price,
@@ -443,6 +538,8 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         "currency": currency,
         "fetched_at": datetime.utcnow().isoformat() + "Z",
     }
+    if intel_data:
+        output["intelligence"] = intel_data
 
     _price_cache_set(cache_key, output)
     return output
