@@ -25,20 +25,40 @@ Canonical shape:
             "name": "string",
             "mention_count": int,
             "distinct_recommenders": int,
+            "positive_mentions": int,
+            "negative_mentions": int,
             "praise": [str],
             "complaints": [{"text": str, "confidence": str}],
             "sources": [str],
             "signal_strength": "high|medium|low",
+            "representative_quote": str,
+            "cross_subreddit_signal": null,
         }
     ]
 }
 """
 
-
 import logging
+import re
 
 _logger = logging.getLogger(__name__)
 
+try:
+    from product_canonicalizer import canonicalize_product as _canonicalize_product
+    _HAS_CANONICALIZER = True
+except ImportError:
+    _canonicalize_product = None  # type: ignore[assignment]
+    _HAS_CANONICALIZER = False
+
+# ── Array size caps — prevents unbounded growth from misbehaving LLMs ────────
+MAX_PRAISE     = 20
+MAX_COMPLAINTS = 20
+MAX_SOURCES    = 50
+MAX_PRODUCTS   = 50
+MAX_MATERIALS  = 30
+
+
+# ── Primitive coercers ────────────────────────────────────────────────────────
 
 def _safe_str(value, default: str = "") -> str:
     """Coerce ANY value to a string. Dict→bulleted, list→joined, None→default."""
@@ -68,14 +88,29 @@ def _safe_int(value, default: int = 0) -> int:
     if isinstance(value, (int, float)):
         return int(value)
     if isinstance(value, str):
-        # Handle '5+', '~10', 'many', etc.
-        import re
         match = re.search(r"-?\d+", value)
         if match:
             try:
                 return int(match.group())
             except ValueError:
                 pass
+    return default
+
+
+def _safe_count(value, default: int = 0) -> int:
+    """Bug 3: count-specific helper — floors negative values to 0."""
+    return max(0, _safe_int(value, default))
+
+
+def _field_int(item: dict, primary: str, *fallbacks: str, default: int = 0) -> int:
+    """
+    Bug 1 & 2: explicit field precedence that handles falsy-zero values correctly.
+    Uses 'in' membership check instead of 'or' so a value of 0 is never shadowed
+    by a fallback field (e.g. mention_count=0 must not fall through to mentions=25).
+    """
+    for key in (primary, *fallbacks):
+        if key in item:
+            return _safe_count(item[key], default)
     return default
 
 
@@ -94,6 +129,22 @@ def _safe_list(value, item_coercer=None) -> list:
         return [item_coercer(item) for item in result if item is not None]
     return result
 
+
+def _flatten_list(items: list) -> list:
+    """
+    Bug 4: recursively flatten nested lists so [[a, b], c] → [a, b, c].
+    Non-list items pass through unchanged so normal entries are unaffected.
+    """
+    result = []
+    for item in items:
+        if isinstance(item, list):
+            result.extend(_flatten_list(item))
+        else:
+            result.append(item)
+    return result
+
+
+# ── Complaint normalization ───────────────────────────────────────────────────
 
 def _normalize_complaint(item) -> dict | None:
     """Complaints can come as strings or dicts. Always return dict with text+confidence."""
@@ -114,25 +165,128 @@ def _normalize_complaint(item) -> dict | None:
     return None
 
 
+# ── Deduplication ─────────────────────────────────────────────────────────────
+
+def _canonical_key(name: str) -> str:
+    """
+    Bug 5 & 6: stable dedup key — strip all punctuation/spaces, lowercase.
+    "Sony WF-1000XM5", "Sony WF1000XM5", "SONY WF-1000XM5" → "sonywf1000xm5"
+    """
+    return re.sub(r"[\W_]", "", name.lower())
+
+
+_SIG_RANK = {"high": 2, "medium": 1, "low": 0}
+
+
+def _merge_products(base: dict, dup: dict) -> dict:
+    """Accumulate counts and lists from a duplicate entry into base."""
+    base["mention_count"]        = base.get("mention_count", 0)        + dup.get("mention_count", 0)
+    base["positive_mentions"]    = base.get("positive_mentions", 0)    + dup.get("positive_mentions", 0)
+    base["negative_mentions"]    = base.get("negative_mentions", 0)    + dup.get("negative_mentions", 0)
+    base["distinct_recommenders"] = max(
+        base.get("distinct_recommenders", 0),
+        dup.get("distinct_recommenders", 0),
+    )
+
+    seen_praise = set(base["praise"])
+    for p in dup.get("praise", []):
+        if p not in seen_praise:
+            base["praise"].append(p)
+            seen_praise.add(p)
+
+    seen_complaints = {c["text"] for c in base["complaints"]}
+    for c in dup.get("complaints", []):
+        if c["text"] not in seen_complaints:
+            base["complaints"].append(c)
+            seen_complaints.add(c["text"])
+
+    seen_sources = set(base["sources"])
+    for s in dup.get("sources", []):
+        if s not in seen_sources:
+            base["sources"].append(s)
+            seen_sources.add(s)
+
+    # Prefer higher signal_strength
+    if _SIG_RANK.get(dup.get("signal_strength", "low"), 0) > _SIG_RANK.get(base.get("signal_strength", "low"), 0):
+        base["signal_strength"] = dup["signal_strength"]
+
+    # Keep the better representative_quote
+    if not base.get("representative_quote") and dup.get("representative_quote"):
+        base["representative_quote"] = dup["representative_quote"]
+
+    # Enforce caps after merge
+    base["praise"]      = base["praise"][:MAX_PRAISE]
+    base["complaints"]  = base["complaints"][:MAX_COMPLAINTS]
+    base["sources"]     = base["sources"][:MAX_SOURCES]
+    return base
+
+
+def _dedup_products(products: list[dict]) -> list[dict]:
+    """
+    Bug 5 & 6: deduplicate products whose canonical names are equivalent.
+    First occurrence wins; subsequent occurrences are merged into it so counts
+    and lists are accumulated rather than discarded.
+    """
+    seen: dict[str, int] = {}   # canonical_key → index in result
+    result: list[dict] = []
+    for p in products:
+        key = _canonical_key(p.get("name", ""))
+        if not key:
+            result.append(p)
+            continue
+        if key in seen:
+            result[seen[key]] = _merge_products(result[seen[key]], p)
+        else:
+            seen[key] = len(result)
+            result.append(p)
+    return result
+
+
+# ── Canonical product schema ──────────────────────────────────────────────────
+
+def _build_product_template(name: str) -> dict:
+    """
+    Bug 7: single source of truth for the product schema.
+    Used by both the main normalizer and the recovery path so downstream code
+    always receives the same shape regardless of how the product was sourced.
+    """
+    return {
+        "name":                  name,
+        "mention_count":         0,
+        "distinct_recommenders": 0,
+        "positive_mentions":     0,
+        "negative_mentions":     0,
+        "praise":                [],
+        "complaints":            [],
+        "sources":               [],
+        "signal_strength":       "low",
+        "representative_quote":  "",
+        "cross_subreddit_signal": None,
+    }
+
+
+# ── Per-item normalization ────────────────────────────────────────────────────
+
 def _normalize_item(item, is_product: bool = False) -> dict | None:
     """
     Normalize a material or product entry to canonical shape.
     Returns None if entry is unusable (no name).
     """
-    # If LLM returned a bare string (just a name), wrap it
+    # LLM returned a bare string — wrap it using the template
     if isinstance(item, str):
         name = item.strip()
         if not name:
             return None
+        if is_product:
+            return _build_product_template(name)
         return {
-            "name": name,
-            "mention_count": 0,
+            "name":                  name,
+            "mention_count":         0,
             "distinct_recommenders": 0,
-            "praise": [],
-            "complaints": [],
-            "example_products": [] if not is_product else None,
-            "sources": [],
-            "signal_strength": "low" if is_product else None,
+            "praise":                [],
+            "complaints":            [],
+            "example_products":      [],
+            "sources":               [],
         }
 
     if not isinstance(item, dict):
@@ -147,33 +301,39 @@ def _normalize_item(item, is_product: bool = False) -> dict | None:
     if not name:
         return None
 
+    # Bug 4: flatten nested complaint lists before processing
+    raw_complaints = _flatten_list(_safe_list(item.get("complaints")))
+
     normalized = {
         "name": name,
-        "mention_count": _safe_int(item.get("mention_count") or item.get("mentions"), 0),
-        "distinct_recommenders": _safe_int(
-            item.get("distinct_recommenders") or item.get("recommenders"), 0
-        ),
-        "praise": [_safe_str(p) for p in _safe_list(item.get("praise")) if _safe_str(p)],
+        # Bug 1 & 3: explicit field precedence + floor at 0
+        "mention_count":         _field_int(item, "mention_count", "mentions"),
+        # Bug 2 & 3: same for recommenders
+        "distinct_recommenders": _field_int(item, "distinct_recommenders", "recommenders"),
+        # Bug 8: cap array lengths
+        "praise": [
+            _safe_str(p) for p in _safe_list(item.get("praise")) if _safe_str(p)
+        ][:MAX_PRAISE],
         "complaints": [
-            c for c in (_normalize_complaint(x) for x in _safe_list(item.get("complaints")))
+            c for c in (_normalize_complaint(x) for x in raw_complaints)
             if c is not None
-        ],
-        "sources": [_safe_str(s) for s in _safe_list(item.get("sources")) if _safe_str(s)],
+        ][:MAX_COMPLAINTS],
+        "sources": [
+            _safe_str(s) for s in _safe_list(item.get("sources")) if _safe_str(s)
+        ][:MAX_SOURCES],
     }
 
     if is_product:
         signal = _safe_str(item.get("signal_strength", "low")).lower()
         if signal not in {"high", "medium", "low"}:
             signal = "low"
-        normalized["signal_strength"] = signal
-        # v7: cross-subreddit signal (set to None until cross_validate.py runs)
+        normalized["signal_strength"]        = signal
         normalized["cross_subreddit_signal"] = item.get("cross_subreddit_signal", None)
-        # Preserve fields requested in EXTRACT_PROMPT_TEMPLATE that were previously dropped
-        normalized["positive_mentions"] = _safe_int(item.get("positive_mentions"), 0)
-        normalized["negative_mentions"] = _safe_int(item.get("negative_mentions"), 0)
+        # Bug 7: always present, never missing from product schema
+        normalized["positive_mentions"]    = _safe_count(item.get("positive_mentions"), 0)
+        normalized["negative_mentions"]    = _safe_count(item.get("negative_mentions"), 0)
         normalized["representative_quote"] = _safe_str(item.get("representative_quote", ""))
     else:
-        # Materials carry example products
         normalized["example_products"] = [
             _safe_str(ex) for ex in _safe_list(item.get("example_products")) if _safe_str(ex)
         ]
@@ -181,33 +341,26 @@ def _normalize_item(item, is_product: bool = False) -> dict | None:
     return normalized
 
 
+# ── Top-level entry point ─────────────────────────────────────────────────────
+
 def normalize_analysis(raw: dict | None) -> dict:
     """
     Take ANY LLM output and return a guaranteed-clean canonical dict.
     Never raises. Always returns a usable structure even if input is empty/garbage.
     """
     if not isinstance(raw, dict):
-        return {
-            "summary": _safe_str(raw),
-            "materials": [],
-            "products": [],
-        }
+        return {"summary": _safe_str(raw), "materials": [], "products": []}
 
-    # Normalize summary (handle dict-summaries from misbehaving LLMs)
     summary = _safe_str(raw.get("summary", ""))
 
-    # Normalize materials
-    raw_materials = _safe_list(raw.get("materials"))
     materials = []
-    for item in raw_materials:
+    for item in _safe_list(raw.get("materials")):
         norm = _normalize_item(item, is_product=False)
         if norm:
             materials.append(norm)
 
-    # Normalize products
-    raw_products = _safe_list(raw.get("products"))
     products = []
-    for item in raw_products:
+    for item in _safe_list(raw.get("products")):
         norm = _normalize_item(item, is_product=True)
         if norm:
             products.append(norm)
@@ -218,14 +371,47 @@ def normalize_analysis(raw: dict | None) -> dict:
     if not products and summary:
         rescued = _extract_products_from_summary(summary)
         if rescued:
-            _logger.info("[normalizer] structured products empty - rescued %d from summary text", len(rescued))
+            _logger.info(
+                "[normalizer] structured products empty - rescued %d from summary text",
+                len(rescued),
+            )
             products = rescued
 
-    return {
-        "summary": summary,
-        "materials": materials,
-        "products": products,
-    }
+    # Bug 5 & 6: dedup AFTER recovery so recovered items pass through the same
+    # pipeline as structured products — no separate duplicate can survive.
+    products = _dedup_products(products)
+    # Fix 10: cap list sizes — prevents memory explosion from pathological LLM output
+    products  = products[:MAX_PRODUCTS]
+    materials = materials[:MAX_MATERIALS]
+
+    return {"summary": summary, "materials": materials, "products": products}
+
+
+# ── Last-resort recovery ──────────────────────────────────────────────────────
+
+# Fix 7: module-level constant — sole fallback when canonicalize_product cannot
+# find a recognised brand (requires 2+ consecutive digits to avoid "Gen 3", etc.)
+_RE_MODEL_NUMBER = re.compile(r"\d{2,}")
+
+
+def _strip_leading_words(candidate: str) -> str:
+    """
+    Fix 9: strip leading non-product words (verbs, adjectives) without a
+    hardcoded word list.  Iteratively drops the first word while the canonical
+    name from canonicalize_product does NOT start with it — meaning it is noise
+    rather than part of the product identity.
+    Stops when fewer than 3 words remain to guarantee a usable name.
+    """
+    if not _HAS_CANONICALIZER:
+        return candidate
+    words = candidate.split()
+    while len(words) >= 3:
+        cp = _canonicalize_product(" ".join(words))
+        canon = cp.canonical_name
+        if not canon or canon.lower().startswith(words[0].lower()):
+            break
+        words = words[1:]
+    return " ".join(words)
 
 
 def _extract_products_from_summary(summary: str) -> list[dict]:
@@ -233,88 +419,46 @@ def _extract_products_from_summary(summary: str) -> list[dict]:
     Last-resort: when the LLM returned an empty products array but the summary
     text clearly mentions specific product names, extract them.
 
-    Looks for patterns like:
-    - "Realme Buds Air 7"  (Brand + ProductName + Number)
-    - "OnePlus Nord Buds 3 Pro"
-    - "CMF Buds Pro"
-    - "Sony WF-1000XM5"
-
-    Only returns confident matches: 2+ capitalized words OR a known brand pattern.
+    Fix 7: brand detection delegates to product_canonicalizer — no hardcoded
+    KNOWN_BRANDS set is maintained here.
+    Fix 8: skip_phrases list removed — the brand/model-number structural filter
+    already rejects generic heading-style phrases (no brand, no model digits).
+    Fix 9: leading_verbs list removed — _strip_leading_words() dynamically
+    strips non-product prefixes via canonical name comparison.
+    Fix 10: result capped at MAX_PRODUCTS instead of a magic literal.
     """
-    import re
+    found: dict[str, int] = {}
 
-    # Known consumer-electronics brand patterns we want to surface
-    KNOWN_BRANDS = {
-        # Earbuds / audio
-        "Sony", "Bose", "Sennheiser", "Apple", "AirPods", "Samsung", "Galaxy",
-        "JBL", "Skullcandy", "Anker", "Soundcore", "Jabra", "Beats", "Beyerdynamic",
-        "Audio-Technica", "Shure", "Moondrop", "1More", "Edifier",
-        "Realme", "OnePlus", "Oppo", "Xiaomi", "Redmi", "Mi", "Nothing",
-        "Boat", "Boult", "Noise", "PTron", "PTRON", "Truke", "Mivi", "CMF",
-        # Watches
-        "Casio", "Titan", "Timex", "Fossil", "Rolex", "Omega", "Seiko", "Citizen",
-        "Tissot", "Hamilton", "Tag Heuer", "Tudor", "Grand Seiko", "Longines",
-        "HMT", "Fastrack",
-        # Phones
-        "Pixel", "iPhone", "Motorola", "Nokia",
-        # Appliances
-        "Daikin", "LG", "Voltas", "Hitachi", "Lloyd", "Blue Star", "Mitsubishi",
-        "Panasonic", "Carrier", "Midea", "Frigidaire", "Whynter",
-        # General electronics
-        "Dell", "HP", "Asus", "Lenovo", "Acer", "MSI", "Logitech", "Razer",
-    }
-
-    found = {}  # name → mention_count
-
-    # Pattern 1: Multi-word capitalized product names (Brand + Model)
-    # Matches: "Realme Buds Air 7", "OnePlus Nord Buds 3 Pro", "Sony WF-1000XM5"
     pattern = re.compile(
         r"\b([A-Z][a-zA-Z0-9]+(?:[\s-][A-Z0-9][a-zA-Z0-9]*){1,4})\b"
     )
     for match in pattern.finditer(summary):
         candidate = match.group(1).strip()
-        # Skip if it's a single word or just numbers
-        words = candidate.split()
-        if len(words) < 2:
+        if len(candidate.split()) < 2:
             continue
-        # Skip if no known brand AND no digit (model number)
-        has_known_brand = any(w in KNOWN_BRANDS or w.split("-")[0] in KNOWN_BRANDS for w in words)
-        has_digit = any(c.isdigit() for c in candidate)
-        if not has_known_brand and not has_digit:
-            continue
-        # Skip common non-product capitalized phrases
-        skip_phrases = {"Top Picks", "Budget Buys", "Red Flags", "Final Advice",
-                        "Best Overall", "Best Budget", "Budget Opportunity",
-                        "Under Rs", "Hi-Res Audio", "Reddit India"}
-        if any(s in candidate for s in skip_phrases):
+
+        # Fix 7: delegate brand detection to product_canonicalizer — no inline brand list
+        has_known_brand = (
+            _HAS_CANONICALIZER and _canonicalize_product(candidate).brand is not None
+        )
+        # Fallback: 2+ consecutive digits signal a genuine product model number
+        has_model_number = bool(_RE_MODEL_NUMBER.search(candidate))
+
+        if not has_known_brand and not has_model_number:
             continue
 
         found[candidate] = found.get(candidate, 0) + 1
 
-    # Build canonical product dicts from the matches
-    # Strip leading verb words like "Avoid X" -> "X"
-    leading_verbs = {"Avoid", "Skip", "Get", "Buy", "Try", "Use", "Choose", "Pick", "Consider"}
-    rescued = []
+    rescued: list[dict] = []
     for name, count in sorted(found.items(), key=lambda x: -x[1]):
-        words = name.split()
-        if words and words[0] in leading_verbs:
-            cleaned = " ".join(words[1:])
-            if len(cleaned.split()) >= 2:  # still has at least 2 words
-                name = cleaned
-            else:
-                continue  # was just "Avoid X", not useful
-        rescued.append({
-            "name": name,
-            "mention_count": count,
-            "distinct_recommenders": 0,
-            "praise": [],
-            "complaints": [],
-            "sources": [],
-            "signal_strength": "low",
-            "_recovered_from_summary": True,
-        })
+        # Fix 9: strip leading noise words without a hardcoded verb list
+        name = _strip_leading_words(name)
+        if len(name.split()) < 2:
+            continue
 
-    return rescued[:15]
+        entry = _build_product_template(name)
+        entry["mention_count"] = count
+        entry["_recovered_from_summary"] = True
+        rescued.append(entry)
 
-
-# ----- old normalize entry point kept above. recovery now happens inside it -----
+    return rescued[:MAX_PRODUCTS]
