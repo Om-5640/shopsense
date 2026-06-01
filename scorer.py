@@ -13,13 +13,22 @@ Improvements:
 - Smartly filters research text to only mentions of the product being scored
 """
 
+import functools
 import json
-import time
+import logging
 import re
 import os
+from decimal import Decimal, ROUND_HALF_UP
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from agents import run_agent
 from llm_clients import GroqQuotaExhausted
+from evidence_extractor import (
+    extract_evidence_batch,
+    extract_criterion_evidence,
+    format_evidence_for_scorer,
+)
+
+_logger = logging.getLogger(__name__)
 
 # Parallel batch scoring — no per-call sleep needed
 MAX_SCORING_WORKERS = 4    # One concurrent call per provider in the pool
@@ -80,20 +89,36 @@ def _sanitize_research_text(text: str) -> str:
     return _INJECT_PATTERN.sub("[removed]", text)
 
 
+@functools.lru_cache(maxsize=256)
+def _get_token_pattern(token: str) -> re.Pattern:
+    """
+    Compile a whole-word boundary pattern for a product token.
+    Cached so each unique token is compiled exactly once.
+
+    Uses negative lookbehind/lookahead for alphanumeric chars AND hyphens so that
+    "xm5" does NOT match inside "wh-xm5" or "wf-xm5" (model contamination fix).
+    """
+    return re.compile(
+        r"(?<![a-zA-Z0-9\-])" + re.escape(token) + r"(?![a-zA-Z0-9\-])",
+        re.IGNORECASE,
+    )
+
+
+def _token_in_text(token: str, text: str) -> bool:
+    """True only when `token` appears as a standalone word — not as a fragment of a compound model number."""
+    return bool(_get_token_pattern(token).search(text))
+
+
 def _filter_research_for_product(product_name: str, full_research: str, max_chars: int = 15_000) -> str:
     """
-    Find paragraphs in research text that mention this product, PLUS adjacent paragraphs
-    for context (replies often follow recommendations and contain key counter-signal).
+    Find paragraphs that mention this product, plus immediate neighbours for context.
 
-    Returns a richer context window than before:
-    - Default 15K chars (was 8K)
-    - Includes paragraph before AND after each match (catches reply context)
-    - Multi-token matching: requires at least 1 distinctive token from product name
+    Model contamination fix: uses whole-word boundary matching so "xm5" does NOT
+    match "wh-xm5" or "wf-xm5" — only standalone occurrences count.
     """
     if not full_research:
         return ""
 
-    # Split product name into distinctive tokens (skip generic words)
     skip_words = {"the", "and", "for", "pro", "max", "new", "buy", "with"}
     tokens = [
         t.lower() for t in re.findall(r"\w+", product_name)
@@ -102,22 +127,19 @@ def _filter_research_for_product(product_name: str, full_research: str, max_char
     if not tokens:
         return full_research[:max_chars]
 
-    # Brand contamination fix: when a product has 2+ distinctive tokens,
-    # require at least 2 to match so single-brand-token matches don't pull in
-    # all other products from the same brand (e.g. "Sony WF-1000XM5" shouldn't
-    # collect all paragraphs mentioning any Sony product).
+    # Require all distinctive tokens when there are 2+, to avoid single-brand
+    # false matches pulling in unrelated products from the same brand.
     min_matches = min(2, len(tokens))
 
     paragraphs = re.split(r"\n\s*\n", full_research)
 
-    # Find indices of paragraphs matching the product
-    match_indices = set()
-    for i, p in enumerate(paragraphs):
-        p_lower = p.lower()
-        matched = sum(1 for t in tokens if t in p_lower)
+    match_indices: set[int] = set()
+    for i, para in enumerate(paragraphs):
+        para_lower = para.lower()
+        # Model contamination fix: count only whole-word token matches
+        matched = sum(1 for t in tokens if _token_in_text(t, para_lower))
         if matched >= min_matches:
             match_indices.add(i)
-            # Include surrounding paragraphs for context
             if i > 0:
                 match_indices.add(i - 1)
             if i < len(paragraphs) - 1:
@@ -126,10 +148,8 @@ def _filter_research_for_product(product_name: str, full_research: str, max_char
     if not match_indices:
         return full_research[:max_chars]
 
-    # Build output preserving original paragraph order
     relevant = [paragraphs[i] for i in sorted(match_indices)]
-    filtered = "\n\n".join(relevant)
-    return filtered[:max_chars]
+    return "\n\n".join(relevant)[:max_chars]
 
 
 def _format_criterion_line(c: dict) -> str:
@@ -171,89 +191,57 @@ def score_product(
     full_research_text: str,
     user_intent: dict | None = None,
 ) -> dict:
-    """Score a single product. Returns dict with scores, totals, percentage."""
-    criteria_text = "\n".join(
-        _format_criterion_line(c) for c in rubric["weighted_criteria"]
-    )
+    """
+    Score a single product. Returns dict with scores, totals, percentage.
 
-    product_text = _format_product(product)
-    # 6K chars per product is safe for Groq 8K token limit when combined with rubric + system
-    raw_research = _filter_research_for_product(product.get("name", ""), full_research_text, max_chars=6000)
-    # Sanitize before injecting into prompt — prevents Reddit comment injection attacks
+    Pipeline: filter research → extract evidence → compact scoring prompt.
+    Falls back to raw research text if evidence extraction fails.
+    """
+    name = product.get("name", "?")
+    criteria = rubric["weighted_criteria"]
+    raw_research = _filter_research_for_product(name, full_research_text, max_chars=6000)
     relevant_research = _sanitize_research_text(raw_research)
 
     constraint_section = _build_constraint_context(user_intent)
     constraint_block = f"\n\n{constraint_section}\n" if constraint_section else ""
 
-    # Explicit data boundary tags prevent injected instructions in Reddit content
-    # from being mistaken for system directives by the LLM.
-    prompt = f"""PRODUCT TO SCORE:
-{product_text}
+    # Try evidence-based path first
+    evidence = None
+    try:
+        compact_criteria = [{"name": c["name"], "label": c["label"]} for c in criteria]
+        evidence = extract_criterion_evidence(name, compact_criteria, relevant_research)
+    except Exception as exc:
+        _logger.debug("[scorer] evidence extraction failed for %r, using raw text: %s", name, exc)
 
-<research_data>
-RELEVANT RESEARCH (Reddit comments + review excerpts mentioning this product):
-{relevant_research}
-</research_data>
-{constraint_block}
-RUBRIC:
-{criteria_text}
-
-Score this product against EVERY criterion above. Use the research text to find specific evidence.
-For each criterion, look for relevant phrases in the research even if not explicitly labeled.
-Example: "lasted 2 years" implies durability; "comfortable for 8 hours" implies ergonomics."""
+    if evidence is not None:
+        evidence_text = format_evidence_for_scorer(name, evidence, rubric)
+        prompt = f"{evidence_text}{constraint_block}\nScore each criterion."
+        system = EVIDENCE_SYSTEM
+    else:
+        criteria_text = "\n".join(_format_criterion_line(c) for c in criteria)
+        product_text = _format_product(product)
+        prompt = (
+            f"PRODUCT TO SCORE:\n{product_text}\n\n"
+            f"<research_data>\n{relevant_research}\n</research_data>"
+            f"{constraint_block}\n"
+            f"RUBRIC:\n{criteria_text}\n\n"
+            "Score this product against EVERY criterion. Look for implicit evidence too: "
+            "'lasted 2 years' implies durability; 'comfortable 8 hours' implies ergonomics."
+        )
+        system = SYSTEM
 
     try:
-        raw = run_agent("product_scorer", user_prompt=prompt, system=SYSTEM)
+        raw = run_agent("product_scorer", user_prompt=prompt, system=system)
         from llm_client import _try_repair_json
         data = _try_repair_json(raw)
         raw_scores = data.get("scores", [])
     except Exception as e:
         if isinstance(e, GroqQuotaExhausted):
             raise
-        print(f"[scorer] failed for {product.get('name')}: {e}")
+        print(f"[scorer] failed for {name}: {e}")
         return None
 
-    # Build final scores
-    by_name = {s.get("criterion"): s for s in raw_scores if isinstance(s, dict)}
-    final_scores = []
-    weighted_total = 0.0
-    max_possible = 0.0
-
-    for c in rubric["weighted_criteria"]:
-        s = by_name.get(c["name"])
-        if s and isinstance(s.get("score"), (int, float)):
-            score = max(0, min(10, float(s["score"])))
-            evidence = s.get("evidence", "")
-        else:
-            score = 4.0
-            evidence = "insufficient data — treat with caution"
-
-        weight = c["weight"]
-        weighted_total += score * weight
-        max_possible += 10 * weight
-
-        final_scores.append({
-            "criterion": c["name"],
-            "label": c["label"],
-            "weight": weight,
-            "score": score,
-            "evidence": evidence,
-            "weighted_contribution": round(score * weight, 1),
-        })
-
-    pct = (weighted_total / max_possible * 100) if max_possible > 0 else 0
-
-    result = {
-        "name": product.get("name", "?"),
-        "signal_strength": product.get("signal_strength", "?"),
-        "scores": final_scores,
-        "weighted_total": round(weighted_total, 1),
-        "max_possible": round(max_possible, 1),
-        "percentage": round(pct, 1),
-    }
-    for field in _COMMUNITY_FIELDS:
-        result[field] = product.get(field)
-    return result
+    return _build_scored_dict(product, raw_scores, rubric)
 
 
 def _format_product(p: dict) -> str:
@@ -333,6 +321,54 @@ RULES:
 NO markdown, NO commentary, JSON only."""
 
 
+# Evidence-based prompts — used when evidence_extractor pre-processed the research.
+# Input is compact structured evidence (~300-500 chars) instead of raw text (~6000 chars).
+
+EVIDENCE_SYSTEM = """Score a product against weighted criteria using pre-extracted evidence.
+
+Evidence per criterion: ✓N positive ✗N negative mentions | "verbatim quotes"
+[NO DATA] = no research evidence found for this criterion
+
+Return ONLY JSON:
+{"scores": [{"criterion": "name", "score": 0-10, "evidence": "brief citation ≤20 words"}]}
+
+Scoring guide (let evidence counts + quote tone drive the number):
+9-10: strong ✓ majority (5+), compelling quotes, few or no ✗
+7-8:  clear ✓ > ✗, positive quotes present
+5-6:  mixed (✓≈✗) or weak signal
+4:    [NO DATA] — default when no evidence
+3-2:  ✗ > ✓, complaint quotes visible
+1:    strong ✗, multiple confirmed failures
+
+Score ALL criteria. EXACT criterion names only. JSON only."""
+
+
+BATCH_EVIDENCE_SYSTEM = """Score multiple products against weighted criteria using pre-extracted evidence.
+
+Evidence per criterion: ✓N positive ✗N negative mentions | "verbatim quotes"
+[NO DATA] = no evidence found
+
+Return ONLY JSON:
+{"products": [{"name": "exact name", "scores": [{"criterion": "name", "score": 0-10, "evidence": "≤20 words"}]}]}
+
+Scoring guide: 9-10=strong ✓, 7-8=✓>✗, 5-6=mixed, 4=[NO DATA], 3-2=✗>✓, 1=strong ✗
+
+All criteria. All products. Exact names. JSON only."""
+
+
+# ── Floating-point precision ───────────────────────────────────────────────────
+
+def _compute_percentage(weighted_total: float, max_possible: float) -> float:
+    """
+    Decimal-precision percentage — eliminates float accumulation drift that occurs
+    when many score×weight products are summed in Python float arithmetic.
+    """
+    if max_possible <= 0:
+        return 0.0
+    pct = Decimal(str(weighted_total)) / Decimal(str(max_possible)) * 100
+    return float(pct.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
 def _score_batch(
     products: list[dict],
     rubric: dict,
@@ -341,40 +377,71 @@ def _score_batch(
 ) -> list[dict]:
     """
     Score a batch of products in a single LLM call.
-    Returns list of scored dicts. Products that fail extraction get None — caller retries them.
+
+    Pipeline:
+      1. Filter + sanitize research per product
+      2. Batch-extract structured evidence via evidence_extractor (one LLM call)
+      3. Build compact evidence prompts — ~10x fewer scorer input tokens
+      4. Single batch scoring call using structured evidence
+      Fallback: raw research text if extraction fails (existing BATCH_SYSTEM path)
+
+    Returns list of scored dicts. Products that fail get None — caller retries them.
     """
-    criteria_text = "\n".join(
-        _format_criterion_line(c) for c in rubric["weighted_criteria"]
-    )
-
-    # Build prompt with all products and filtered research for each.
-    # Budget per product depends on active provider context window.
+    criteria = rubric["weighted_criteria"]
     per_product_budget = _get_provider_research_budget()
-    products_text_parts = []
-    for p in products:
-        prod_block = [f"--- PRODUCT: {p.get('name', '?')} ---"]
-        prod_block.append(_format_product(p))
-        rel = _filter_research_for_product(p.get("name", ""), full_research_text, max_chars=per_product_budget)
-        if rel:
-            prod_block.append(f"\nResearch:\n{rel}")
-        products_text_parts.append("\n".join(prod_block))
 
-    products_text = "\n\n".join(products_text_parts)
+    # Step 1: filter and sanitize research per product
+    filtered_research = [
+        _sanitize_research_text(
+            _filter_research_for_product(p.get("name", ""), full_research_text, max_chars=per_product_budget)
+        )
+        for p in products
+    ]
+
+    # Step 2: batch evidence extraction
+    compact_criteria = [{"name": c["name"], "label": c["label"]} for c in criteria]
+    evidence_list = None
+    try:
+        evidence_list = extract_evidence_batch(products, compact_criteria, filtered_research)
+    except Exception as exc:
+        _logger.debug("[scorer] batch evidence extraction failed, using raw text fallback: %s", exc)
 
     constraint_section = _build_constraint_context(user_intent)
     constraint_block = f"\n{constraint_section}\n" if constraint_section else ""
 
-    prompt = f"""PRODUCTS TO SCORE (score each against ALL criteria below):
-
-{products_text}
-{constraint_block}
-RUBRIC (apply to every product):
-{criteria_text}
-
-Score each product against every criterion. Return one entry per product in the 'products' array."""
+    # Step 3 + 4: build prompt and score
+    if evidence_list is not None:
+        product_parts = [
+            f"---\n{format_evidence_for_scorer(p.get('name', '?'), ev, rubric)}"
+            for p, ev in zip(products, evidence_list)
+        ]
+        prompt = (
+            "PRODUCTS TO SCORE:\n\n" +
+            "\n\n".join(product_parts) +
+            f"\n{constraint_block}\n"
+            "Score every criterion for every product."
+        )
+        system = BATCH_EVIDENCE_SYSTEM
+    else:
+        # Fallback: raw research text (original path)
+        criteria_text = "\n".join(_format_criterion_line(c) for c in criteria)
+        products_text_parts = []
+        for p, rel in zip(products, filtered_research):
+            block = [f"--- PRODUCT: {p.get('name', '?')} ---", _format_product(p)]
+            if rel:
+                block.append(f"\nResearch:\n{rel}")
+            products_text_parts.append("\n".join(block))
+        prompt = (
+            "PRODUCTS TO SCORE (score each against ALL criteria below):\n\n" +
+            "\n\n".join(products_text_parts) +
+            f"\n{constraint_block}\n"
+            f"RUBRIC (apply to every product):\n{criteria_text}\n\n"
+            "Score each product against every criterion. Return one entry per product in the 'products' array."
+        )
+        system = BATCH_SYSTEM
 
     try:
-        raw = run_agent("product_scorer", user_prompt=prompt, system=BATCH_SYSTEM)
+        raw = run_agent("product_scorer", user_prompt=prompt, system=system)
         from llm_client import _try_repair_json
         data = _try_repair_json(raw)
         raw_products = data.get("products", []) if isinstance(data, dict) else []
@@ -447,16 +514,14 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
             "weighted_contribution": round(score * weight, 1),
         })
 
-    pct = (weighted_total / max_possible * 100) if max_possible > 0 else 0
     result = {
         "name": product.get("name", "?"),
         "signal_strength": product.get("signal_strength", "?"),
         "scores": final_scores,
         "weighted_total": round(weighted_total, 1),
         "max_possible": round(max_possible, 1),
-        "percentage": round(pct, 1),
+        "percentage": _compute_percentage(weighted_total, max_possible),
     }
-    # Pass through community + v9 fields so mention counts / sentiment data survive scoring
     for field in _COMMUNITY_FIELDS:
         result[field] = product.get(field)
     return result
@@ -490,19 +555,28 @@ def score_all_products(
                 progress_callback(i, n, p.get("name", "?"))
         return sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
 
-    # ---- hybrid mode: LLM for top 10, fast for rest ----
+    # ---- hybrid mode: LLM for actual top 10, fast for rest ----
     if SCORING_MODE == "hybrid":
-        llm_products = products[:10]
-        fast_products = products[10:]
-        print(f"[scorer] HYBRID mode: LLM for {len(llm_products)}, fast for {len(fast_products)}")
+        # Bug fix: pre-sort by fast score so LLM budget goes to the best candidates,
+        # not blindly to products[:10] which may not be the highest-scoring ones.
+        print(f"[scorer] HYBRID mode: fast pre-scoring {n} products to identify top 10")
+        fast_all = [_fast_score(p, rubric, full_research_text) for p in products]
+        sorted_by_fast = sorted(
+            range(n), key=lambda i: fast_all[i]["weighted_total"], reverse=True
+        )
+        llm_indices = set(sorted_by_fast[:10])
+        llm_products = [products[i] for i in range(n) if i in llm_indices]
+        # Products NOT getting LLM treatment keep their fast scores
+        fast_keep = [fast_all[i] for i in range(n) if i not in llm_indices]
+
+        print(f"[scorer] HYBRID: LLM scoring top {len(llm_products)}, keeping fast for {len(fast_keep)}")
         llm_scored = _run_parallel_batch_scoring(
             llm_products, rubric, full_research_text, progress_callback, n, user_intent, cancelled_check
         )
-        fast_scored = [_fast_score(p, rubric, full_research_text) for p in fast_products]
         if progress_callback:
-            for i, p in enumerate(fast_products, len(llm_products) + 1):
+            for i, p in enumerate(fast_keep, len(llm_products) + 1):
                 progress_callback(i, n, p.get("name", "?"))
-        return sorted(llm_scored + fast_scored, key=lambda x: x["weighted_total"], reverse=True)
+        return sorted(llm_scored + fast_keep, key=lambda x: x["weighted_total"], reverse=True)
 
     # ---- llm mode (default): full parallel batch LLM scoring ----
     print(f"[scorer] LLM mode: parallel batch scoring {n} products, batch={PRODUCTS_PER_BATCH}, workers={MAX_SCORING_WORKERS}")
@@ -657,13 +731,12 @@ def recompute_with_new_weights(scored_products: list[dict], new_rubric: dict) ->
                 "weighted_contribution": round(s["score"] * weight, 1),
             })
 
-        pct = (weighted_total / max_possible * 100) if max_possible > 0 else 0
         rescored.append({
             **p,
             "scores": new_scores,
             "weighted_total": round(weighted_total, 1),
             "max_possible": round(max_possible, 1),
-            "percentage": round(pct, 1),
+            "percentage": _compute_percentage(weighted_total, max_possible),
         })
 
     return sorted(rescored, key=lambda x: x["weighted_total"], reverse=True)
