@@ -49,6 +49,8 @@ def load_rubric(category: str) -> dict | None:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        # Bug 8: log full traceback instead of silently returning None
+        _logger.exception("[rubric] failed to load rubric for %r", category)
         return None
 
 
@@ -56,9 +58,30 @@ def save_rubric(category: str, rubric: dict) -> None:
     path = rubric_path(category)
     rubric["category"] = category
     rubric["last_updated"] = datetime.utcnow().isoformat() + "Z"
+    tmp_path = path.with_suffix(".tmp")
     with _get_rubric_lock(category):
-        with open(path, "w", encoding="utf-8") as f:
+        # Bug 3: write to .tmp then atomic rename — no partial-write corruption
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(rubric, f, indent=2)
+        tmp_path.replace(path)
+
+
+# ---- weight normalization ----
+
+def _normalize_weights(criteria: list[dict]) -> None:
+    """
+    Bug 1 fix: add normalized_weight to each criterion in-place.
+    normalized_weight = weight / sum(weights), so scorers always operate on a 0–1 scale
+    regardless of how the raw 0–10 weights are distributed.
+    Falls back to equal split when total is zero.
+    """
+    total = sum(c["weight"] for c in criteria)
+    n = len(criteria)
+    for c in criteria:
+        if total > 0:
+            c["normalized_weight"] = round(c["weight"] / total, 6)
+        else:
+            c["normalized_weight"] = round(1.0 / n, 6) if n else 0.0
 
 
 # ---- generation ----
@@ -121,11 +144,14 @@ def generate_rubric(category: str, criteria: list[dict], profile: dict) -> dict:
     )
     prefs = profile.get("preferences_summary", "")
     _skip_tokens = {"[Skipped]", "(skipped)"}
-    qa_text = "\n".join(
-        f"Q: {qa['question']}\nA: {qa['answer']}"
+
+    # Bug 5: pass Q&A as structured JSON to prevent prompt injection from user answers
+    qa_entries = [
+        {"question": qa["question"], "answer": qa["answer"]}
         for qa in profile.get("interview", [])
         if qa.get("answer", "") not in _skip_tokens
-    )
+    ]
+    qa_text = json.dumps(qa_entries, ensure_ascii=False, indent=2)
 
     constraint_block = _build_intent_context(profile)
     constraint_section = (
@@ -153,7 +179,8 @@ Build the weighted rubric."""
         data = _try_repair_json(raw)
         weighted = data.get("weighted_criteria", [])
     except Exception:
-        _logger.warning("[rubric] JSON parse failed, using defaults")
+        # Bug 8: log full traceback so failures are visible
+        _logger.exception("[rubric] JSON parse failed, using defaults for category %r", category)
         weighted = [_default_weight(c) for c in criteria]
 
     # Validate: every criterion must be present
@@ -165,14 +192,20 @@ Build the weighted rubric."""
             final.append({
                 "name": c["name"],
                 "label": c["label"],
-                "weight": max(0, min(10, int(w["weight"]))),
+                # Bug 7: keep float precision — don't truncate with int()
+                "weight": round(max(0.0, min(10.0, float(w["weight"]))), 2),
                 "rationale": w.get("rationale", ""),
                 "description": c.get("description", ""),
+                "source": "llm",   # Bug 4: machine-readable provenance
             })
         else:
             final.append(_default_weight(c))
 
+    # Bug 1: compute normalized_weight so all rubrics operate on the same 0–1 scale
+    _normalize_weights(final)
+
     rubric = {
+        "category": category,          # Bug 2: always set category before save
         "weighted_criteria": final,
         "based_on_profile": profile.get("last_updated", ""),
     }
@@ -184,9 +217,10 @@ def _default_weight(criterion: dict) -> dict:
     return {
         "name": criterion["name"],
         "label": criterion["label"],
-        "weight": 5,
+        "weight": 5.0,
         "rationale": "Default weight - not addressed in interview",
         "description": criterion.get("description", ""),
+        "source": "default",   # Bug 4: machine-readable source tag
     }
 
 
@@ -283,14 +317,20 @@ def fill_criterion_gaps(
     user_context: pre-built context string from _build_analyzer_hint(profile).
     When provided, uses it (includes structured intent). Falls back to preferences_summary.
     """
-    # Find criteria with default rationale
-    defaulted = [
-        c for c in rubric["weighted_criteria"]
-        if "not addressed" in c.get("rationale", "").lower()
-        or "Default weight" in c.get("rationale", "")
-        or "neutral weight" in c.get("rationale", "").lower()
-        or "neutral default" in c.get("rationale", "").lower()
-    ]
+    # Bug 4: check machine-readable source field first; fall back to string matching
+    # for rubrics generated before this fix was applied.
+    def _is_default(c: dict) -> bool:
+        if c.get("source") == "default":
+            return True
+        rat = c.get("rationale", "").lower()
+        return (
+            "not addressed" in rat
+            or "default weight" in rat
+            or "neutral weight" in rat
+            or "neutral default" in rat
+        )
+
+    defaulted = [c for c in rubric["weighted_criteria"] if _is_default(c)]
 
     if not defaulted:
         return rubric  # nothing to fill
@@ -324,29 +364,30 @@ For each uncovered criterion above, assign a weight 0-10 based on category impor
         from llm_client import safe_json_loads
         data = safe_json_loads(raw)
         inferred = data.get("inferred_weights", []) if isinstance(data, dict) else []
-    except Exception as e:
-        _logger.warning("[rubric] gap-fill failed (%s), keeping defaults", e)
+    except Exception:
+        # Bug 8: full traceback so gap-fill failures are debuggable
+        _logger.exception("[rubric] gap-fill failed for category %r, keeping defaults", category)
         return rubric
 
     # Apply inferred weights
     inferred_map = {w.get("name"): w for w in inferred if isinstance(w, dict)}
     updated_count = 0
     for c in rubric["weighted_criteria"]:
-        _rat = c.get("rationale", "").lower()
-        if c["name"] in inferred_map and (
-            "not addressed" in _rat
-            or "default weight" in _rat
-            or "neutral" in _rat
-        ):
+        if c["name"] in inferred_map and _is_default(c):
             new_w = inferred_map[c["name"]]
             if isinstance(new_w.get("weight"), (int, float)):
-                c["weight"] = max(0, min(10, int(new_w["weight"])))
+                # Bug 7: preserve float precision
+                c["weight"] = round(max(0.0, min(10.0, float(new_w["weight"]))), 2)
                 c["rationale"] = f"[inferred] {new_w.get('rationale', '')}"
+                c["source"] = "inferred"   # Bug 4: update provenance tag
                 updated_count += 1
 
     if updated_count:
         _logger.info("[rubric] inferred weights applied to %d criteria", updated_count)
-        save_rubric(rubric.get("category", ""), rubric)
+        # Bug 1: recompute normalized_weight after values changed
+        _normalize_weights(rubric["weighted_criteria"])
+        # Bug 2: use the explicit category parameter, not rubric.get("category", "")
+        save_rubric(category, rubric)
     return rubric
 
 
@@ -359,8 +400,9 @@ def display_rubric(rubric: dict) -> None:
     print(f"{'─'*72}\n")
     items = sorted(rubric["weighted_criteria"], key=lambda x: x["weight"], reverse=True)
     for i, c in enumerate(items, 1):
-        bar = "█" * c["weight"] + "░" * (10 - c["weight"])
-        print(f"{i:2}. {c['label']:30} [{bar}] {c['weight']}/10")
+        w_int = int(round(c["weight"]))
+        bar = "█" * w_int + "░" * (10 - w_int)
+        print(f"{i:2}. {c['label']:30} [{bar}] {c['weight']:.1f}/10")
         if c.get("rationale"):
             print(f"    {c['rationale']}")
         print()
@@ -376,7 +418,7 @@ def edit_weights(rubric: dict) -> dict:
     print(f"{'─'*72}\n")
 
     for c in rubric["weighted_criteria"]:
-        print(f"{c['label']} (current: {c['weight']})")
+        print(f"{c['label']} (current: {c['weight']:.1f})")
         if c.get("rationale"):
             print(f"  rationale: {c['rationale']}")
         try:
@@ -386,16 +428,20 @@ def edit_weights(rubric: dict) -> dict:
 
         if new_val:
             try:
-                v = int(new_val)
+                # Bug 7: accept float input (e.g. 7.5), don't truncate to int
+                v = float(new_val)
                 if 0 <= v <= 10:
-                    c["weight"] = v
+                    c["weight"] = round(v, 2)
+                    c["source"] = "manual"
                     c["rationale"] = (c.get("rationale", "") + " [manually adjusted]").strip()
                 else:
-                    print(f"  (kept {c['weight']} - value out of range)")
+                    print(f"  (kept {c['weight']:.1f} - value out of range)")
             except ValueError:
-                print(f"  (kept {c['weight']} - not a number)")
+                print(f"  (kept {c['weight']:.1f} - not a number)")
         print()
 
+    # Bug 1: recompute normalized weights after manual edits
+    _normalize_weights(rubric["weighted_criteria"])
     return rubric
 
 
