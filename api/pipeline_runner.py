@@ -188,6 +188,14 @@ def cleanup_old_sessions(max_age_hours: int = 2) -> int:
     return removed
 
 
+def _run_heartbeat(session: "PipelineSession", interval: int = 25) -> None:
+    """Emit periodic heartbeat events so SSE clients don't time out during long stages."""
+    while session.status == "running":
+        time.sleep(interval)
+        if session.status == "running":
+            session.emit("heartbeat", {"ts": time.time()})
+
+
 def start_pipeline(
     session: "PipelineSession",
     category: str,
@@ -212,6 +220,11 @@ def start_pipeline(
 
     t = threading.Thread(target=run, daemon=True, name=f"pipeline-{session.search_id}")
     t.start()
+    hb = threading.Thread(
+        target=_run_heartbeat, args=(session,), daemon=True,
+        name=f"heartbeat-{session.search_id}",
+    )
+    hb.start()
 
 
 # ---------------------------------------------------------------------------
@@ -224,25 +237,23 @@ def start_pipeline(
 
 _PIPELINE_CACHE_TTL = 3600  # 1 hour
 
-def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict | None = None) -> str:
+def _pipeline_cache_key(query: str, category: str, rubric: dict) -> str:
     """
-    Deterministic cache key: hash of query + category + rubric weights + current-session interview.
+    Deterministic cache key: hash of query + category + gap-filled rubric weights.
 
     IMPORTANT: always call this AFTER fill_criterion_gaps() so the key reflects the
     gap-filled rubric weights. Calling it on the pre-gap rubric causes different users
     with identical pre-gap rubrics but different gap-fill results to share a stale cache entry.
+
+    Interview answers are intentionally excluded: slight rephrasing of the same intent
+    (e.g. "I want bass" vs "strong bass") produced the same rubric weights after gap-fill
+    but different cache keys, causing unnecessary full re-runs.
     """
     weights = sorted(
         (c["name"], c["weight"])
         for c in rubric.get("weighted_criteria", [])
     )
-    # Fingerprint only the current-session interview answers, not the merged memory summary
-    interview = (profile or {}).get("interview", []) if profile else []
-    session_fingerprint = json.dumps(
-        [(qa.get("question", ""), qa.get("answer", "")) for qa in interview],
-        sort_keys=True,
-    )
-    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}|{session_fingerprint}"
+    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}"
     return hashlib.md5(payload.encode()).hexdigest()
 
 
@@ -659,7 +670,7 @@ def _execute_pipeline(
     # We check cache here with the pre-gap rubric. After gap-filling we recompute the key
     # and save under the post-gap key. On subsequent runs the pre-gap lookup will miss
     # (weights differ) and we'll find the post-gap entry instead — ensuring no stale results.
-    _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
+    _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric)
     _cached_result = _load_pipeline_cache(_pre_gap_cache_key)
     if _cached_result:
         age_s = int(time.time() - _cached_result.get("_cached_at", 0))
@@ -1019,7 +1030,7 @@ def _execute_pipeline(
 
     # Phase 8: Save under post-gap-fill rubric key so future requests with the same
     # (gap-filled) rubric get a valid cache hit instead of re-running gap-fill.
-    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
+    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric)
     _save_pipeline_cache(_post_gap_cache_key, session.result)
 
     # Phase 7 + 11: Log total pipeline time with full diagnostics
