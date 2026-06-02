@@ -395,75 +395,76 @@ def save_product_memory(
     status: str = "considered",
     our_score: Optional[float] = None,
     user_feedback: Optional[str] = None,
+    user_id: str = "default",
 ) -> bool:
     """Upsert a product memory record. Returns True on success."""
     if not _DB_AVAILABLE:
         return False
     canonical = _canonical_key(product_name)
     try:
-        _db_save_product_memory(canonical, category, status, our_score, user_feedback)
+        _db_save_product_memory(canonical, category, status, our_score, user_feedback, user_id)
         return True
     except Exception as exc:
         _logger.warning("[memory] save_product_memory failed (non-fatal): %s", exc)
         return False
 
 
-def get_product_memory(product_name: str) -> Optional[dict]:
+def get_product_memory(product_name: str, user_id: str = "default") -> Optional[dict]:
     if not _DB_AVAILABLE:
         return None
     canonical = _canonical_key(product_name)
     try:
-        return _db_get_product_memory(canonical)
+        return _db_get_product_memory(canonical, user_id=user_id)
     except Exception:
         return None
 
 
-def list_user_signals(limit: int = 200) -> list[dict]:
+def list_user_signals(limit: int = 200, user_id: str = "default") -> list[dict]:
     if not _DB_AVAILABLE:
         return []
     try:
-        return _db_list_signals(limit=limit)
+        return _db_list_signals(user_id=user_id, limit=limit)
     except Exception:
         return []
 
 
-def list_product_memories(limit: int = 100) -> list[dict]:
+def list_product_memories(limit: int = 100, user_id: str = "default") -> list[dict]:
     if not _DB_AVAILABLE:
         return []
     try:
-        return _db_list_product_memories(limit=limit)
+        return _db_list_product_memories(user_id=user_id, limit=limit)
     except Exception:
         return []
 
 
-def delete_product_memory(product_name: str) -> bool:
+def delete_product_memory(product_name: str, user_id: str = "default") -> bool:
     if not _DB_AVAILABLE:
         return False
     canonical = _canonical_key(product_name)
     try:
-        return _db_delete_product_memory(canonical)
+        return _db_delete_product_memory(canonical, user_id=user_id)
     except Exception:
         return False
 
 
-def delete_signal(signal_id: str) -> bool:
+def delete_signal(signal_id: str, user_id: str = "default") -> bool:
     if not _DB_AVAILABLE:
         return False
     try:
-        return _db_delete_signal(signal_id)
+        return _db_delete_signal(signal_id, user_id=user_id)
     except Exception:
         return False
 
 
-def clear_all_memory() -> dict:
-    """Nuclear option — deletes all signals and product memories."""
+def clear_all_memory(user_id: str = "default") -> dict:
+    """Nuclear option — deletes all signals and product memories for a user."""
     if not _DB_AVAILABLE:
         return {"signals_deleted": 0, "products_deleted": 0}
     signals_deleted = 0
     products_deleted = 0
     try:
-        signals_deleted = _db_clear_signals()
-        products_deleted = _db_clear_product_memories()
+        signals_deleted = _db_clear_signals(user_id=user_id)
+        products_deleted = _db_clear_product_memories(user_id=user_id)
     except Exception as exc:
         _logger.warning("[memory] clear_all_memory error: %s", exc)
     return {"signals_deleted": signals_deleted, "products_deleted": products_deleted}
@@ -473,7 +474,7 @@ def clear_all_memory() -> dict:
 # Product filter: apply memory to scored products
 # ---------------------------------------------------------------------------
 
-def apply_product_memory_flags(scored_products: list[dict]) -> list[dict]:
+def apply_product_memory_flags(scored_products: list[dict], user_id: str = "default") -> list[dict]:
     """
     Add `memory` field to each product if we have a ProductMemory record for it.
     Products with status=rejected are moved to the bottom.
@@ -491,7 +492,7 @@ def apply_product_memory_flags(scored_products: list[dict]) -> list[dict]:
         mem = None
         try:
             # Canonical lookup so "iPhone 15" == "Apple iPhone 15" == "iphone15"
-            mem = _db_get_product_memory(_canonical_key(p.get("name", "")))
+            mem = _db_get_product_memory(_canonical_key(p.get("name", "")), user_id=user_id)
         except Exception:
             pass
 
