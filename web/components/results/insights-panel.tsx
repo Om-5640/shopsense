@@ -82,12 +82,31 @@ function AuthorityBadge({ tier }: { tier: string }) {
 }
 
 function SourceRow({ source }: { source: ReviewSource }) {
+  // For YouTube: show channel name as primary identifier; fall back to domain
+  const displayName = source.source_type === 'youtube' && source.channel_name
+    ? source.channel_name
+    : source.domain
+
+  // Format published date if available (e.g. "2024-03-15" → "Mar 2024")
+  const formattedDate = (() => {
+    if (!source.published_date) return null
+    try {
+      const d = new Date(source.published_date)
+      if (isNaN(d.getTime())) return null
+      return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    } catch { return null }
+  })()
+
   return (
     <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.10] transition-colors">
+      {/* Header row: icon + name + authority badge + date + external link */}
       <div className="flex items-center gap-1.5 min-w-0">
         <SourceTypeIcon type={source.source_type} />
-        <span className="text-xs font-medium text-[#FAFAFA] truncate flex-1">{source.domain}</span>
+        <span className="text-xs font-medium text-[#FAFAFA] truncate flex-1">{displayName}</span>
         <AuthorityBadge tier={source.authority_tier} />
+        {formattedDate && (
+          <span className="text-[9px] text-[#52525B] shrink-0">{formattedDate}</span>
+        )}
         {source.url && (
           <a href={source.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
             <ExternalLink className="w-3 h-3 text-[#52525B] hover:text-[#A1A1AA] transition-colors" />
@@ -95,10 +114,17 @@ function SourceRow({ source }: { source: ReviewSource }) {
         )}
       </div>
 
+      {/* Video/article title — for YouTube this is the video title, for others the page title */}
       {source.title && (
         <p className="text-[10px] text-[#71717A] leading-relaxed line-clamp-1 pl-4">{source.title}</p>
       )}
 
+      {/* For YouTube: also show channel domain in muted text so user can distinguish */}
+      {source.source_type === 'youtube' && source.channel_name && (
+        <p className="text-[9px] text-[#52525B] pl-4">youtube.com · {source.channel_name}</p>
+      )}
+
+      {/* Trust + freshness bars */}
       <div className="pl-4 flex items-center gap-3">
         <div className="flex items-center gap-1 flex-1">
           <Shield className="w-2.5 h-2.5 text-[#52525B] shrink-0" />
@@ -110,9 +136,17 @@ function SourceRow({ source }: { source: ReviewSource }) {
         </div>
       </div>
 
+      {/* Extracted rating */}
       {source.rating != null && (
         <p className="text-[10px] text-amber-300/80 pl-4">
           Rating extracted: {source.rating}/10
+        </p>
+      )}
+
+      {/* Extracted verdict snippet — key opinion in a few words */}
+      {source.verdict && (
+        <p className="text-[10px] text-[#71717A] italic leading-relaxed line-clamp-2 pl-4 border-t border-white/[0.04] pt-1.5">
+          &ldquo;{source.verdict}&rdquo;
         </p>
       )}
     </div>

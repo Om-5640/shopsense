@@ -556,16 +556,18 @@ def _build_review_intel_summary(review_pages: list[dict]) -> dict:
             sr = page.get("structured_review") or {}
             sources.append({
                 "domain": page.get("domain", ""),
-                "title": (page.get("title") or "")[:120],
+                "title": (page.get("title") or page.get("video_title") or "")[:120],
                 "url": page.get("url", ""),
-                "trust_score": round(float(page.get("domain_trust_score", 0.5)), 3),
+                "trust_score": round(float(page.get("domain_trust_score", page.get("trust_score", 0.5))), 3),
                 "freshness_score": round(float(page.get("freshness_score", 0.5)), 3),
                 "review_rank_score": round(float(page.get("review_rank_score", 0.5)), 3),
                 "source_type": page.get("source_type", "gemini_grounding"),
-                "authority_tier": page.get("authority_tier", "unknown"),
+                "authority_tier": page.get("authority_tier", "trusted" if page.get("channel_is_trusted") else "unknown"),
                 "published_date": page.get("published_date"),
                 "rating": sr.get("rating"),
                 "verdict": (sr.get("verdict") or "")[:200] or None,
+                # YouTube-specific: channel name for self-verification in the UI
+                "channel_name": page.get("channel") or None,
             })
 
         conflict_signals = (review_pages[0].get("conflict_signals") or []) if review_pages else []

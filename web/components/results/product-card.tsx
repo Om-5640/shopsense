@@ -35,13 +35,13 @@ interface CrossSubredditSignal {
   signal: 'consistent' | 'split' | 'single_source'
   explanation: string
   context_note: string
+  _is_fallback?: boolean
 }
 
 interface SentimentRecord {
   comment_text: string
   sentiment: 'positive' | 'negative' | 'neutral'
-  confidence: number
-  reason: string
+  source: 'rule' | 'llm'   // "rule" = keyword-matched, "llm" = model-classified
 }
 
 interface Product {
@@ -111,18 +111,20 @@ function SentimentIcon({ sentiment, size = 'sm' }: { sentiment: string; size?: '
 function SentimentBar({ sentimentScore, dominantSentiment }: { sentimentScore: number; dominantSentiment: string }) {
   // Map -1.0..+1.0 to 0%..100% for indicator position
   const pct = ((sentimentScore + 1) / 2) * 100
+  // "unknown" means no sentiment data was collected — treat as neutral center
+  const effectiveSentiment = dominantSentiment === 'unknown' ? 'neutral' : dominantSentiment
 
   const indicatorColor =
-    dominantSentiment === 'positive'
+    effectiveSentiment === 'positive'
       ? 'bg-emerald-400 shadow-emerald-400/40'
-      : dominantSentiment === 'negative'
+      : effectiveSentiment === 'negative'
       ? 'bg-rose-400 shadow-rose-400/40'
       : 'bg-amber-400 shadow-amber-400/40'
 
   const labelColor =
-    dominantSentiment === 'positive'
+    effectiveSentiment === 'positive'
       ? 'text-emerald-400'
-      : dominantSentiment === 'negative'
+      : effectiveSentiment === 'negative'
       ? 'text-rose-400'
       : 'text-amber-400'
 
@@ -152,7 +154,8 @@ function SentimentBar({ sentimentScore, dominantSentiment }: { sentimentScore: n
       <div className="flex items-center justify-between text-xs">
         <span className="text-[#52525B]">negative</span>
         <span className={cn('font-medium capitalize', labelColor)}>
-          {dominantSentiment} &middot; {sentimentScore >= 0 ? '+' : ''}{sentimentScore.toFixed(2)}
+          {dominantSentiment === 'unknown' ? 'no data' : dominantSentiment}
+          {dominantSentiment !== 'unknown' && <> &middot; {sentimentScore >= 0 ? '+' : ''}{sentimentScore.toFixed(2)}</>}
         </span>
         <span className="text-[#52525B]">positive</span>
       </div>
@@ -291,7 +294,7 @@ export function ProductCard({
                   You bought this
                 </Badge>
               )}
-              {product.crossSubredditSignal?.signal === 'split' && (
+              {product.crossSubredditSignal?.signal === 'split' && !product.crossSubredditSignal._is_fallback && (
                 <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30">
                   <AlertTriangle className="w-3 h-3 mr-1" />
                   Mixed community signal
@@ -425,15 +428,16 @@ export function ProductCard({
                               <p className="text-sm text-[#A1A1AA] leading-relaxed line-clamp-2">
                                 &ldquo;{record.comment_text.slice(0, 200)}{record.comment_text.length > 200 ? '…' : ''}&rdquo;
                               </p>
-                              <span className="text-xs text-[#52525B] shrink-0">
-                                {Math.round(record.confidence * 100)}%
+                              {/* source badge: "Rule-based" = keyword pattern matched, "AI analysis" = LLM classified */}
+                              <span className={cn(
+                                'text-[9px] px-1.5 py-0.5 rounded-md border shrink-0 font-medium',
+                                record.source === 'rule'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                  : 'bg-violet-500/10 text-violet-400 border-violet-500/20',
+                              )}>
+                                {record.source === 'rule' ? 'Rule' : 'AI'}
                               </span>
                             </div>
-                            {record.reason && (
-                              <p className="text-xs text-[#52525B] italic mt-0.5 leading-snug">
-                                {record.reason}
-                              </p>
-                            )}
                           </div>
                         </div>
                       ))}
@@ -482,8 +486,10 @@ export function ProductCard({
         </div>
       )}
 
-      {/* Cross-subreddit split warning */}
-      {product.crossSubredditSignal?.signal === 'split' && product.crossSubredditSignal.explanation && (
+      {/* Cross-subreddit split warning — only shown for real LLM-produced explanations */}
+      {product.crossSubredditSignal?.signal === 'split'
+        && !product.crossSubredditSignal._is_fallback
+        && product.crossSubredditSignal.explanation && (
         <div className="ml-6 mb-4 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
           <p className="text-xs text-amber-300/80 leading-relaxed">
             <span className="font-medium text-amber-300">Community split:</span>{' '}

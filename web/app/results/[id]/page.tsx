@@ -399,9 +399,9 @@ export default function ResultsPage() {
           : 'Weak community signal — limited reliable data',
       }))
 
-    // Warnings: products with split community opinion
+    // Warnings: products with real (non-fallback) split community opinion
     const warnings = products
-      .filter((p) => p.cross_subreddit_signal?.signal === 'split')
+      .filter((p) => p.cross_subreddit_signal?.signal === 'split' && !p.cross_subreddit_signal?._is_fallback)
       .slice(0, 3)
       .map((p) => ({
         product: p.name,

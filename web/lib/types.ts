@@ -93,8 +93,7 @@ export interface ProductComplaint {
 export interface SentimentRecord {
   comment_text: string
   sentiment: 'positive' | 'negative' | 'neutral'
-  confidence: number
-  reason: string
+  source: 'rule' | 'llm'   // "rule" = keyword-matched, "llm" = model-classified
 }
 
 export interface AnalysisProduct {
@@ -238,6 +237,7 @@ export interface CrossSubredditSignal {
   signal: 'consistent' | 'split' | 'single_source'
   explanation: string
   context_note: string
+  _is_fallback?: boolean   // true when LLM call failed; suppress split UI in this case
 }
 
 // ── v7: Product memory ────────────────────────────────────────────────────────
@@ -301,6 +301,7 @@ export interface ReviewSource {
   published_date?: string | null
   rating?: number | null       // extracted by review_extractor (normalized to /10)
   verdict?: string | null      // extracted verdict snippet
+  channel_name?: string | null // YouTube only: channel name for self-verification
 }
 
 export interface ReviewConflict {
