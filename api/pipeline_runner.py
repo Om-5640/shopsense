@@ -9,6 +9,7 @@ interactive input() calls. Category detection, interview, and region
 selection are handled by separate REST endpoints BEFORE this runs.
 """
 
+import math as _math
 import re as _re
 import sys
 import hashlib
@@ -18,8 +19,9 @@ import threading
 import queue
 import time
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional
 
 _logger = logging.getLogger(__name__)
 
@@ -32,7 +34,6 @@ _TOKEN_BUDGET_CHARS = {
     "mistral":    96_000,
     "openrouter": 80_000,
 }
-_DEFAULT_BUDGET_CHARS = 24_000   # safest assumption when provider unknown
 
 
 def _estimate_tokens(text: str) -> int:
@@ -107,7 +108,7 @@ class PipelineSession:
 
     def emit(self, event_type: str, data: dict) -> None:
         item = {"type": event_type, "data": data}
-        if len(self._event_log) < _MAX_EVENT_LOG:
+        if event_type != "heartbeat" and len(self._event_log) < _MAX_EVENT_LOG:
             self._event_log.append(item)
         self.events.put(item)
 
@@ -188,10 +189,9 @@ def cleanup_old_sessions(max_age_hours: int = 2) -> int:
     return removed
 
 
-def _run_heartbeat(session: "PipelineSession", interval: int = 25) -> None:
+def _run_heartbeat(session: "PipelineSession", stop_event: threading.Event, interval: int = 25) -> None:
     """Emit periodic heartbeat events so SSE clients don't time out during long stages."""
-    while session.status == "running":
-        time.sleep(interval)
+    while not stop_event.wait(interval):
         if session.status == "running":
             session.emit("heartbeat", {"ts": time.time()})
 
@@ -205,6 +205,7 @@ def start_pipeline(
     options: dict,
 ) -> None:
     """Launch the research + scoring pipeline in a daemon thread."""
+    _hb_stop = threading.Event()
 
     def run() -> None:
         try:
@@ -216,12 +217,13 @@ def start_pipeline(
             session.error = str(exc)
             session.emit("error", {"message": str(exc)})
         finally:
+            _hb_stop.set()
             session.finish()
 
     t = threading.Thread(target=run, daemon=True, name=f"pipeline-{session.search_id}")
     t.start()
     hb = threading.Thread(
-        target=_run_heartbeat, args=(session,), daemon=True,
+        target=_run_heartbeat, args=(session, _hb_stop), daemon=True,
         name=f"heartbeat-{session.search_id}",
     )
     hb.start()
@@ -379,24 +381,16 @@ def _build_retrieval_query(base_query: str, profile: dict, rubric: dict | None =
                     enriched = f"{enriched} {hint}"
                     break  # add at most one criterion term
 
-    # Step 3: inject budget term so retrieval targets price-tier discussions
-    if isinstance(profile, dict):
-        intent = profile.get("intent")
-        if intent and isinstance(intent, dict):
-            budget = intent.get("budget", "")
-            if budget and "budget" not in enriched.lower():
-                # Strip currency symbols/amounts — just add "budget" if any budget is set
-                enriched = f"{enriched} budget"
-
-    # Step 4: inject exclusion terms from user intent as negative Reddit search terms
-    if isinstance(profile, dict):
-        intent = profile.get("intent")
-        if intent and isinstance(intent, dict):
-            exclusions = intent.get("exclusions", [])
-            for excl in exclusions[:2]:
-                excl_clean = excl.strip().lower()
-                if excl_clean and excl_clean not in enriched.lower():
-                    enriched = f"{enriched} -{excl_clean}"
+    # Steps 3 + 4: inject budget term and exclusion terms from structured intent
+    _intent = profile.get("intent")
+    if _intent and isinstance(_intent, dict):
+        budget = _intent.get("budget", "")
+        if budget and "budget" not in enriched.lower():
+            enriched = f"{enriched} budget"
+        for excl in _intent.get("exclusions", [])[:2]:
+            excl_clean = excl.strip().lower()
+            if excl_clean and excl_clean not in enriched.lower():
+                enriched = f"{enriched} -{excl_clean}"
 
     # Word-boundary-safe truncation: cut at last space before limit
     limit = 120
@@ -480,7 +474,7 @@ def _build_research_text(analysis: dict, sources: list) -> str:
     parts = [f"=== COMMUNITY CONSENSUS ===\n{analysis.get('summary', '')}\n"]
     parts.append("\n=== PRODUCT EXTRACTS ===")
     for p in analysis.get("products", []):
-        parts.append(f"\n{p['name']}")
+        parts.append(f"\n{p.get('name', '')}")
         if p.get("praise"):
             parts.append(f"  Praise: {', '.join(p['praise'][:3])}")
         if p.get("complaints"):
@@ -494,7 +488,7 @@ def _build_research_text(analysis: dict, sources: list) -> str:
 
     parts.append("\n\n=== RAW SOURCES (Reddit threads + review excerpts) ===")
     for s in sources:
-        parts.append(f"\n--- {s['source_type'].upper()}: {s['source_name']} ---")
+        parts.append(f"\n--- {s.get('source_type', 'source').upper()}: {s.get('source_name', '')} ---")
         parts.append(f"Title: {s.get('title', '')}")
         if s.get("body"):
             parts.append(f"Body: {s['body'][:2000]}")
@@ -508,7 +502,7 @@ def _build_research_text(analysis: dict, sources: list) -> str:
 def _dedup_threads(threads: list[dict]) -> list[dict]:
     """
     Remove near-duplicate Reddit threads by title word overlap.
-    Two threads are considered duplicates if >60% of their title words overlap.
+    Two threads are considered duplicates if >70% of their title words overlap.
     Keeps the higher-scored thread in each duplicate pair.
     Runs before summarization to avoid wasting API budget on repeated content.
     """
@@ -662,6 +656,8 @@ def _execute_pipeline(
     no_reviews = options.get("no_reviews", False)
     _pipeline_start = time.time()
     _stage_timings: dict[str, float] = {}
+    # Computed once — profile doesn't change during a pipeline run
+    _profile_hint = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
 
     # Set region for thread-local calls downstream (must happen before any reddit_fetch call)
     set_session_region(region)
@@ -789,14 +785,12 @@ def _execute_pipeline(
         "label": "Analyzing Research",
     })
     primary_noun = options.get("primary_noun", category.split("/")[-1].replace("-", " "))
-    preference_hint = _build_analyzer_hint(profile)
     analysis = analyze_with_summaries(
         query, thread_summaries, review_pages,
         primary_noun=str(primary_noun),
-        preference_hint=preference_hint,
+        preference_hint=_profile_hint,
     )
     products = analysis.get("products", [])
-    materials = analysis.get("materials", [])
     _stage_timings["analyze"] = round(time.time() - _t0, 1)
     session.stats["stage_timings"]["analyze"] = _stage_timings["analyze"]
     session.stats["llm_calls_estimated"] += 1  # one main_analyzer call
@@ -805,13 +799,12 @@ def _execute_pipeline(
     _noun_words = {w for w in _re.findall(r'[a-z]{4,}', (primary_noun or "").lower())
                    if w not in ('best', 'good', 'most', 'with', 'that', 'this', 'from')}
     if _noun_words and len(products) > 3:
-        _off = [p["name"] for p in products if not any(w in p.get("name", "").lower() for w in _noun_words)]
+        _off = [p.get("name", "") for p in products if not any(w in p.get("name", "").lower() for w in _noun_words)]
         if _off and len(_off) < len(products):
             session.emit_log(f"[W03] {len(_off)} products may be off-category for '{primary_noun}': {_off[:3]}")
     session.emit("stage_done", {
         "stage": "analyze",
         "products_found": len(products),
-        "materials_found": len(materials),
         "elapsed_s": _stage_timings["analyze"],
     })
     _check_cancelled(session)
@@ -823,11 +816,39 @@ def _execute_pipeline(
     # ---- Stage 4.5: Gap-fill rubric weights from research signal ----
     sources = normalize_all(reddit_threads, review_pages)
     research_text = _dedup_research_paragraphs(_build_research_text(analysis, sources))
-    # Phase 4: pass intent-aware user context so gap-filler sees hard constraints + budget
-    _user_ctx = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
-    rubric = fill_criterion_gaps(rubric, category, profile, research_text, user_context=_user_ctx)
+    rubric = fill_criterion_gaps(rubric, category, profile, research_text, user_context=_profile_hint)
+
+    # Post-gap cache check: if a prior run produced identical gap-filled weights, skip all
+    # scoring stages (the most expensive part). Reddit/review/summarize/analyze already ran,
+    # but scoring + explanations (~8+ LLM calls) are skipped.
+    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric)
+    if _post_gap_cache_key != _pre_gap_cache_key:
+        _post_gap_cached = _load_pipeline_cache(_post_gap_cache_key)
+        if _post_gap_cached:
+            age_s = int(time.time() - _post_gap_cached.get("_cached_at", 0))
+            session.emit_log(f"[cache] Post-gap hit from {age_s}s ago — skipping scoring")
+            session.result = {k: v for k, v in _post_gap_cached.items() if not k.startswith("_")}
+            try:
+                from memory import extract_and_save_signals
+                qa_history = options.get("qa_history", [])
+                if qa_history:
+                    extract_and_save_signals(
+                        category, qa_history,
+                        source_search_id=session.search_id,
+                        user_id=options.get("user_id", "default"),
+                    )
+            except Exception:
+                pass
+            try:
+                from db import update_search
+                update_search(session.search_id, status="done", **session.result)
+            except Exception:
+                pass
+            session.emit("done", {"search_id": session.search_id, "from_cache": True})
+            return
 
     # ---- Stage 4.6: Cross-subreddit validation ----
+    _t0 = time.time()
     session.emit("stage_start", {
         "stage": "cross_validate",
         "label": "Cross-validating Sources",
@@ -839,9 +860,13 @@ def _execute_pipeline(
         products = analysis.get("products", [])
     except Exception as cv_err:
         session.emit_log(f"[cross_validate] non-fatal: {cv_err}")
-    session.emit("stage_done", {"stage": "cross_validate"})
+    _stage_timings["cross_validate"] = round(time.time() - _t0, 1)
+    session.stats["stage_timings"]["cross_validate"] = _stage_timings["cross_validate"]
+    session.emit("stage_done", {"stage": "cross_validate", "elapsed_s": _stage_timings["cross_validate"]})
+    _check_cancelled(session)
 
     # ---- Stage 4.7: Precise mention counting + per-comment sentiment ----
+    _t0 = time.time()
     session.emit("stage_start", {
         "stage": "mention_counting",
         "label": "Counting Mentions (Precise)",
@@ -895,7 +920,10 @@ def _execute_pipeline(
     except Exception as mp_err:
         session.emit_log(f"[mention_pipeline] non-fatal: {mp_err}")
         # Products keep their LLM-estimated counts — pipeline continues unaffected
-    session.emit("stage_done", {"stage": "mention_counting"})
+    _stage_timings["mention_counting"] = round(time.time() - _t0, 1)
+    session.stats["stage_timings"]["mention_counting"] = _stage_timings["mention_counting"]
+    session.emit("stage_done", {"stage": "mention_counting", "elapsed_s": _stage_timings["mention_counting"]})
+    _check_cancelled(session)
 
     # ---- Stage 5: Per-product scoring ----
     _t0 = time.time()
@@ -934,8 +962,6 @@ def _execute_pipeline(
     _stage_timings["scoring"] = round(time.time() - _t0, 1)
     session.stats["stage_timings"]["scoring"] = _stage_timings["scoring"]
     session.stats["product_count"] = len(scored)
-    # Estimate: ceil(products / 3) batch calls + top-5 explanation calls
-    import math as _math
     session.stats["llm_calls_estimated"] += _math.ceil(len(products) / 3) + min(5, len(products))
     session.stats["tokens_estimated"] = _estimate_tokens(research_text) * len(products) // 3
     session.emit("stage_done", {
@@ -945,28 +971,24 @@ def _execute_pipeline(
     })
 
     # ---- Stage 5.5: Write personalized explanations ----
-    # Top 5: rich LLM explanations. Remaining: deterministic score-based fallback.
+    # Top 5: rich LLM explanations run in parallel. Remaining: deterministic score-based fallback.
     session.emit("stage_start", {"stage": "explanations", "label": "Writing Explanations"})
     try:
         from agents import run_agent
         from prompt_builder import assemble_prompt as _assemble_prompt
-        # Phase 4: use intent-aware context (structured intent > preferences_summary)
-        user_ctx_text = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
+
         _LLM_EXPLANATION_LIMIT = 5
 
-        # LLM explanations for top products
-        for idx, product in enumerate(scored[:_LLM_EXPLANATION_LIMIT]):
+        def _make_expl_prompt(product: dict) -> str:
             criteria_scores = "\n".join(
                 f"- {s['label']}: {s['score']}/10 — {s['evidence']}"
                 for s in product.get("scores", [])[:6]
             )
-            # Phase 5: assembled prompt with dedup + budget
-            # CEILING-03: ground the explanation in the actual evidence strings from scoring
-            # to prevent hallucination. The model must only refer to evidence already cited.
-            expl_prompt = _assemble_prompt([
+            # CEILING-03: ground the explanation in actual evidence strings to prevent hallucination
+            return _assemble_prompt([
                 ("task", (
                     f"Category: {category}\n"
-                    f"Product: {product['name']}\n"
+                    f"Product: {product.get('name', '')}\n"
                     f"Score: {product.get('percentage', 0):.0f}%\n"
                     f"Criterion scores (with evidence from research):\n{criteria_scores}\n\n"
                     "Write 2-3 sentences explaining WHY this product fits this specific user's "
@@ -974,14 +996,20 @@ def _execute_pipeline(
                     "do not invent claims not supported by that evidence. "
                     "Be personal and concrete. Start with the strongest reason."
                 )),
-                ("user_context", f"User preferences:\n{user_ctx_text or '(none given)'}"),
-            ], budget_chars=6000)  # safe for Groq 8K limit (6K input + 2K output reserve)
+                ("user_context", f"User preferences:\n{_profile_hint or '(none given)'}"),
+            ], budget_chars=6000)
+
+        def _fetch_explanation(args: tuple) -> tuple:
+            idx, product = args
             try:
-                expl = run_agent("explanation_writer", user_prompt=expl_prompt)
-                scored[idx]["explanation"] = expl.strip()
-            except Exception as e_err:
-                session.emit_log(f"[explanation] product {idx} failed: {e_err}")
-                scored[idx]["explanation"] = _build_score_based_explanation(product)
+                return idx, run_agent("explanation_writer", user_prompt=_make_expl_prompt(product)).strip()
+            except Exception:
+                return idx, _build_score_based_explanation(product)
+
+        top = list(enumerate(scored[:_LLM_EXPLANATION_LIMIT]))
+        with ThreadPoolExecutor(max_workers=_LLM_EXPLANATION_LIMIT) as _pool:
+            for idx, expl in _pool.map(_fetch_explanation, top):
+                scored[idx]["explanation"] = expl or _build_score_based_explanation(scored[idx])
 
         # Score-based fallback for remaining products
         for idx in range(_LLM_EXPLANATION_LIMIT, len(scored)):
@@ -1028,9 +1056,6 @@ def _execute_pipeline(
         "scoredProducts": scored,
     }
 
-    # Phase 8: Save under post-gap-fill rubric key so future requests with the same
-    # (gap-filled) rubric get a valid cache hit instead of re-running gap-fill.
-    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric)
     _save_pipeline_cache(_post_gap_cache_key, session.result)
 
     # Phase 7 + 11: Log total pipeline time with full diagnostics
