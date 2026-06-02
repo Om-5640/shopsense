@@ -87,6 +87,17 @@ def _canonical_key(name: str) -> str:
     return re.sub(r"[\W_]", "", name.lower())
 
 
+def _category_applies(hint: str, current_category: str) -> bool:
+    """
+    True when a signal stored under `hint` is relevant to `current_category`.
+    Shared by find_relevant_signals (hard filter) and summarize_user_profile.
+    """
+    if hint == "any" or not current_category:
+        return True
+    cat = current_category.lower()
+    return hint == cat or cat.startswith(f"{hint}/") or cat.startswith(f"{hint}-")
+
+
 def _warn_default_user(fn_name: str, user_id: str) -> None:
     if user_id == "default":
         _logger.warning(
@@ -302,12 +313,17 @@ def find_relevant_signals(
         hint = (r.get("category") or r.get("categoryHint") or "any").lower()
         cat_lc = (current_category or "").lower()
 
+        # Hard-block signals from incompatible categories (mirrors summarize_user_profile)
+        if not _category_applies(hint, cat_lc):
+            continue
+
         if hint == "any":
             threshold = min_similarity if not cat_lc else min_similarity + 0.05
         elif hint == cat_lc:
             threshold = max(0.5, min_similarity - 0.1)
         else:
-            threshold = min_similarity + 0.15
+            # Parent category (e.g. "electronics") matching a sub-category search
+            threshold = min_similarity + 0.10
 
         if sim >= threshold:
             filtered.append(r)
@@ -336,14 +352,11 @@ def summarize_user_profile(current_category: Optional[str] = None, user_id: str 
     if not signals:
         return ""
 
-    def category_applies(signal_category: str) -> bool:
-        hint = (signal_category or "any").lower()
-        cat = (current_category or "").lower()
-        if hint == "any" or not cat:
-            return True
-        return hint == cat or cat.startswith(f"{hint}/") or cat.startswith(f"{hint}-")
-
-    relevant = [s for s in signals if category_applies(s.get("category", ""))]
+    cat_lc = (current_category or "").lower()
+    relevant = [
+        s for s in signals
+        if _category_applies((s.get("category") or "any").lower(), cat_lc)
+    ]
     if not relevant:
         return ""
 

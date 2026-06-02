@@ -95,11 +95,12 @@ def _get_token_pattern(token: str) -> re.Pattern:
     Compile a whole-word boundary pattern for a product token.
     Cached so each unique token is compiled exactly once.
 
-    Uses negative lookbehind/lookahead for alphanumeric chars AND hyphens so that
-    "xm5" does NOT match inside "wh-xm5" or "wf-xm5" (model contamination fix).
+    Uses negative lookbehind/lookahead for alphanumeric chars only (NOT hyphens).
+    This lets "1000xm5" match inside "wf-1000xm5" while still blocking pure
+    substring matches like "xm5" inside "1000xm5" (different alphanumeric context).
     """
     return re.compile(
-        r"(?<![a-zA-Z0-9\-])" + re.escape(token) + r"(?![a-zA-Z0-9\-])",
+        r"(?<![a-zA-Z0-9])" + re.escape(token) + r"(?![a-zA-Z0-9])",
         re.IGNORECASE,
     )
 
