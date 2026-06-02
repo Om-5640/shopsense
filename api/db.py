@@ -9,26 +9,38 @@ Tables managed here:
   Profile      — per-category user preferences
   UserSignal   — extracted user preference signals with embeddings
   ProductMemory — products the user has considered/bought/rejected
+  _SchemaVersion — tracks applied migrations (lightweight Alembic alternative)
 """
 
 import json
+import logging
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 # Load .env before reading any env vars — POSTGRES_URL is evaluated at module
 # import time, so dotenv must be loaded here (not in main.py which imports us).
 from dotenv import load_dotenv
 load_dotenv()
 
+_logger = logging.getLogger(__name__)
+
 _ROOT = Path(__file__).parent.parent
 _SQLITE_PATH = _ROOT / "web" / "prisma" / "shopping.db"
 
 POSTGRES_URL = os.environ.get("POSTGRES_URL", "")
+
+# Pool sizing — tune for your deployment without touching code
+_PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "1"))
+_PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
+
+# How many SQLite rows to scan for cosine similarity (linear scan — trade RAM for recall)
+_SIGNAL_SCAN_LIMIT = int(os.environ.get("SIGNAL_SCAN_LIMIT", "10000"))
 
 # Thread-local SQLite connections (SQLite is not thread-safe across connections)
 _local = threading.local()
@@ -36,6 +48,15 @@ _local = threading.local()
 # Postgres connection pool (lazy-initialized)
 _pg_pool = None
 _pg_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Canonical product name helper
+# ---------------------------------------------------------------------------
+
+def _canonical_product_name(name: str) -> str:
+    """Strip all non-alphanumeric chars and lowercase — used for fuzzy match."""
+    return re.sub(r"[^a-z0-9]", "", name.strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +81,7 @@ def _pg_connect():
     with _pg_lock:
         if _pg_pool is None:
             _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=1, maxconn=10, dsn=POSTGRES_URL
+                minconn=_PG_POOL_MIN, maxconn=_PG_POOL_MAX, dsn=POSTGRES_URL
             )
     return _pg_pool.getconn()
 
@@ -97,6 +118,7 @@ def _sqlite_connect() -> sqlite3.Connection:
         _local.conn = sqlite3.connect(str(_SQLITE_PATH), check_same_thread=False)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
+        _local.conn.execute("PRAGMA foreign_keys=ON")
     return _local.conn
 
 
@@ -135,21 +157,33 @@ CREATE TABLE IF NOT EXISTS UserSignal (
     text           TEXT NOT NULL,
     embedding      TEXT,
     strength       TEXT NOT NULL DEFAULT 'moderate',
-    sourceSearchId TEXT,
+    sourceSearchId TEXT REFERENCES Search(id) ON DELETE SET NULL,
     createdAt      TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ProductMemory (
-    id           TEXT PRIMARY KEY,
-    userId       TEXT NOT NULL DEFAULT 'default',
-    productName  TEXT NOT NULL,
-    category     TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'considered',
-    ourScore     REAL,
-    userFeedback TEXT,
-    createdAt    TEXT NOT NULL,
+    id             TEXT PRIMARY KEY,
+    userId         TEXT NOT NULL DEFAULT 'default',
+    productName    TEXT NOT NULL,
+    canonicalName  TEXT,
+    category       TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'considered',
+    ourScore       REAL,
+    userFeedback   TEXT,
+    createdAt      TEXT NOT NULL,
     UNIQUE(userId, productName)
 );
+
+CREATE TABLE IF NOT EXISTS _SchemaVersion (
+    version   INTEGER PRIMARY KEY,
+    appliedAt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS productmemory_canonical_idx
+ON ProductMemory (userId, canonicalName);
+
+CREATE INDEX IF NOT EXISTS usersignal_user_idx
+ON UserSignal (userId, createdAt);
 """
 
 _PG_SCHEMA = """
@@ -185,7 +219,7 @@ CREATE TABLE IF NOT EXISTS "UserSignal" (
     text            TEXT NOT NULL,
     embedding       vector(768),
     strength        TEXT NOT NULL DEFAULT 'moderate',
-    "sourceSearchId" TEXT,
+    "sourceSearchId" TEXT REFERENCES "Search"(id) ON DELETE SET NULL,
     "createdAt"     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -193,6 +227,7 @@ CREATE TABLE IF NOT EXISTS "ProductMemory" (
     id              TEXT PRIMARY KEY,
     "userId"        TEXT NOT NULL DEFAULT 'default',
     "productName"   TEXT NOT NULL,
+    "canonicalName" TEXT,
     category        TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'considered',
     "ourScore"      DOUBLE PRECISION,
@@ -200,18 +235,192 @@ CREATE TABLE IF NOT EXISTS "ProductMemory" (
     "createdAt"     TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE("userId", "productName")
 );
+
+CREATE TABLE IF NOT EXISTS "_SchemaVersion" (
+    version     INTEGER PRIMARY KEY,
+    "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS productmemory_canonical_idx
+ON "ProductMemory" ("userId", "canonicalName");
+
+CREATE INDEX IF NOT EXISTS usersignal_user_idx
+ON "UserSignal" ("userId", "createdAt" DESC);
 """
 
 
+# ---------------------------------------------------------------------------
+# Migration system
+# ---------------------------------------------------------------------------
+
+def _m1_sqlite_add_canonical_name() -> None:
+    conn = _sqlite_connect()
+    try:
+        conn.execute("ALTER TABLE ProductMemory ADD COLUMN canonicalName TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Already exists — SQLite has no ADD COLUMN IF NOT EXISTS
+
+
+def _m2_sqlite_add_fk_usersignal() -> None:
+    """
+    Recreate UserSignal with a real FK on sourceSearchId.
+    Table recreation is the only way to add constraints in SQLite.
+    Uses explicit BEGIN/COMMIT so the swap is atomic; PRAGMA foreign_keys
+    is toggled outside any transaction as SQLite requires.
+    SET NULL chosen over CASCADE: signals capture learned user preferences
+    and remain valuable even when the originating search is deleted.
+    """
+    conn = _sqlite_connect()
+    conn.executescript("""
+        PRAGMA foreign_keys=OFF;
+        BEGIN;
+        CREATE TABLE IF NOT EXISTS _UserSignal_new (
+            id             TEXT PRIMARY KEY,
+            userId         TEXT NOT NULL DEFAULT 'default',
+            signalType     TEXT NOT NULL,
+            productName    TEXT,
+            category       TEXT,
+            text           TEXT NOT NULL,
+            embedding      TEXT,
+            strength       TEXT NOT NULL DEFAULT 'moderate',
+            sourceSearchId TEXT REFERENCES Search(id) ON DELETE SET NULL,
+            createdAt      TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO _UserSignal_new SELECT * FROM UserSignal;
+        DROP TABLE IF EXISTS UserSignal;
+        ALTER TABLE _UserSignal_new RENAME TO UserSignal;
+        COMMIT;
+        CREATE INDEX IF NOT EXISTS usersignal_user_idx ON UserSignal (userId, createdAt);
+        PRAGMA foreign_keys=ON;
+    """)
+
+
+# Each entry: (version, description, sqlite_fn | None, pg_sql | None)
+# Migrations are idempotent: safe to re-run if a previous attempt partially failed.
+_MIGRATIONS: list[tuple[int, str, Optional[Callable], Optional[str]]] = [
+    (
+        1,
+        "Add canonicalName column to ProductMemory",
+        _m1_sqlite_add_canonical_name,
+        'ALTER TABLE "ProductMemory" ADD COLUMN IF NOT EXISTS "canonicalName" TEXT',
+    ),
+    (
+        2,
+        "Add FK UserSignal.sourceSearchId → Search.id ON DELETE SET NULL",
+        _m2_sqlite_add_fk_usersignal,
+        # Postgres ADD CONSTRAINT IF NOT EXISTS is not supported; use DO block instead.
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_usersignal_search'
+            ) THEN
+                ALTER TABLE "UserSignal"
+                ADD CONSTRAINT fk_usersignal_search
+                FOREIGN KEY ("sourceSearchId") REFERENCES "Search"(id) ON DELETE SET NULL;
+            END IF;
+        END $$
+        """,
+    ),
+]
+
+
+def _current_schema_version() -> int:
+    """Return the highest applied migration version (0 if table missing or empty)."""
+    if _use_postgres():
+        try:
+            with _pg_transaction() as cur:
+                cur.execute('SELECT COALESCE(MAX(version), 0) FROM "_SchemaVersion"')
+                row = cur.fetchone()
+                return row[0] if row else 0
+        except Exception:
+            return 0
+    else:
+        try:
+            row = _sqlite_connect().execute(
+                "SELECT COALESCE(MAX(version), 0) FROM _SchemaVersion"
+            ).fetchone()
+            return row[0] if row else 0
+        except sqlite3.OperationalError:
+            return 0
+
+
+def _mark_migration_applied(version: int) -> None:
+    if _use_postgres():
+        with _pg_transaction() as cur:
+            cur.execute(
+                'INSERT INTO "_SchemaVersion" (version, "appliedAt") VALUES (%s, now()) ON CONFLICT DO NOTHING',
+                (version,),
+            )
+    else:
+        conn = _sqlite_connect()
+        conn.execute(
+            "INSERT OR IGNORE INTO _SchemaVersion (version, appliedAt) VALUES (?,?)",
+            (version, _now_iso()),
+        )
+        conn.commit()
+
+
+def run_migrations() -> None:
+    """Apply all pending schema migrations in version order."""
+    current = _current_schema_version()
+    for version, description, sqlite_fn, pg_sql in _MIGRATIONS:
+        if version <= current:
+            continue
+        _logger.info("[db] Applying migration %d: %s", version, description)
+        try:
+            if _use_postgres():
+                if pg_sql:
+                    with _pg_transaction() as cur:
+                        cur.execute(pg_sql)
+            else:
+                if sqlite_fn:
+                    sqlite_fn()
+            _mark_migration_applied(version)
+            _logger.info("[db] Migration %d applied", version)
+        except Exception as exc:
+            _logger.warning("[db] Migration %d failed (may already be applied): %s", version, exc)
+
+
+def _create_pg_vector_index() -> None:
+    """
+    Create HNSW cosine index on UserSignal.embedding.
+    Must run outside a transaction (Postgres requirement for index methods).
+    HNSW is preferred over IVFFlat: works on empty tables, no VACUUM/ANALYZE needed.
+    """
+    conn = _pg_connect()
+    prev_autocommit = getattr(conn, "autocommit", False)
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS usersignal_embedding_idx '
+            'ON "UserSignal" USING hnsw (embedding vector_cosine_ops)'
+        )
+        cur.close()
+        _logger.info("[db] pgvector HNSW index ensured on UserSignal.embedding")
+    except Exception as exc:
+        _logger.warning(
+            "[db] Could not create pgvector HNSW index (non-fatal — queries will still work via full scan): %s", exc
+        )
+    finally:
+        conn.autocommit = prev_autocommit
+        _pg_release(conn)
+
+
 def init_db() -> None:
-    """Create all tables if they don't exist. Safe to call on every startup."""
+    """Create all tables and indexes if they don't exist, then apply pending migrations."""
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(_PG_SCHEMA)
+        run_migrations()
+        _create_pg_vector_index()
     else:
         conn = _sqlite_connect()
         conn.executescript(_SQLITE_SCHEMA)
         conn.commit()
+        run_migrations()
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +451,11 @@ def _deserialize_search(row: dict) -> dict:
         if isinstance(raw, str):
             try:
                 row[col] = json.loads(raw)
-            except Exception:
+            except Exception as exc:
+                _logger.warning(
+                    "[db] Corrupt JSON in column %r for search %s: %s",
+                    col, row.get("id"), exc,
+                )
                 row[col] = None
     return row
 
@@ -369,7 +582,8 @@ def get_profile(category: str) -> Optional[dict]:
             if row:
                 try:
                     return json.loads(row[0])
-                except Exception:
+                except Exception as exc:
+                    _logger.warning("[db] Corrupt profile JSON for category %r: %s", category, exc)
                     return None
             return None
     else:
@@ -378,12 +592,15 @@ def get_profile(category: str) -> Optional[dict]:
         if row:
             try:
                 return json.loads(row["data"])
-            except Exception:
+            except Exception as exc:
+                _logger.warning("[db] Corrupt profile JSON for category %r: %s", category, exc)
                 return None
         return None
 
 
-def save_profile_db(category: str, data: dict) -> None:
+def save_profile_db(category: str, data: Any) -> None:
+    if not isinstance(data, dict):
+        raise ValueError(f"Profile data must be a dict, got {type(data).__name__!r}")
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
@@ -444,6 +661,71 @@ def save_signal(
         conn.commit()
 
 
+def save_signals_batch(signals: list[dict]) -> int:
+    """
+    Bulk-insert signals in a single transaction. Much faster than N save_signal calls.
+
+    Each dict supports keys: signal_id, signal_type (required), text (required),
+    embedding, category, product_name, strength, source_search_id, user_id.
+    Returns the number of rows actually inserted.
+    """
+    if not signals:
+        return 0
+    inserted = 0
+    if _use_postgres():
+        with _pg_transaction() as cur:
+            for s in signals:
+                emb = s.get("embedding")
+                emb_val = ("[" + ",".join(str(x) for x in emb) + "]") if emb else None
+                cur.execute(
+                    """INSERT INTO "UserSignal"
+                       (id, "userId", "signalType", "productName", category, text,
+                        embedding, strength, "sourceSearchId", "createdAt")
+                       VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s, now())
+                       ON CONFLICT DO NOTHING""",
+                    (
+                        s.get("signal_id") or _cuid(),
+                        s.get("user_id", "default"),
+                        s["signal_type"],
+                        s.get("product_name"),
+                        s.get("category"),
+                        s["text"],
+                        emb_val,
+                        s.get("strength", "moderate"),
+                        s.get("source_search_id"),
+                    ),
+                )
+                inserted += cur.rowcount
+    else:
+        conn = _sqlite_connect()
+        now = _now_iso()
+        cur = conn.cursor()
+        for s in signals:
+            emb = s.get("embedding")
+            emb_json = json.dumps(emb) if emb else None
+            cur.execute(
+                """INSERT OR IGNORE INTO UserSignal
+                   (id, userId, signalType, productName, category, text,
+                    embedding, strength, sourceSearchId, createdAt)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    s.get("signal_id") or _cuid(),
+                    s.get("user_id", "default"),
+                    s["signal_type"],
+                    s.get("product_name"),
+                    s.get("category"),
+                    s["text"],
+                    emb_json,
+                    s.get("strength", "moderate"),
+                    s.get("source_search_id"),
+                    now,
+                ),
+            )
+            inserted += cur.rowcount
+        conn.commit()
+    return inserted
+
+
 def list_signals(user_id: str = "default", limit: int = 200) -> list[dict]:
     if _use_postgres():
         with _pg_transaction() as cur:
@@ -492,7 +774,7 @@ def find_similar_signals(
             rows = _pg_fetchall_as_dict(cur)
             return [r for r in rows if (r.get("similarity") or 0.0) >= min_similarity][:k]
     else:
-        # Linear cosine scan (fine for < 10k signals)
+        # Linear cosine scan — configurable via SIGNAL_SCAN_LIMIT env var
         from embeddings import cosine_similarity
         conn = _sqlite_connect()
         rows = conn.execute(
@@ -500,8 +782,8 @@ def find_similar_signals(
             "       productName AS \"productName\", category, text, "
             "       strength, sourceSearchId AS \"sourceSearchId\", "
             "       createdAt AS \"createdAt\", embedding "
-            "FROM UserSignal WHERE userId = ? AND embedding IS NOT NULL LIMIT 2000",
-            (user_id,),
+            "FROM UserSignal WHERE userId = ? AND embedding IS NOT NULL LIMIT ?",
+            (user_id, _SIGNAL_SCAN_LIMIT),
         ).fetchall()
 
         scored = []
@@ -562,18 +844,20 @@ def save_product_memory(
     user_id: str = "default",
 ) -> None:
     mem_id = _cuid()
+    canonical = _canonical_product_name(product_name)
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
                 """INSERT INTO "ProductMemory"
-                   (id, "userId", "productName", category, status, "ourScore",
-                    "userFeedback", "createdAt")
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                   (id, "userId", "productName", "canonicalName", category, status,
+                    "ourScore", "userFeedback", "createdAt")
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
                    ON CONFLICT ("userId", "productName")
                    DO UPDATE SET status = EXCLUDED.status,
+                                 "canonicalName" = EXCLUDED."canonicalName",
                                  "ourScore" = COALESCE(EXCLUDED."ourScore", "ProductMemory"."ourScore"),
                                  "userFeedback" = COALESCE(EXCLUDED."userFeedback", "ProductMemory"."userFeedback")""",
-                (mem_id, user_id, product_name, category, status, our_score, user_feedback),
+                (mem_id, user_id, product_name, canonical, category, status, our_score, user_feedback),
             )
     else:
         conn = _sqlite_connect()
@@ -582,8 +866,8 @@ def save_product_memory(
             (user_id, product_name),
         ).fetchone()
         if existing:
-            updates = ["status = ?"]
-            vals: list = [status]
+            updates = ["status = ?", "canonicalName = ?"]
+            vals: list = [status, canonical]
             if our_score is not None:
                 updates.append("ourScore = ?")
                 vals.append(our_score)
@@ -591,43 +875,55 @@ def save_product_memory(
                 updates.append("userFeedback = ?")
                 vals.append(user_feedback)
             vals += [user_id, product_name]
-            conn.execute(f"UPDATE ProductMemory SET {', '.join(updates)} WHERE userId = ? AND productName = ?", vals)
+            conn.execute(
+                f"UPDATE ProductMemory SET {', '.join(updates)} WHERE userId = ? AND productName = ?",
+                vals,
+            )
         else:
             conn.execute(
                 "INSERT OR IGNORE INTO ProductMemory "
-                "(id, userId, productName, category, status, ourScore, userFeedback, createdAt) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (mem_id, user_id, product_name, category, status, our_score, user_feedback, _now_iso()),
+                "(id, userId, productName, canonicalName, category, status, ourScore, userFeedback, createdAt) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (mem_id, user_id, product_name, canonical, category, status, our_score, user_feedback, _now_iso()),
             )
         conn.commit()
 
 
 def get_product_memory(product_name: str, user_id: str = "default") -> Optional[dict]:
-    # Case-insensitive + prefix-tolerant matching: "Sony WF-1000XM5" matches
-    # "Sony WF-1000XM5 Wireless Earbuds" stored from a previous search, and vice versa.
-    name_lower = product_name.strip().lower()
+    """
+    Canonical-key lookup first (handles all spacing/punctuation/ordering variants),
+    then exact original-name fallback for rows saved before canonicalization was added.
+    """
+    canonical = _canonical_product_name(product_name)
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
                 'SELECT * FROM "ProductMemory" '
-                'WHERE "userId" = %s AND ('
-                '  LOWER("productName") = %s'
-                '  OR LOWER(%s) LIKE LOWER("productName") || \' %%\''
-                '  OR LOWER("productName") LIKE LOWER(%s) || \' %%\''
-                ') LIMIT 1',
-                (user_id, name_lower, product_name, product_name),
+                'WHERE "userId" = %s AND "canonicalName" = %s LIMIT 1',
+                (user_id, canonical),
+            )
+            row = _pg_fetchone_as_dict(cur)
+            if row:
+                return row
+            # Fallback for legacy rows (no canonicalName stored)
+            cur.execute(
+                'SELECT * FROM "ProductMemory" '
+                'WHERE "userId" = %s AND LOWER("productName") = LOWER(%s) LIMIT 1',
+                (user_id, product_name),
             )
             return _pg_fetchone_as_dict(cur)
     else:
         conn = _sqlite_connect()
         row = conn.execute(
-            "SELECT * FROM ProductMemory "
-            "WHERE userId = ? AND ("
-            "  LOWER(productName) = ?"
-            "  OR LOWER(?) LIKE LOWER(productName) || ' %'"
-            "  OR LOWER(productName) LIKE LOWER(?) || ' %'"
-            ") LIMIT 1",
-            (user_id, name_lower, product_name, product_name),
+            "SELECT * FROM ProductMemory WHERE userId = ? AND canonicalName = ? LIMIT 1",
+            (user_id, canonical),
+        ).fetchone()
+        if row:
+            return _sqlite_row_to_dict(row)
+        # Fallback for legacy rows
+        row = conn.execute(
+            "SELECT * FROM ProductMemory WHERE userId = ? AND LOWER(productName) = LOWER(?) LIMIT 1",
+            (user_id, product_name),
         ).fetchone()
         return _sqlite_row_to_dict(row) if row else None
 
@@ -650,18 +946,21 @@ def list_product_memories(user_id: str = "default", limit: int = 100) -> list[di
 
 
 def delete_product_memory(product_name: str, user_id: str = "default") -> bool:
+    """Delete by canonical key OR exact original name — handles all name variants."""
+    canonical = _canonical_product_name(product_name)
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
-                'DELETE FROM "ProductMemory" WHERE "userId" = %s AND "productName" = %s',
-                (user_id, product_name),
+                'DELETE FROM "ProductMemory" '
+                'WHERE "userId" = %s AND ("canonicalName" = %s OR "productName" = %s)',
+                (user_id, canonical, product_name),
             )
             return cur.rowcount > 0
     else:
         conn = _sqlite_connect()
         cur = conn.execute(
-            "DELETE FROM ProductMemory WHERE userId = ? AND productName = ?",
-            (user_id, product_name),
+            "DELETE FROM ProductMemory WHERE userId = ? AND (canonicalName = ? OR productName = ?)",
+            (user_id, canonical, product_name),
         )
         conn.commit()
         return cur.rowcount > 0
