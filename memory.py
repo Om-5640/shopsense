@@ -20,13 +20,18 @@ Public API:
   summarize_user_profile() → str   (for injecting into LLM prompts)
 """
 
-import json
+import re
 import sys
+import time
 import uuid
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-# Ensure api/ is importable when called from project root
+_logger = logging.getLogger(__name__)
+
+# sys.path patch — needed because memory.py lives at project root but imports
+# from api/. Remove once the package layout is consolidated.
 _API_DIR = Path(__file__).parent / "api"
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
@@ -34,37 +39,122 @@ if str(_API_DIR) not in sys.path:
 from agents import run_agent
 from embeddings import embed, embed_batch
 
+try:
+    from llm_client import _try_repair_json as _repair_json
+except ImportError:
+    import json as _json
+    def _repair_json(raw: str) -> Any:  # type: ignore[misc]
+        try:
+            return _json.loads(raw)
+        except Exception:
+            return {}
+
+# Module-level db imports — all-or-nothing; avoids repeated import overhead and
+# surfaces missing-module errors at startup rather than inside request handlers.
+try:
+    from db import (
+        save_signal as _db_save_signal,
+        find_similar_signals as _db_find_similar,
+        list_signals as _db_list_signals,
+        save_product_memory as _db_save_product_memory,
+        get_product_memory as _db_get_product_memory,
+        list_product_memories as _db_list_product_memories,
+        delete_product_memory as _db_delete_product_memory,
+        delete_signal as _db_delete_signal,
+        clear_signals as _db_clear_signals,
+        clear_product_memories as _db_clear_product_memories,
+    )
+    _DB_AVAILABLE = True
+except ImportError:
+    _DB_AVAILABLE = False
+    _logger.warning("[memory] db module not importable — persistence disabled")
+
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+_VALID_TYPES     = frozenset({"preference", "rejection", "complaint"})
+_VALID_STRENGTHS = frozenset({"strong", "moderate", "weak"})
+
+# Rough token budget for summarize_user_profile prompt injection.
+# Each signal ≈ 150 chars / ~40 tokens; cap keeps memory context < ~600 tokens.
+_MAX_PROFILE_CHARS = 3_000
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _canonical_key(name: str) -> str:
+    """Strip punctuation/spaces/case — mirrors cross_validate._canonical_key."""
+    return re.sub(r"[\W_]", "", name.lower())
+
+
+def _warn_default_user(fn_name: str, user_id: str) -> None:
+    if user_id == "default":
+        _logger.warning(
+            "[memory] %s called with user_id='default' — all users share this memory bucket",
+            fn_name,
+        )
+
+
+def _validate_signal(raw: Any) -> dict | None:
+    """
+    Validate and normalise a single signal dict from the LLM.
+    Returns None for malformed entries so they are silently dropped.
+    """
+    if not isinstance(raw, dict):
+        return None
+    text = (raw.get("text") or "").strip()
+    if not text:
+        return None
+    sig_type = raw.get("type", "preference")
+    if sig_type not in _VALID_TYPES:
+        _logger.debug("[memory] unknown signal type %r — defaulting to 'preference'", sig_type)
+        sig_type = "preference"
+    strength = raw.get("strength", "moderate")
+    if strength not in _VALID_STRENGTHS:
+        _logger.debug("[memory] unknown strength %r — defaulting to 'moderate'", strength)
+        strength = "moderate"
+    category_hint = (raw.get("category_hint") or "any").strip().lower()
+    return {
+        "type": sig_type,
+        "text": text,
+        "strength": strength,
+        "category_hint": category_hint,
+    }
+
+
+# ── Signal extraction prompt ───────────────────────────────────────────────────
+
+_EXTRACT_SYSTEM = """Extract DURABLE user preference signals from a product-research interview.
+
+Keep only facts likely to remain relevant months later.
+
+INCLUDE
+- Physical traits: sensitive skin, wears glasses, flat feet, runs hot, fragrance-sensitive
+- Long-term preferences: balanced audio, minimal design, dislikes bass-heavy sound
+- Permanent aversions: allergies, fit issues, ingredient restrictions
+- Lifestyle constraints: exercises daily, works from home, long commute
+- Body-fit constraints: narrow feet, small wrists, large head circumference
+
+EXCLUDE
+- Budget or price constraints
+- Current shopping intent
+- Location/region
+- Generic preferences ("good quality", "value for money")
+- Temporary or one-time needs
+
+Rules:
+- strength: strong = physical constraint/allergy; moderate = explicit preference; weak = soft preference
+- category_hint: "any" for cross-category facts; otherwise the most relevant category
+- text: concise third-person fact — "Has sensitive dry skin", not "User said skin is dry"
+- If no durable signals exist, return {"signals":[]}
+
+Return ONLY valid JSON:
+{"signals":[{"type":"preference"|"rejection"|"complaint","category_hint":"<category|any>","text":"<fact>","strength":"strong"|"moderate"|"weak"}]}"""
+
 
 # ---------------------------------------------------------------------------
 # Signal extraction (runs after interview completes)
 # ---------------------------------------------------------------------------
-
-_EXTRACT_SYSTEM = """You extract DURABLE user preference signals from a product research interview.
-
-ONLY extract signals that will be EQUALLY RELEVANT in future searches (weeks or months from now).
-
-INCLUDE (durable facts):
-- Physical traits: sensitive skin, wears glasses, has flat feet, runs hot, sensitive to fragrance
-- Long-term taste: prefers balanced audio, dislikes bass-heavy sound, likes minimal design
-- Permanent aversions: allergic to nickel, hates in-ear fit, can't use creams with alcohol
-- Lifestyle context: exercises daily, works from home 8+ hrs, commutes by metro
-- Body type constraints: narrow feet, wrist under 16cm, large head circumference
-
-DO NOT EXTRACT (transient context):
-- Budget/price ("under ₹400", "wants something cheap") — budgets change per purchase
-- Current search intent ("looking for skincare now", "needs earbuds for gym")
-- Location/region — already stored separately
-- Vague preferences ("wants good quality", "likes value for money")
-- One-time context that won't apply next month
-
-RULES:
-1. "strength": "strong" = certain physical/allergy constraint; "moderate" = clear stated preference; "weak" = soft preference
-2. "category_hint": "any" ONLY for facts that apply across all shopping (e.g. "sensitive to fragrances", "has flat feet"). For product-specific facts, use the category (e.g. "skincare", "electronics/earbuds")
-3. Rephrase as a compact third-person fact: "Has sensitive, dry skin" not "User said their skin is dry and sensitive"
-4. If an interview has nothing durable, return {"signals": []}
-
-Return JSON only: {"signals": [{"type": "preference"|"rejection"|"complaint", "category_hint": "<category or 'any'>", "text": "<concise fact>", "strength": "strong"|"moderate"|"weak"}]}"""
-
 
 def extract_and_save_signals(
     category: str,
@@ -76,67 +166,99 @@ def extract_and_save_signals(
     Run signal_extractor agent on Q&A history, embed each signal, and persist.
     Returns list of extracted signal dicts (without embeddings).
     """
+    _warn_default_user("extract_and_save_signals", user_id)
+
     if not qa_history:
         return []
 
-    # Filter [Skipped] entries — they carry no signal worth persisting
     _SKIP_TOKENS = {"[Skipped]", "(skipped)"}
-    answered = [e for e in qa_history if e.get("answer", "") not in _SKIP_TOKENS]
+    answered = [
+        e for e in qa_history
+        if e.get("answer")
+        and e["answer"] not in _SKIP_TOKENS
+        and len(e["answer"].strip()) > 2
+    ]
     if not answered:
         return []
 
+    # Truncate runaway answers — keeps prompt size predictable
+    _MAX_ANSWER_CHARS = 400
     qa_text = "\n".join(
-        f"Q: {entry.get('question', '')}\nA: {entry.get('answer', '')}"
+        f"Q: {entry.get('question', '')}\nA: {entry['answer'][:_MAX_ANSWER_CHARS]}"
         for entry in answered
     )
     prompt = f"Category being researched: {category}\n\nInterview transcript:\n{qa_text}"
 
+    # Retry up to 3 attempts with back-off — LLM calls can transiently fail
+    last_exc: Exception | None = None
+    raw: str = ""
+    for attempt in range(3):
+        try:
+            raw = run_agent("signal_extractor", user_prompt=prompt, system=_EXTRACT_SYSTEM)
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    else:
+        _logger.warning("[memory] signal extraction LLM failed after 3 attempts: %s", last_exc)
+        return []
+
     try:
-        raw = run_agent("signal_extractor", user_prompt=prompt, system=_EXTRACT_SYSTEM)
-        from llm_client import _try_repair_json
-        data = _try_repair_json(raw)
+        data = _repair_json(raw)
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict, got {type(data).__name__}")
-        signals_raw = data.get("signals", [])
+        signals_unvalidated = data.get("signals", [])
     except Exception as exc:
-        print(f"[memory] signal extraction failed (non-fatal): {exc}")
+        _logger.warning("[memory] signal extraction parse failed (non-fatal): %s", exc)
         return []
+
+    # Strict schema validation — drop malformed entries
+    signals_raw: list[dict] = []
+    for raw_sig in signals_unvalidated:
+        validated = _validate_signal(raw_sig)
+        if validated is None:
+            _logger.debug("[memory] dropped malformed signal: %r", raw_sig)
+        else:
+            signals_raw.append(validated)
 
     if not signals_raw:
         return []
 
-    # Embed all signal texts in one batch call
-    texts = [s.get("text", "") for s in signals_raw]
-    embeddings = embed_batch(texts)
-
-    saved = []
-    try:
-        from db import save_signal as _save_signal
-    except ImportError:
-        print("[memory] db not importable — signals will not be persisted")
+    if not _DB_AVAILABLE:
+        _logger.warning("[memory] db not available — signals will not be persisted")
         return signals_raw
 
-    for i, sig in enumerate(signals_raw):
-        text = sig.get("text", "").strip()
-        if not text:
-            continue
+    # Embed all signal texts in one batch call
+    texts = [s["text"] for s in signals_raw]
+    embeddings = embed_batch(texts)
+
+    # Guard against partial embed_batch failure (len mismatch = silent crash)
+    if len(embeddings) != len(signals_raw):
+        _logger.warning(
+            "[memory] embed_batch returned %d embeddings for %d signals — truncating to min",
+            len(embeddings), len(signals_raw),
+        )
+
+    saved = []
+    for sig, emb in zip(signals_raw, embeddings):
         sig_id = "sig_" + uuid.uuid4().hex[:16]
         try:
-            _save_signal(
+            _db_save_signal(
                 signal_id=sig_id,
-                signal_type=sig.get("type", "preference"),
-                text=text,
-                embedding=embeddings[i],
-                category=sig.get("category_hint") or category,
-                strength=sig.get("strength", "moderate"),
+                signal_type=sig["type"],
+                text=sig["text"],
+                embedding=emb,
+                category=sig["category_hint"] or category,
+                strength=sig["strength"],
                 source_search_id=source_search_id,
                 user_id=user_id,
             )
             saved.append({"id": sig_id, **sig})
         except Exception as exc:
-            print(f"[memory] save_signal failed (non-fatal): {exc}")
+            _logger.warning("[memory] save_signal failed (non-fatal): %s", exc)
 
-    print(f"[memory] extracted and saved {len(saved)} signals from interview")
+    _logger.info("[memory] extracted and saved %d signals from interview", len(saved))
     return saved
 
 
@@ -157,21 +279,21 @@ def find_relevant_signals(
     Category filtering on top of similarity:
       - category_hint == "any"              → include if similarity ≥ min_similarity
       - category_hint == current_category   → include if similarity ≥ min_similarity - 0.1 (looser)
-      - category_hint != current_category   → include only if similarity ≥ min_similarity + 0.15 (tighter = cross-category transfer)
+      - category_hint != current_category   → include only if similarity ≥ min_similarity + 0.15 (tighter)
     """
+    _warn_default_user("find_relevant_signals", user_id)
+
+    if not _DB_AVAILABLE:
+        return []
+
     query_vec = embed(query)
     if query_vec is None:
         return []
 
     try:
-        from db import find_similar_signals
-    except ImportError:
-        return []
-
-    try:
-        raw_results = find_similar_signals(query_vec, k=k * 3, min_similarity=0.0, user_id=user_id)
+        raw_results = _db_find_similar(query_vec, k=k * 3, min_similarity=0.0, user_id=user_id)
     except Exception as exc:
-        print(f"[memory] find_similar_signals failed (non-fatal): {exc}")
+        _logger.warning("[memory] find_similar_signals failed (non-fatal): %s", exc)
         return []
 
     filtered = []
@@ -181,16 +303,11 @@ def find_relevant_signals(
         cat_lc = (current_category or "").lower()
 
         if hint == "any":
-            # "any" signals (e.g. "fragrance-free") are globally applicable, but we
-            # still require a higher bar when the current category is set — otherwise
-            # off-topic signals (skincare preferences during headphone searches) leak in
-            # at the default 0.70 threshold.  Without a current_category the user is
-            # category-agnostic and the default threshold applies.
             threshold = min_similarity if not cat_lc else min_similarity + 0.05
         elif hint == cat_lc:
             threshold = max(0.5, min_similarity - 0.1)
         else:
-            threshold = min_similarity + 0.15  # explicit cross-category: strictest
+            threshold = min_similarity + 0.15
 
         if sim >= threshold:
             filtered.append(r)
@@ -201,13 +318,18 @@ def find_relevant_signals(
 
 def summarize_user_profile(current_category: Optional[str] = None, user_id: str = "default") -> str:
     """
-    Generate a compact text summary of known user preferences.
-    Used to inject memory context into rubric generation and interview prompts.
+    Generate a compact text summary of known user preferences for prompt injection.
+    Capped at _MAX_PROFILE_CHARS to prevent prompt bloat for heavy users.
     Returns "" if no signals exist.
     """
+    _warn_default_user("summarize_user_profile", user_id)
+
+    if not _DB_AVAILABLE:
+        return ""
+
     try:
-        from db import list_signals
-        signals = list_signals(user_id=user_id, limit=50)
+        # Fetch a reasonable window; token budget below provides the real cap
+        signals = _db_list_signals(user_id=user_id, limit=100)
     except Exception:
         return ""
 
@@ -225,16 +347,27 @@ def summarize_user_profile(current_category: Optional[str] = None, user_id: str 
     if not relevant:
         return ""
 
-    strong = [s for s in relevant if s.get("strength") == "strong"]
+    strong   = [s for s in relevant if s.get("strength") == "strong"]
     moderate = [s for s in relevant if s.get("strength") == "moderate"]
 
     lines = ["Remembered user preferences (from past searches):"]
-    for s in strong[:8]:
-        tag = f"[{s.get('signalType', 'preference')}]"
-        lines.append(f"  • {tag} {s['text']}")
-    for s in moderate[:5]:
-        tag = f"[{s.get('signalType', 'preference')}]"
-        lines.append(f"  • {tag} {s['text']}")
+    chars = len(lines[0])
+
+    for s in strong[:10]:
+        tag  = f"[{s.get('signalType', 'preference')}]"
+        line = f"  • {tag} {s['text']}"
+        if chars + len(line) > _MAX_PROFILE_CHARS:
+            break
+        lines.append(line)
+        chars += len(line)
+
+    for s in moderate[:8]:
+        tag  = f"[{s.get('signalType', 'preference')}]"
+        line = f"  • {tag} {s['text']}"
+        if chars + len(line) > _MAX_PROFILE_CHARS:
+            break
+        lines.append(line)
+        chars += len(line)
 
     return "\n".join(lines)
 
@@ -251,65 +384,75 @@ def save_product_memory(
     user_feedback: Optional[str] = None,
 ) -> bool:
     """Upsert a product memory record. Returns True on success."""
+    if not _DB_AVAILABLE:
+        return False
+    canonical = _canonical_key(product_name)
     try:
-        from db import save_product_memory as _save
-        _save(product_name, category, status, our_score, user_feedback)
+        _db_save_product_memory(canonical, category, status, our_score, user_feedback)
         return True
     except Exception as exc:
-        print(f"[memory] save_product_memory failed (non-fatal): {exc}")
+        _logger.warning("[memory] save_product_memory failed (non-fatal): %s", exc)
         return False
 
 
 def get_product_memory(product_name: str) -> Optional[dict]:
+    if not _DB_AVAILABLE:
+        return None
+    canonical = _canonical_key(product_name)
     try:
-        from db import get_product_memory as _get
-        return _get(product_name)
+        return _db_get_product_memory(canonical)
     except Exception:
         return None
 
 
 def list_user_signals(limit: int = 200) -> list[dict]:
+    if not _DB_AVAILABLE:
+        return []
     try:
-        from db import list_signals
-        return list_signals(limit=limit)
+        return _db_list_signals(limit=limit)
     except Exception:
         return []
 
 
 def list_product_memories(limit: int = 100) -> list[dict]:
+    if not _DB_AVAILABLE:
+        return []
     try:
-        from db import list_product_memories as _list
-        return _list(limit=limit)
+        return _db_list_product_memories(limit=limit)
     except Exception:
         return []
 
 
 def delete_product_memory(product_name: str) -> bool:
+    if not _DB_AVAILABLE:
+        return False
+    canonical = _canonical_key(product_name)
     try:
-        from db import delete_product_memory as _delete
-        return _delete(product_name)
+        return _db_delete_product_memory(canonical)
     except Exception:
         return False
 
 
 def delete_signal(signal_id: str) -> bool:
+    if not _DB_AVAILABLE:
+        return False
     try:
-        from db import delete_signal as _delete
-        return _delete(signal_id)
+        return _db_delete_signal(signal_id)
     except Exception:
         return False
 
 
 def clear_all_memory() -> dict:
     """Nuclear option — deletes all signals and product memories."""
+    if not _DB_AVAILABLE:
+        return {"signals_deleted": 0, "products_deleted": 0}
     signals_deleted = 0
     products_deleted = 0
     try:
-        from db import clear_signals, clear_product_memories
-        signals_deleted = clear_signals()
-        products_deleted = clear_product_memories()
+        signals_deleted = _db_clear_signals()
+        products_deleted = _db_clear_product_memories()
     except Exception as exc:
-        print(f"[memory] clear_all_memory error: {exc}")
+        _logger.warning("[memory] clear_all_memory error: %s", exc)
     return {"signals_deleted": signals_deleted, "products_deleted": products_deleted}
 
 
@@ -325,29 +468,25 @@ def apply_product_memory_flags(scored_products: list[dict]) -> list[dict]:
 
     Does NOT hide products — user can see them all, just reordered/flagged.
     """
-    if not scored_products:
+    if not scored_products or not _DB_AVAILABLE:
         return scored_products
 
-    try:
-        from db import get_product_memory as _get
-    except ImportError:
-        return scored_products
-
-    flagged = []
+    flagged    = []
     pushed_down = []
 
     for p in scored_products:
         mem = None
         try:
-            mem = _get(p.get("name", ""))
+            # Canonical lookup so "iPhone 15" == "Apple iPhone 15" == "iphone15"
+            mem = _db_get_product_memory(_canonical_key(p.get("name", "")))
         except Exception:
             pass
 
         if mem:
             p["memory"] = {
-                "status": mem.get("status"),
+                "status":       mem.get("status"),
                 "userFeedback": mem.get("userFeedback") or mem.get("user_feedback"),
-                "ourScore": mem.get("ourScore") or mem.get("our_score"),
+                "ourScore":     mem.get("ourScore") or mem.get("our_score"),
             }
             if mem.get("status") == "rejected":
                 pushed_down.append(p)
