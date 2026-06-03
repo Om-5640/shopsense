@@ -108,9 +108,19 @@ export default function WatchPage() {
             setStatus('error')
             toast.error(message)
           },
-          onDone() {
+          onDone(_sid, _fromCache, warnings) {
             setStatus('done')
             try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
+            if (warnings && warnings.length > 0) {
+              warnings.forEach((w, i) => {
+                setTimeout(() => {
+                  toast.warning(w, {
+                    duration: 12000,
+                    id: `provider-warning-${i}`,
+                  })
+                }, i * 300)
+              })
+            }
             setTimeout(() => router.push(`/results/${id}`), 800)
           },
           onWarning() {

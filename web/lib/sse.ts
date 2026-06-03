@@ -13,7 +13,8 @@ export interface SSEHandlers {
   onStageDone: (stage: string, count?: number, productsFound?: number) => void
   onProgress: (stage: string, current: number, total?: number, detail?: string) => void
   onError: (message: string) => void
-  onDone: (searchId: string, fromCache?: boolean) => void
+  /** Called when the pipeline finishes. `warnings` carries provider-fallback messages. */
+  onDone: (searchId: string, fromCache?: boolean, warnings?: string[]) => void
   onWarning?: (message: string) => void
   /** Called when the pipeline returned a cached result — all stages can be marked complete. */
   onCacheHit?: () => void
@@ -61,7 +62,10 @@ export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = 
         es.close()
       } else if (event.type === 'done') {
         es.close()
-        handlers.onDone(searchId, event.data.from_cache === true)
+        const warnings = Array.isArray(event.data.pipeline_warnings)
+          ? (event.data.pipeline_warnings as string[])
+          : undefined
+        handlers.onDone(searchId, event.data.from_cache === true, warnings)
         return
       } else if (event.type === 'log') {
         const msg = (event.data.message as string) ?? ''

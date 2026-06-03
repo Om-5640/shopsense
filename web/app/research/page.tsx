@@ -666,15 +666,21 @@ function ResearchPageContent() {
         onError(message) {
           handleError(message)
         },
-        onDone(_sid, fromCache) {
+        onDone(_sid, fromCache, warnings) {
           setPhase('done')
           try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
-          if (fromCache) {
-            // Already showed the cache-hit toast; navigate immediately
-            router.push(`/results/${search_id}`)
-          } else {
-            router.push(`/results/${search_id}`)
+          // Show provider fallback warnings as dismissible amber toasts before navigating
+          if (warnings && warnings.length > 0) {
+            warnings.forEach((w, i) => {
+              setTimeout(() => {
+                toast.warning(w, {
+                  duration: 12000,
+                  id: `provider-warning-${i}`,
+                })
+              }, i * 300)
+            })
           }
+          router.push(`/results/${search_id}`)
         },
         onWarning() {
           toast.warning('Research data trimmed', {

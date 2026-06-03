@@ -11,6 +11,7 @@ selection are handled by separate REST endpoints BEFORE this runs.
 
 import math as _math
 import re as _re
+import os
 import sys
 import hashlib
 import json
@@ -106,7 +107,8 @@ class PipelineSession:
             "dedup_removed": 0,
             "llm_calls_estimated": 0,
             "tokens_estimated": 0,
-            "warnings": [],
+            "warnings": [],           # token-budget truncation warnings
+            "pipeline_warnings": [],  # provider fallback / infrastructure warnings
         }
 
     def emit(self, event_type: str, data: dict) -> None:
@@ -659,6 +661,9 @@ def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
     Phase 11: Write a structured JSON log entry for this pipeline run.
     Appended to logs/pipeline_YYYY-MM-DD.jsonl in the project root.
     Non-fatal: any failure is silently swallowed.
+
+    When LOG_FORMAT=json is set, also emits a single JSON line to stdout so
+    log aggregators (Datadog, Loki, CloudWatch) can parse it natively.
     """
     try:
         logs_dir = _ROOT / "logs"
@@ -674,6 +679,24 @@ def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
         with _log_lock:
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
+
+        # Structured stdout logging for production log aggregators
+        if os.environ.get("LOG_FORMAT", "").lower() == "json":
+            import sys
+            print(json.dumps({
+                "level": "info",
+                "event": "pipeline_complete",
+                "search_id": search_id,
+                "query": query,
+                "ts": entry["ts"],
+                "thread_count": stats.get("thread_count", 0),
+                "product_count": stats.get("product_count", 0),
+                "llm_calls": stats.get("llm_calls_estimated", 0),
+                "elapsed_s": stats.get("total_elapsed_s", 0),
+                "scoring_mode": stats.get("scoring_mode", "unknown"),
+                "provider_warnings": stats.get("pipeline_warnings", []),
+                "token_warnings": len(stats.get("warnings", [])),
+            }), file=sys.stdout, flush=True)
     except Exception as _log_err:
         _logger.debug("[pipeline_log] write failed (non-fatal): %s", _log_err)
 
@@ -681,6 +704,69 @@ def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
 def _check_cancelled(session: "PipelineSession") -> None:
     if session._cancelled:
         raise RuntimeError("Research stopped by user.")
+
+
+def _collect_provider_warnings(initial_status: dict) -> list[str]:
+    """
+    Diff provider status at pipeline end vs start to produce human-readable
+    warning strings surfaced in the UI as amber banners.
+
+    Cases:
+      - Provider was alive at start, dead at end     → quota / auth failure
+      - Provider circuit breaker tripped during run  → repeated errors
+      - All fast providers unavailable at start      → slower results expected
+    """
+    try:
+        from agents import get_provider_status
+        final = get_provider_status()
+    except Exception:
+        return []
+
+    warnings: list[str] = []
+    fast_providers = {"groq", "cerebras"}
+    fast_configured = [p for p in fast_providers if initial_status.get(p, {}).get("configured")]
+    fast_alive_start = [p for p in fast_configured if initial_status.get(p, {}).get("session_alive", True)]
+    fast_alive_end   = [p for p in fast_configured if final.get(p, {}).get("session_alive", True)]
+
+    for provider in ["groq", "cerebras", "mistral", "openrouter", "gemini"]:
+        init = initial_status.get(provider, {})
+        fin  = final.get(provider, {})
+        if not init.get("configured"):
+            continue
+
+        was_alive = init.get("session_alive", True)
+        is_alive  = fin.get("session_alive", True)
+        circuit   = fin.get("circuit_blocked", False)
+        was_circuit = init.get("circuit_blocked", False)
+
+        if was_alive and not is_alive:
+            label = provider.title()
+            if provider == "groq":
+                warnings.append(
+                    f"Groq API quota was hit during this search — some calls used a fallback provider."
+                )
+            elif provider == "cerebras":
+                warnings.append(
+                    f"Cerebras became unavailable — fell back to a backup provider for summarization."
+                )
+            else:
+                warnings.append(
+                    f"{label} became unavailable during this search — a fallback provider was used."
+                )
+
+        if circuit and not was_circuit:
+            warnings.append(
+                f"{provider.title()} circuit breaker tripped (too many errors) — "
+                f"excluded from remaining calls this session."
+            )
+
+    if fast_alive_start and not fast_alive_end:
+        warnings.append(
+            "All fast inference providers (Groq/Cerebras) became unavailable — "
+            "this search ran on slower backup providers. Results are the same quality but took longer."
+        )
+
+    return warnings
 
 
 def _execute_pipeline(
@@ -711,6 +797,14 @@ def _execute_pipeline(
     _stage_timings: dict[str, float] = {}
     # Computed once — profile doesn't change during a pipeline run
     _profile_hint = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
+
+    # Snapshot provider status before any LLM calls so we can diff at the end
+    # to produce human-readable pipeline_warnings for the UI.
+    try:
+        from agents import get_provider_status as _gps_initial
+        _initial_provider_status = _gps_initial()
+    except Exception:
+        _initial_provider_status = {}
 
     # Set region for thread-local calls downstream (must happen before any reddit_fetch call)
     set_session_region(region)
@@ -1191,17 +1285,27 @@ def _execute_pipeline(
     except Exception:
         session.stats["providers_used"] = []
 
+    # Collect provider fallback warnings by diffing initial vs final provider status
+    _provider_warnings = _collect_provider_warnings(_initial_provider_status)
+    if _provider_warnings:
+        session.stats["pipeline_warnings"] = _provider_warnings
+        for w in _provider_warnings:
+            _logger.warning("[pipeline] provider warning: %s", w)
+
     _logger.info(
-        "[pipeline] diagnostics: %d threads, %d products, ~%d LLM calls, ~%d tokens, mode=%s",
+        "[pipeline] diagnostics: %d threads, %d products, ~%d LLM calls, ~%d tokens, mode=%s, "
+        "%d provider warnings",
         session.stats["thread_count"],
         session.stats["product_count"],
         session.stats["llm_calls_estimated"],
         session.stats["tokens_estimated"],
         session.stats.get("scoring_mode", "?"),
+        len(_provider_warnings),
     )
     _write_pipeline_log(session.search_id, session.query, session.stats)
     session.emit("done", {
         "search_id": session.search_id,
         "elapsed_s": _total_elapsed,
         "diagnostics": session.stats,
+        "pipeline_warnings": session.stats["pipeline_warnings"],
     })

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Clock, Package, MessageSquare, Zap, GitMerge, AlertTriangle, CheckCircle2, Loader2, Cpu } from 'lucide-react'
+import { Clock, Package, MessageSquare, Zap, GitMerge, AlertTriangle, CheckCircle2, Loader2, Cpu, Wifi } from 'lucide-react'
 import { getDiagnostics } from '@/lib/api'
 import type { PipelineDiagnostics } from '@/lib/types'
 
@@ -183,7 +183,22 @@ export function DiagnosticsPanel({ searchId }: DiagnosticsPanelProps) {
         </div>
       )}
 
-      {/* Warnings */}
+      {/* Provider / infrastructure warnings */}
+      {stats.pipeline_warnings && stats.pipeline_warnings.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-[#71717A] uppercase tracking-wide mb-3">Provider Warnings</p>
+          <div className="space-y-2">
+            {stats.pipeline_warnings.map((w, i) => (
+              <div key={i} className="flex items-start gap-2 p-3 rounded-xl bg-orange-500/[0.07] border border-orange-500/20">
+                <Wifi className="w-3.5 h-3.5 text-orange-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-orange-200/80 leading-relaxed">{w}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Token budget warnings */}
       {stats.warnings && stats.warnings.length > 0 ? (
         <div>
           <p className="text-xs font-medium text-[#71717A] uppercase tracking-wide mb-3">Token Budget Warnings</p>

@@ -182,8 +182,9 @@ export interface PipelineEvent {
     products_found?: number
     message?: string
     search_id?: string
-    from_cache?: boolean   // true when the done event was triggered by a pipeline cache hit
+    from_cache?: boolean        // true when the done event was triggered by a pipeline cache hit
     elapsed_s?: number
+    pipeline_warnings?: string[] // provider fallback / infra warnings emitted with the done event
     [key: string]: unknown
   }
 }
@@ -346,8 +347,9 @@ export interface PipelineDiagnostics {
     dedup_removed: number
     llm_calls_estimated: number
     tokens_estimated: number
-    warnings: string[]
-    scoring_mode?: string        // "hybrid" | "llm" | "fast" — added in Tier 5
-    providers_used?: string[]    // active providers at pipeline end — added in Tier 6
+    warnings: string[]           // token-budget truncation warnings
+    pipeline_warnings?: string[] // provider fallback / infrastructure warnings
+    scoring_mode?: string        // "hybrid" | "llm" | "fast"
+    providers_used?: string[]    // active providers at pipeline end
   }
 }
