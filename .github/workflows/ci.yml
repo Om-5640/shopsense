@@ -53,6 +53,33 @@ jobs:
           SERPER_API_KEY: dummy
           OPENROUTER_API_KEY: dummy
 
+      - name: Unit tests
+        run: |
+          python -m pytest tests/unit/ -v
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
+      - name: Integration tests (DB + pipeline runner)
+        run: |
+          python -m pytest tests/integration/ -v
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
+      - name: E2E API tests
+        run: |
+          python -m pytest tests/e2e/ -v
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
       - name: Integration smoke tests
         run: |
           python -m pytest evals/integration/smoke_test.py evals/integration/orchestration_test.py -v
