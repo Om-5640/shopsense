@@ -147,11 +147,22 @@ def _dedup_key(provider: str, system: str, prompt: str, json_mode: bool, tempera
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
+_DEDUP_GRACE_S = 0.5  # keep completed results alive this long for late joiners (Bug H-2)
+
+
 def _dedup_join(key: str, timeout: float = 200.0) -> tuple[Any, BaseException | None] | None:
-    """If key is in-flight, wait and return (result, err). Returns None if not in-flight."""
+    """If key is in-flight OR recently completed, wait/return (result, err).
+    Returns None only if key is truly unknown (never started or grace window expired).
+
+    Bug H-2 fix: also check _dedup_results directly when key is no longer pending.
+    A leader that finished just before this call cleaned up _dedup_pending but leaves
+    the result in _dedup_results for _DEDUP_GRACE_S seconds so late joiners find it.
+    """
     with _dedup_lock:
         if key not in _dedup_pending:
-            return None
+            # Leader already finished — check for grace-window result
+            cached = _dedup_results.get(key)
+            return cached  # None if grace window has also expired
         ev = _dedup_pending[key]
         _dedup_refcount[key] = _dedup_refcount.get(key, 1) + 1
     ev.wait(timeout=timeout)
@@ -175,16 +186,26 @@ def _dedup_start(key: str) -> threading.Event:
 
 
 def _dedup_finish(key: str, ev: threading.Event, result: Any, err: BaseException | None):
-    """Publish result, notify all waiters, decrement originator refcount."""
+    """Publish result, notify all waiters, decrement originator refcount.
+
+    Bug H-2 fix: the result stays in _dedup_results for _DEDUP_GRACE_S seconds after
+    ev.set() so that late joiners (who arrive after pending is already cleaned up) can
+    still find the cached result instead of making a duplicate API call.
+    """
     with _dedup_lock:
         _dedup_results[key] = (result, err)
     ev.set()
-    with _dedup_lock:
-        _dedup_refcount[key] = _dedup_refcount.get(key, 1) - 1
-        if _dedup_refcount[key] <= 0:
-            _dedup_pending.pop(key, None)
-            _dedup_results.pop(key, None)
-            _dedup_refcount.pop(key, None)
+
+    def _deferred_cleanup():
+        time.sleep(_DEDUP_GRACE_S)
+        with _dedup_lock:
+            _dedup_refcount[key] = _dedup_refcount.get(key, 1) - 1
+            if _dedup_refcount[key] <= 0:
+                _dedup_pending.pop(key, None)
+                _dedup_results.pop(key, None)
+                _dedup_refcount.pop(key, None)
+
+    threading.Thread(target=_deferred_cleanup, daemon=True, name="dedup-gc").start()
 
 
 # ---- Smart POST helper with error-type-aware retry ----

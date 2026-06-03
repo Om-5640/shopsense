@@ -54,8 +54,8 @@ AGENTS = {
         "description": "Generate buying criteria for a product category",
     },
     "interview_questioner": {
-        "provider": "mistral",
-        "fallback_chain": ["gemini", "groq", "cerebras", _MASTER],
+        "provider": "groq",
+        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
         "temperature": 0.7,
         "max_tokens": 1024,
         "json_mode": True,
@@ -63,15 +63,15 @@ AGENTS = {
     },
     "interview_classifier": {
         "provider": "groq",
-        "fallback_chain": ["cerebras", "mistral", "gemini", _MASTER],
+        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
         "temperature": 0.1,
         "max_tokens": 512,
         "json_mode": True,
         "description": "Classify user interview message: ANSWER/QUESTION/MIXED/SKIP/COMMAND/UNCLEAR",
     },
     "preference_summarizer": {
-        "provider": "mistral",
-        "fallback_chain": ["gemini", "groq", "cerebras", _MASTER],
+        "provider": "groq",
+        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
         "temperature": 0.3,
         "max_tokens": 1024,
         "json_mode": True,
@@ -98,9 +98,9 @@ AGENTS = {
         "provider_pool": ["groq", "gemini", "mistral"],
         "fallback_chain": ["groq", "gemini", "mistral", _MASTER],
         "temperature": 0.2,
-        "max_tokens": 2048,
+        "max_tokens": 3072,  # increased: aliases field adds ~300-500 tokens of output
         "json_mode": True,
-        "description": "Summarize ONE Reddit thread into structured form (parallel)",
+        "description": "Summarize ONE Reddit thread into structured form, including product aliases (parallel)",
     },
     "main_analyzer": {
         "provider": "gemini",
@@ -152,31 +152,47 @@ AGENTS = {
         "json_mode": True,
         "description": "Score sentiment per product per comment (called only when product confirmed present)",
     },
+    "evidence_extractor": {
+        "provider": "groq",
+        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "json_mode": True,
+        "description": "Pre-extract per-criterion evidence counts and quotes from filtered research (10-30x token reduction to scorer)",
+    },
 }
 
 
 # Thread-safe round-robin counters per pool agent.
+# Capped at _POOL_COUNTERS_MAX to prevent unbounded growth when provider availability
+# changes frequently (each unique available-pool combination creates a new cycle key).
 _pool_lock = threading.Lock()
 _pool_counters: dict = {}
+_POOL_COUNTERS_MAX = 50
 
-# Session-level "fully dead" provider tracker - skip these in future calls
-# (e.g., once GroqQuotaExhausted fires, no point hammering Groq for the rest of this run)
-_dead_providers: set = set()
-_dead_lock = threading.Lock()
+# Single lock for all provider state (_dead_providers + _consec_failures).
+# Using two separate locks (_dead_lock + _consec_lock) allows _record_provider_outcome
+# to read _consec_failures and then call mark_provider_dead (which acquires _dead_lock)
+# while still holding _consec_lock — safe only because neither lock is ever acquired in
+# the reverse order.  One lock eliminates the subtle ordering dependency entirely.
+_provider_state_lock = threading.Lock()
+
+# Session-level "fully dead" provider tracker - skip these in future calls.
+# Dict maps provider → epoch timestamp when it was marked dead.
+# TTL-based: auto-unmarks after _DEAD_PROVIDER_TTL seconds so a provider that
+# recovered (quota reset, transient error) is retried after enough time has passed.
+_dead_providers: dict[str, float] = {}
+_DEAD_PROVIDER_TTL = 600  # seconds — 10 min covers any single search session (~2-5 min)
 
 # Consecutive failure counter — auto-dead after _CONSEC_FAIL_THRESHOLD failures.
-# Stored as (count, last_failure_timestamp). Failures older than _CONSEC_WINDOW seconds
-# are discarded, preventing stale state from one search bleeding into the next.
-# After auto-deading, the entry is removed — the _dead_providers set handles blocking.
 _consec_failures: dict[str, tuple[int, float]] = {}  # provider → (count, last_failure_ts)
-_consec_lock = threading.Lock()
 _CONSEC_FAIL_THRESHOLD = 3
 _CONSEC_WINDOW = 300  # seconds; failures outside this window don't count
 
 
 def _record_provider_outcome(provider: str, success: bool) -> None:
     """Track consecutive failures; auto-dead after _CONSEC_FAIL_THRESHOLD in a row."""
-    with _consec_lock:
+    with _provider_state_lock:
         if success:
             _consec_failures.pop(provider, None)
         else:
@@ -186,34 +202,53 @@ def _record_provider_outcome(provider: str, success: bool) -> None:
                 count = 0  # failures too old to count as consecutive
             count += 1
             if count >= _CONSEC_FAIL_THRESHOLD:
-                mark_provider_dead(provider)
-                _consec_failures.pop(provider, None)  # dead flag takes over; counter no longer needed
-                _logger.warning(
-                    "[provider:%s] %d consecutive failures — auto-marking dead for this session",
-                    provider, count,
-                )
+                # Mark dead inline (same lock already held — no nested lock needed)
+                if provider not in _dead_providers:
+                    _dead_providers[provider] = now
+                    _logger.warning(
+                        "[provider:%s] %d consecutive failures — auto-marking dead for this session",
+                        provider, count,
+                    )
+                _consec_failures.pop(provider, None)
             else:
                 _consec_failures[provider] = (count, now)
 
 
 def mark_provider_dead(provider: str) -> None:
-    """Mark a provider as dead for the rest of this run. Subsequent calls skip it."""
-    with _dead_lock:
+    """Mark a provider as dead. Subsequent calls skip it until TTL expires."""
+    with _provider_state_lock:
         if provider not in _dead_providers:
-            _dead_providers.add(provider)
-            _logger.warning("[provider:%s] marked dead for this session (will be skipped)", provider)
+            _dead_providers[provider] = time.time()
+            _logger.warning(
+                "[provider:%s] marked dead (will be skipped for %.0f min)",
+                provider, _DEAD_PROVIDER_TTL / 60,
+            )
 
 
 def is_provider_dead(provider: str) -> bool:
-    return provider in _dead_providers
+    """Return True if provider is dead and its TTL has not yet expired."""
+    with _provider_state_lock:
+        ts = _dead_providers.get(provider)
+        if ts is None:
+            return False
+        if time.time() - ts > _DEAD_PROVIDER_TTL:
+            del _dead_providers[provider]
+            _logger.info("[provider:%s] dead-flag expired — auto-unmarking", provider)
+            return False
+        return True
 
 
 def reset_dead_providers() -> None:
-    """Clear the dead set and consecutive counters. Useful for tests or long-running sessions."""
-    with _dead_lock:
-        _dead_providers.clear()
-    with _consec_lock:
-        _consec_failures.clear()
+    """Purge only expired dead-flags so new searches start fresh without clobbering
+    active flags from concurrent in-flight searches."""
+    now = time.time()
+    with _provider_state_lock:
+        stale = [p for p, ts in _dead_providers.items() if now - ts > _DEAD_PROVIDER_TTL]
+        for p in stale:
+            del _dead_providers[p]
+        if stale:
+            _logger.info("[provider] purged %d expired dead-flags: %s", len(stale), stale)
+        _consec_failures.clear()  # consecutive-failure counts are cheap to reset per-search
 
 
 def _available_for_pool(pool: list) -> list:
@@ -233,6 +268,8 @@ def _next_from_pool(agent_name: str, pool: list) -> str:
     with _pool_lock:
         key = f"{agent_name}|{','.join(available_pool)}"
         if key not in _pool_counters:
+            if len(_pool_counters) >= _POOL_COUNTERS_MAX:
+                _pool_counters.clear()  # cycle objects are cheap to recreate; drop stale keys
             _pool_counters[key] = itertools.cycle(available_pool)
         return next(_pool_counters[key])
 

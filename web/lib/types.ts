@@ -182,6 +182,8 @@ export interface PipelineEvent {
     products_found?: number
     message?: string
     search_id?: string
+    from_cache?: boolean   // true when the done event was triggered by a pipeline cache hit
+    elapsed_s?: number
     [key: string]: unknown
   }
 }

@@ -71,6 +71,8 @@ _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from agents import reset_dead_providers as _reset_dead_providers
+
 
 # In-memory session registry (survives only while the server is up)
 # Hard cap: reject new sessions when this many are active, preventing unbounded memory growth.
@@ -79,8 +81,9 @@ _MAX_CONCURRENT_SESSIONS = 100
 _sessions: dict[str, "PipelineSession"] = {}
 _sessions_lock = threading.Lock()
 
+_log_lock = threading.Lock()  # serialises concurrent append-writes to the daily pipeline log
 
-_MAX_EVENT_LOG = 500  # cap per-session event replay log to prevent unbounded memory growth
+_MAX_EVENT_LOG = 100  # cap per-session event replay log — 100 entries covers any reconnect scenario
 
 
 class PipelineSession:
@@ -129,6 +132,15 @@ class PipelineSession:
         self.finish()
 
 
+def find_inflight_session(query: str) -> Optional["PipelineSession"]:
+    """Return an existing running session for the same query, or None."""
+    with _sessions_lock:
+        for s in _sessions.values():
+            if s.status == "running" and s.query == query:
+                return s
+    return None
+
+
 def create_session(search_id: str, query: str) -> "PipelineSession":
     session = PipelineSession(search_id, query)
     with _sessions_lock:
@@ -150,8 +162,7 @@ def create_session(search_id: str, query: str) -> "PipelineSession":
     # The module-level _dead_providers set was persisting across requests, causing
     # providers exhausted in search N to be skipped permanently in searches N+1..∞.
     try:
-        from agents import reset_dead_providers
-        reset_dead_providers()
+        _reset_dead_providers()
     except Exception:
         pass
     return session
@@ -173,14 +184,16 @@ def cancel_session(search_id: str) -> bool:
 
 
 def cleanup_old_sessions(max_age_hours: int = 2) -> int:
-    """Remove done/error sessions older than max_age_hours, and hung running sessions older than 4h."""
+    """Remove finished sessions after max_age_hours, cancelled sessions after 30 min, hung running after 4h."""
     cutoff = time.time() - max_age_hours * 3600
+    cancelled_cutoff = time.time() - 1800   # 30 min — cancelled sessions hold no useful state
     running_cutoff = time.time() - 4 * 3600
     removed = 0
     with _sessions_lock:
         to_remove = [
             sid for sid, s in _sessions.items()
             if (s.status in ("done", "error") and s._created_at < cutoff)
+            or (s.status == "cancelled" and s._created_at < cancelled_cutoff)
             or (s.status == "running" and s._created_at < running_cutoff)
         ]
         for sid in to_remove:
@@ -219,6 +232,13 @@ def start_pipeline(
         finally:
             _hb_stop.set()
             session.finish()
+            # Release the thread-local SQLite connection so this daemon thread
+            # doesn't hold a file handle after the pipeline finishes (Bug M-3).
+            try:
+                from db import close_db_connection
+                close_db_connection()
+            except Exception:
+                pass
 
     t = threading.Thread(target=run, daemon=True, name=f"pipeline-{session.search_id}")
     t.start()
@@ -237,25 +257,39 @@ def start_pipeline(
 # Pipeline result cache (Phase 8) — skip full re-run for repeated searches
 # ---------------------------------------------------------------------------
 
-_PIPELINE_CACHE_TTL = 3600  # 1 hour
+_PIPELINE_CACHE_TTL = 86400  # 24 hours — product landscapes don't change hourly
 
-def _pipeline_cache_key(query: str, category: str, rubric: dict) -> str:
+def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict | None = None) -> str:
     """
-    Deterministic cache key: hash of query + category + gap-filled rubric weights.
+    Deterministic cache key: hash of query + category + rubric weights + interview Q&A.
 
     IMPORTANT: always call this AFTER fill_criterion_gaps() so the key reflects the
     gap-filled rubric weights. Calling it on the pre-gap rubric causes different users
     with identical pre-gap rubrics but different gap-fill results to share a stale cache entry.
 
-    Interview answers are intentionally excluded: slight rephrasing of the same intent
-    (e.g. "I want bass" vs "strong bass") produced the same rubric weights after gap-fill
-    but different cache keys, causing unnecessary full re-runs.
+    Includes interview Q&A (question+answer pairs) so two users with different stated needs
+    but coincidentally identical gap-filled weights still get separate cache entries.
+    Excludes preferences_summary: it is a merged/augmented view that changes with cross-search
+    memory signals, which must not bust the cache for an otherwise identical search.
     """
     weights = sorted(
         (c["name"], c["weight"])
         for c in rubric.get("weighted_criteria", [])
     )
-    payload = f"{query.lower().strip()}|{category}|{json.dumps(weights, sort_keys=True)}"
+    qa_pairs: list[tuple[str, str]] = []
+    if profile and isinstance(profile, dict):
+        for qa in profile.get("interview", []):
+            if isinstance(qa, dict):
+                q = str(qa.get("question", "")).strip().lower()
+                a = str(qa.get("answer", "")).strip().lower()
+                if q or a:
+                    qa_pairs.append((q, a))
+        qa_pairs.sort()
+    payload = (
+        f"{query.lower().strip()}|{category}"
+        f"|{json.dumps(weights, sort_keys=True)}"
+        f"|{json.dumps(qa_pairs)}"
+    )
     return hashlib.md5(payload.encode()).hexdigest()
 
 
@@ -442,11 +476,15 @@ def _build_score_based_explanation(product: dict) -> str:
     top = by_contribution[0] if by_contribution else None
     weak = [s for s in by_contribution if s.get("score", 5) <= 4]
 
+    def _fmt_label(label: str) -> str:
+        """Normalize snake_case or mixed-case criterion labels to human-readable title case."""
+        return label.replace("_", " ").strip().lower()
+
     parts = []
     if top and top.get("score", 0) >= 7:
-        parts.append(f"Strong in {top['label'].lower()}")
+        parts.append(f"Strong in {_fmt_label(top['label'])}")
     if weak:
-        parts.append(f"lower {weak[-1]['label'].lower()}")
+        parts.append(f"lower {_fmt_label(weak[-1]['label'])}")
     return ". ".join(parts) + "." if parts else ""
 
 
@@ -619,8 +657,9 @@ def _write_pipeline_log(search_id: str, query: str, stats: dict) -> None:
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             **stats,
         }
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        with _log_lock:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
     except Exception as _log_err:
         _logger.debug("[pipeline_log] write failed (non-fatal): %s", _log_err)
 
@@ -645,7 +684,7 @@ def _execute_pipeline(
     # Lazy imports — avoid loading heavy modules at server startup
     from reddit_fetch import fetch_all_threads, set_session_region
     from review_fetch import fetch_all_reviews
-    from thread_summarizer import summarize_threads_parallel
+    from thread_summarizer import summarize_threads_parallel, build_coref_maps_from_summaries
     from llm_client import analyze_with_summaries
     from normalizer import normalize_all
     from rubric import fill_criterion_gaps
@@ -666,7 +705,7 @@ def _execute_pipeline(
     # We check cache here with the pre-gap rubric. After gap-filling we recompute the key
     # and save under the post-gap key. On subsequent runs the pre-gap lookup will miss
     # (weights differ) and we'll find the post-gap entry instead — ensuring no stale results.
-    _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric)
+    _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
     _cached_result = _load_pipeline_cache(_pre_gap_cache_key)
     if _cached_result:
         age_s = int(time.time() - _cached_result.get("_cached_at", 0))
@@ -705,7 +744,10 @@ def _execute_pipeline(
     enriched_query = _build_retrieval_query(query, profile, rubric=rubric)
     if enriched_query != query:
         session.emit_log(f"[retrieval] query enriched: '{query}' → '{enriched_query}'")
-    reddit_threads = fetch_all_threads(enriched_query, limit=limit, profile=profile)
+    reddit_threads = fetch_all_threads(
+        enriched_query, limit=limit, profile=profile,
+        cancel_fn=lambda: session._cancelled,
+    )
     _stage_timings["reddit_fetch"] = round(time.time() - _t0, 1)
     session.stats["thread_count"] = len(reddit_threads)
     session.stats["stage_timings"]["reddit_fetch"] = _stage_timings["reddit_fetch"]
@@ -795,13 +837,33 @@ def _execute_pipeline(
     session.stats["stage_timings"]["analyze"] = _stage_timings["analyze"]
     session.stats["llm_calls_estimated"] += 1  # one main_analyzer call
 
-    # W-03: Log products whose names have no overlap with primary_noun (potential off-category)
-    _noun_words = {w for w in _re.findall(r'[a-z]{4,}', (primary_noun or "").lower())
-                   if w not in ('best', 'good', 'most', 'with', 'that', 'this', 'from')}
-    if _noun_words and len(products) > 3:
-        _off = [p.get("name", "") for p in products if not any(w in p.get("name", "").lower() for w in _noun_words)]
+    # W-03: Detect and filter products that don't match primary_noun.
+    # Fixes from audit:
+    #   - Lower minimum word length to 2 so "AC", "TV", "PC" are not skipped.
+    #   - Use word-boundary regex instead of substring containment to reduce false positives.
+    #   - Actually filter (not just log) when confidence is high: <40% of products flagged,
+    #     at least 3 survivors, and noun is specific enough (≥3 chars).
+    _noun_lower = (primary_noun or "").strip().lower()
+    _w03_stop = {'best', 'good', 'most', 'with', 'that', 'this', 'from', 'the', 'and', 'for'}
+    _noun_words = {w for w in _re.findall(r'[a-z0-9]{2,}', _noun_lower) if w not in _w03_stop}
+    _noun_pats = [_re.compile(r'\b' + _re.escape(w) + r'\b') for w in _noun_words]
+
+    def _name_matches_noun(name: str) -> bool:
+        nl = name.lower()
+        return any(p.search(nl) for p in _noun_pats)
+
+    if _noun_pats and len(products) > 3:
+        _off = [p for p in products if not _name_matches_noun(p.get("name", ""))]
         if _off and len(_off) < len(products):
-            session.emit_log(f"[W03] {len(_off)} products may be off-category for '{primary_noun}': {_off[:3]}")
+            session.emit_log(
+                f"[W03] {len(_off)} products may be off-category for '{primary_noun}': "
+                f"{[p.get('name', '?') for p in _off[:3]]}"
+            )
+            # Filter only when confident: <40% flagged, ≥3 survivors, noun specific enough
+            _on = [p for p in products if _name_matches_noun(p.get("name", ""))]
+            if len(_on) >= 3 and len(_off) / len(products) < 0.4 and len(_noun_lower) >= 3:
+                products = _on
+                session.emit_log(f"[W03] filtered to {len(products)} on-category products")
     session.emit("stage_done", {
         "stage": "analyze",
         "products_found": len(products),
@@ -821,7 +883,7 @@ def _execute_pipeline(
     # Post-gap cache check: if a prior run produced identical gap-filled weights, skip all
     # scoring stages (the most expensive part). Reddit/review/summarize/analyze already ran,
     # but scoring + explanations (~8+ LLM calls) are skipped.
-    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric)
+    _post_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
     if _post_gap_cache_key != _pre_gap_cache_key:
         _post_gap_cached = _load_pipeline_cache(_post_gap_cache_key)
         if _post_gap_cached:
@@ -890,6 +952,7 @@ def _execute_pipeline(
             llm_client=_agent_caller,
             base_registry=_base_registry,
             run_sentiment=True,
+            pre_coref_maps=build_coref_maps_from_summaries(thread_summaries),
         )
 
         # Build a lowercase lookup so case-drift between the LLM coref output
@@ -1083,12 +1146,44 @@ def _execute_pipeline(
     # Phase 11: Finalize stats and emit with done event
     session.stats["total_elapsed_s"] = _total_elapsed
     session.stats["stage_timings"]["total"] = _total_elapsed
+
+    # Add the fixed-count calls that weren't tracked inline:
+    #   cross_validator: 1 call
+    #   gap_filler: 1 call (skipped when <2 defaults, but count it)
+    #   explanation_writer: min(5, product_count) calls
+    #   signal_extractor: 1 call (if qa_history provided)
+    #   sentiment (thread-level batch): up to len(deduped_threads) calls (now ≤15)
+    session.stats["llm_calls_estimated"] += (
+        1  # cross_validator
+        + 1  # gap_filler
+        + min(5, session.stats["product_count"])  # explanation_writer
+        + 1  # signal_extractor
+        + session.stats["thread_count"]  # sentiment: one batch call per thread max
+    )
+
+    # Enrich pipeline log with scoring mode and live provider status
+    try:
+        from scorer import SCORING_MODE as _scoring_mode
+        session.stats["scoring_mode"] = _scoring_mode
+    except Exception:
+        session.stats["scoring_mode"] = "unknown"
+    try:
+        from agents import get_provider_status as _gps
+        _pstatus = _gps()
+        session.stats["providers_used"] = [
+            p for p, info in _pstatus.items()
+            if info.get("session_alive") and not info.get("circuit_blocked")
+        ]
+    except Exception:
+        session.stats["providers_used"] = []
+
     _logger.info(
-        "[pipeline] diagnostics: %d threads, %d products, ~%d LLM calls, ~%d tokens",
+        "[pipeline] diagnostics: %d threads, %d products, ~%d LLM calls, ~%d tokens, mode=%s",
         session.stats["thread_count"],
         session.stats["product_count"],
         session.stats["llm_calls_estimated"],
         session.stats["tokens_estimated"],
+        session.stats.get("scoring_mode", "?"),
     )
     _write_pipeline_log(session.search_id, session.query, session.stats)
     session.emit("done", {

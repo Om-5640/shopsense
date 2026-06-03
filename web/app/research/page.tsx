@@ -596,7 +596,7 @@ function ResearchPageContent() {
     setPhase('running')
 
     try {
-      const { search_id } = await startSearch({
+      const { search_id, deduplicated } = await startSearch({
         query,
         category,
         region,
@@ -605,6 +605,12 @@ function ResearchPageContent() {
         qa_history: qaHistory,
         primary_noun: primaryNoun || category.split('/').pop() || '',
       })
+      if (deduplicated) {
+        toast.info('Joining existing research session…', {
+          description: 'This query is already being researched — connecting to the live results.',
+          duration: 4000,
+        })
+      }
       setActiveSearchId(search_id)
       // Persist so the user can rejoin from history/home if they navigate away
       try { localStorage.setItem('shopsense_active_search', JSON.stringify({ id: search_id, query, ts: Date.now() })) } catch { /* ignore */ }
@@ -644,13 +650,30 @@ function ResearchPageContent() {
             )
           }
         },
+        onCacheHit() {
+          // Pipeline returned a cached result — mark all pipeline stages complete immediately
+          setStages((prev) => prev.map((s) =>
+            ['reddit', 'scraping', 'summarizing', 'analyzing', 'scoring'].includes(s.id)
+              ? { ...s, status: 'complete' }
+              : s
+          ))
+          toast.success('Loaded from cache', {
+            description: 'Results are from a recent identical search — no new research needed.',
+            duration: 4000,
+          })
+        },
         onError(message) {
           handleError(message)
         },
-        onDone() {
+        onDone(_sid, fromCache) {
           setPhase('done')
           try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
-          router.push(`/results/${search_id}`)
+          if (fromCache) {
+            // Already showed the cache-hit toast; navigate immediately
+            router.push(`/results/${search_id}`)
+          } else {
+            router.push(`/results/${search_id}`)
+          }
         },
         onWarning() {
           toast.warning('Research data trimmed', {

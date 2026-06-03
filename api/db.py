@@ -115,11 +115,28 @@ def _pg_transaction():
 def _sqlite_connect() -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn is None:
         _SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _local.conn = sqlite3.connect(str(_SQLITE_PATH), check_same_thread=False)
-        _local.conn.row_factory = sqlite3.Row
-        _local.conn.execute("PRAGMA journal_mode=WAL")
-        _local.conn.execute("PRAGMA foreign_keys=ON")
+        conn = sqlite3.connect(str(_SQLITE_PATH), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn = conn
     return _local.conn
+
+
+def close_db_connection() -> None:
+    """Close and discard the calling thread's SQLite connection.
+
+    Call this at the end of any long-lived worker thread (e.g., ThreadPoolExecutor
+    tasks) to release the file handle. The next call to _sqlite_connect() on the
+    same thread opens a fresh connection.  Safe to call when no connection exists.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 
 # ---------------------------------------------------------------------------

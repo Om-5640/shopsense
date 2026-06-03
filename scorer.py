@@ -35,12 +35,12 @@ MAX_SCORING_WORKERS = 4    # One concurrent call per provider in the pool
 
 # Scoring mode: "llm" (full), "hybrid" (LLM for top 10, fast for rest), "fast" (heuristic only)
 _VALID_SCORING_MODES = {"llm", "hybrid", "fast"}
-_raw_mode = os.environ.get("SCORING_MODE", "llm").lower().strip()
-SCORING_MODE = _raw_mode if _raw_mode in _VALID_SCORING_MODES else "llm"
+_raw_mode = os.environ.get("SCORING_MODE", "hybrid").lower().strip()
+SCORING_MODE = _raw_mode if _raw_mode in _VALID_SCORING_MODES else "hybrid"
 if _raw_mode not in _VALID_SCORING_MODES and _raw_mode:
     import logging as _log
     _log.getLogger(__name__).warning(
-        "[scorer] SCORING_MODE=%r is not valid (must be llm|hybrid|fast) — defaulting to 'llm'", _raw_mode
+        "[scorer] SCORING_MODE=%r is not valid (must be llm|hybrid|fast) — defaulting to 'hybrid'", _raw_mode
     )
 
 
@@ -259,8 +259,6 @@ def _format_product(p: dict) -> str:
         lines.append(f"Complaints (extracted): {'; '.join(comps)}")
     if p.get("representative_quote"):
         lines.append(f"Top quote: \"{p['representative_quote']}\"")
-    if p.get("sources"):
-        lines.append(f"Sources: {', '.join(p['sources'][:5])}")
     return "\n".join(lines)
 
 
@@ -375,6 +373,7 @@ def _score_batch(
     rubric: dict,
     full_research_text: str,
     user_intent: dict | None = None,
+    per_product_budget: int | None = None,
 ) -> list[dict]:
     """
     Score a batch of products in a single LLM call.
@@ -386,10 +385,14 @@ def _score_batch(
       4. Single batch scoring call using structured evidence
       Fallback: raw research text if extraction fails (existing BATCH_SYSTEM path)
 
+    per_product_budget: pre-computed by the caller (score_all_products) so it is not
+    recomputed for every batch. Falls back to _get_provider_research_budget() if omitted.
+
     Returns list of scored dicts. Products that fail get None — caller retries them.
     """
     criteria = rubric["weighted_criteria"]
-    per_product_budget = _get_provider_research_budget()
+    if per_product_budget is None:
+        per_product_budget = _get_provider_research_budget()
 
     # Step 1: filter and sanitize research per product
     filtered_research = [
@@ -461,11 +464,10 @@ def _score_batch(
         name_lower = p.get("name", "").lower().strip()
         match = by_name.get(name_lower)
         if not match:
-            # Try fuzzy match: any output name containing input name or vice versa
-            for out_name, entry in by_name.items():
-                if name_lower in out_name or out_name in name_lower:
-                    match = entry
-                    break
+            _logger.debug(
+                "[scorer] exact name match failed for %r — LLM returned: %s",
+                p.get("name"), list(by_name.keys()),
+            )
 
         if not match or not isinstance(match.get("scores"), list):
             results.append(None)
@@ -599,12 +601,16 @@ def _run_parallel_batch_scoring(
     batches = [products[i:i + PRODUCTS_PER_BATCH] for i in range(0, n, PRODUCTS_PER_BATCH)]
     print(f"[scorer] {len(batches)} batches to process")
 
+    # Compute provider budget once — same for all batches in this scoring run.
+    # Previously called inside _score_batch (once per batch = 5 provider-status lookups per search).
+    _budget = _get_provider_research_budget()
+
     # Thread-safe results dict: product name → scored dict
     results: dict[str, dict] = {}
 
     def score_batch_with_retry(batch: list[dict]) -> list[dict]:
         """Try batch scoring; fall back to per-product if batch parse fails."""
-        batch_results = _score_batch(batch, rubric, full_research_text, user_intent)
+        batch_results = _score_batch(batch, rubric, full_research_text, user_intent, per_product_budget=_budget)
         # For any None results (parse failures), retry individually
         final = []
         for p, br in zip(batch, batch_results):
@@ -723,7 +729,12 @@ def recompute_with_new_weights(scored_products: list[dict], new_rubric: dict) ->
         max_possible = 0.0
         new_scores = []
         for s in p["scores"]:
-            weight = new_weights.get(s["criterion"], s["weight"])
+            if s["criterion"] not in new_weights:
+                # Drop criteria that no longer exist in the updated rubric.
+                # Previously these kept their old weight, inflating totals when the rubric
+                # was narrowed (e.g., user removed a criterion via the UI).
+                continue
+            weight = new_weights[s["criterion"]]
             weighted_total += s["score"] * weight
             max_possible += 10 * weight
             new_scores.append({

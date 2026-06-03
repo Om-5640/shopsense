@@ -35,6 +35,7 @@ import sys
 import os
 import json
 import asyncio
+import threading
 import uuid
 import time
 from pathlib import Path
@@ -68,7 +69,7 @@ _logger = _logging.getLogger(__name__)
 
 from db import init_db, create_search, update_search, get_search, list_searches
 from db import get_profile, save_profile_db
-from pipeline_runner import create_session, start_pipeline, get_session, cancel_session, cleanup_old_sessions
+from pipeline_runner import create_session, find_inflight_session, start_pipeline, get_session, cancel_session, cleanup_old_sessions
 
 # ---------------------------------------------------------------------------
 # Hot-path module imports — loaded at startup for faster per-request handling
@@ -114,6 +115,18 @@ except ImportError:
 
 _API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
 
+# Per-profile-key write lock — prevents two browser tabs (or rapid retries) from
+# concurrently overwriting each other's profile saves for the same category.
+_profile_write_locks: dict[str, threading.Lock] = {}
+_profile_locks_mutex = threading.Lock()
+
+
+def _get_profile_write_lock(key: str) -> threading.Lock:
+    with _profile_locks_mutex:
+        if key not in _profile_write_locks:
+            _profile_write_locks[key] = threading.Lock()
+        return _profile_write_locks[key]
+
 # Session cleanup interval — default 30 min; reduce under high load or increase for quiet servers
 _CLEANUP_INTERVAL_S = int(os.environ.get("SESSION_CLEANUP_INTERVAL_S", "1800"))
 
@@ -138,7 +151,9 @@ async def _session_cleanup_loop() -> None:
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_S)
         try:
-            removed = cleanup_old_sessions()
+            # Run cleanup off the event-loop thread so acquiring _sessions_lock
+            # doesn't block async request handlers (Bug L-3).
+            removed = await asyncio.to_thread(cleanup_old_sessions)
             if removed:
                 _logger.info("[session_cleanup] removed %d stale sessions", removed)
         except Exception as exc:
@@ -163,6 +178,18 @@ async def lifespan(app: FastAPI):
         _cache_mod.purge_expired(max_age_seconds=86400)
     except Exception as exc:
         _logger.debug("[startup] cache purge skipped: %s", exc)
+    # Preload heavy pipeline modules now so the first real search request doesn't pay
+    # the cold-import cost (~0.3-0.8s on spinning disk / slow SSD).
+    # All imports are in try/except so a missing optional dep never prevents startup.
+    _pipeline_preloads = [
+        "scorer", "thread_summarizer", "mention_pipeline",
+        "review_fetch", "normalizer", "embeddings",
+    ]
+    for _mod in _pipeline_preloads:
+        try:
+            __import__(_mod)
+        except Exception as _exc:
+            _logger.debug("[startup] preload skipped for %s: %s", _mod, _exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     try:
         yield
@@ -442,6 +469,13 @@ def generate_rubric_endpoint(request: Request, body: dict) -> dict:
 @limiter.limit("10/minute")
 def start_search(request: Request, req: SearchRequest, _auth: None = Depends(_check_api_key)) -> dict:
     user_id = _get_session_user_id(request)
+    # Dedup: if an identical query is already in-flight, return its search_id instead of
+    # launching a second full pipeline run (prevents double-click / rapid-retry cost duplication).
+    existing = find_inflight_session(req.query)
+    if existing:
+        _logger.info("[search] dedup hit — returning existing in-flight session %s for query %r",
+                     existing.search_id, req.query)
+        return {"search_id": existing.search_id, "deduplicated": True}
     search_id = str(uuid.uuid4())
     create_search(search_id, req.query, req.category, req.region)
     update_search(search_id, profile=req.profile, rubric=req.rubric, status="running")
@@ -526,12 +560,25 @@ def cancel_search_endpoint(search_id: str) -> dict:
     return {"cancelled": cancelled, "search_id": search_id}
 
 
+def _strip_profile_pii(search: dict) -> dict:
+    """Remove interview Q&A from a search row before sending to the client.
+
+    profile.interview contains verbatim user answers — PII that has no place
+    in a list endpoint visible to any authenticated caller. The preferences_summary
+    (a sanitised text blob) is kept for display purposes.
+    """
+    profile = search.get("profile")
+    if isinstance(profile, dict) and "interview" in profile:
+        search = {**search, "profile": {k: v for k, v in profile.items() if k != "interview"}}
+    return search
+
+
 @app.get("/api/searches")
 def list_all_searches(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    items = list_searches(limit=limit, offset=offset)
+    items = [_strip_profile_pii(s) for s in list_searches(limit=limit, offset=offset)]
     return {"searches": items, "limit": limit, "offset": offset}
 
 
@@ -554,7 +601,9 @@ def get_profile_endpoint(request: Request, category: str) -> dict:
 @app.post("/api/profile/{category:path}")
 def save_profile_endpoint(request: Request, category: str, req: SaveProfileRequest) -> dict:
     user_id = _get_session_user_id(request)
-    save_profile_db(_profile_key(user_id, category), req.profile)
+    key = _profile_key(user_id, category)
+    with _get_profile_write_lock(key):
+        save_profile_db(key, req.profile)
     return {"saved": True}
 
 

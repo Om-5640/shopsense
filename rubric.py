@@ -24,13 +24,23 @@ RUBRICS_DIR.mkdir(exist_ok=True)
 
 # Per-category file locks — prevents concurrent same-category searches from
 # corrupting rubrics/<category>.json via interleaved writes.
+# Capped at _RUBRIC_LOCK_MAX: on a long-running server handling thousands of distinct
+# category strings the dict would otherwise grow without bound (Bug M-2).
 _rubric_file_locks: dict[str, threading.Lock] = {}
 _rubric_locks_mutex = threading.Lock()
+_RUBRIC_LOCK_MAX = 200
 
 
 def _get_rubric_lock(category: str) -> threading.Lock:
     with _rubric_locks_mutex:
         if category not in _rubric_file_locks:
+            if len(_rubric_file_locks) >= _RUBRIC_LOCK_MAX:
+                # Drop the oldest half.  Active locks are held by threads currently
+                # inside a write; they'll be GC'd once those threads release them.
+                # A new lock will be created on the next call for that category.
+                drop = list(_rubric_file_locks.keys())[:_RUBRIC_LOCK_MAX // 2]
+                for k in drop:
+                    del _rubric_file_locks[k]
             _rubric_file_locks[category] = threading.Lock()
         return _rubric_file_locks[category]
 
@@ -266,7 +276,9 @@ def _extract_criterion_relevant_snippet(text: str, criteria: list[dict], max_cha
     if len(text) <= max_chars:
         return text
 
-    # Build keyword set from criterion labels and snake_case names
+    # Build keyword set + pre-compiled word-boundary patterns from criterion labels and names.
+    # Word-boundary matching prevents "life" from matching "lifestyle", "lifetime", "lively", etc.
+    # (Previously used substring containment which caused false-positive paragraph selection.)
     keywords: set[str] = set()
     for c in criteria:
         for word in re.findall(r'\b\w{4,}\b', (c.get("label", "") + " " + c.get("name", "")).lower()):
@@ -275,13 +287,16 @@ def _extract_criterion_relevant_snippet(text: str, criteria: list[dict], max_cha
     if not keywords:
         return text[:max_chars]
 
+    # Pre-compile one pattern per keyword — cheaper than re.search per call inside the loop
+    kw_patterns = [re.compile(r'\b' + re.escape(kw) + r'\b') for kw in keywords]
+
     paragraphs = re.split(r'\n\s*\n', text)
 
-    # Score each paragraph by keyword hits
+    # Score each paragraph by how many distinct keyword patterns match at a word boundary
     scored: list[tuple[int, int, str]] = []
     for i, para in enumerate(paragraphs):
         para_lower = para.lower()
-        hits = sum(1 for kw in keywords if kw in para_lower)
+        hits = sum(1 for pat in kw_patterns if pat.search(para_lower))
         scored.append((hits, i, para))
 
     # Sort by relevance (desc), then original position (asc) as tiebreak
@@ -301,6 +316,37 @@ def _extract_criterion_relevant_snippet(text: str, criteria: list[dict], max_cha
     return "\n\n".join(kept) if kept else text[:max_chars]
 
 
+def _restore_manual_weights(rubric: dict, category: str) -> None:
+    """
+    Merge criteria that the user manually edited (source="manual") from the on-disk
+    rubric back into the in-memory rubric before gap-filling.
+
+    Problem this solves: generate_rubric() rebuilds the rubric from the current
+    interview on every search, overwriting whatever was on disk.  If the user had
+    manually adjusted weights via the UI in a previous session, those edits are lost.
+    By restoring source="manual" entries here, gap-fill sees them as already decided
+    and leaves them alone — only criteria still at "default" get machine-inferred weights.
+    """
+    disk_rubric = load_rubric(category)
+    if not disk_rubric:
+        return
+
+    disk_by_name = {c["name"]: c for c in disk_rubric.get("weighted_criteria", [])}
+    restored = 0
+
+    for c in rubric["weighted_criteria"]:
+        disk_c = disk_by_name.get(c["name"])
+        if disk_c and disk_c.get("source") == "manual":
+            c["weight"] = disk_c["weight"]
+            c["rationale"] = disk_c.get("rationale", c.get("rationale", ""))
+            c["source"] = "manual"
+            restored += 1
+
+    if restored:
+        _normalize_weights(rubric["weighted_criteria"])
+        _logger.info("[rubric] restored %d manually-edited criterion weights from disk", restored)
+
+
 def fill_criterion_gaps(
     rubric: dict,
     category: str,
@@ -317,6 +363,11 @@ def fill_criterion_gaps(
     user_context: pre-built context string from _build_analyzer_hint(profile).
     When provided, uses it (includes structured intent). Falls back to preferences_summary.
     """
+    # Restore any manually-edited weights from the on-disk rubric before gap-filling.
+    # generate_rubric() regenerates from the current interview each search, discarding
+    # prior manual edits. This step brings them back so gap-fill doesn't clobber them.
+    _restore_manual_weights(rubric, category)
+
     # Bug 4: check machine-readable source field first; fall back to string matching
     # for rubrics generated before this fix was applied.
     def _is_default(c: dict) -> bool:
@@ -334,6 +385,12 @@ def fill_criterion_gaps(
 
     if not defaulted:
         return rubric  # nothing to fill
+
+    if len(defaulted) < 2:
+        # One criterion at default weight doesn't justify the ~1s LLM round-trip.
+        # Category-average weight (5) is already a reasonable fallback for a single outlier.
+        _logger.debug("[rubric] only %d criterion at default — skipping gap-fill call", len(defaulted))
+        return rubric
 
     _logger.info("[rubric] inferring weights for %d unaddressed criteria...", len(defaulted))
 

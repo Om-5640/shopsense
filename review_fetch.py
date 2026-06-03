@@ -219,8 +219,7 @@ def _gemini_request(body, max_attempts=3, wait=10):
         try:
             resp = requests.post(
                 GEMINI_URL,
-                headers={"Content-Type": "application/json"},
-                params={"key": GEMINI_API_KEY},
+                headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
                 json=body,
                 timeout=120,
             )

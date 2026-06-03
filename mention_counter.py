@@ -18,12 +18,12 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# Bug 4: import once at module level — not inside the comment loop
+# Import thread-level batch function — one LLM call per thread, not per comment
 try:
-    from sentiment_analyser import analyse_comment as _analyse_comment
+    from sentiment_analyser import analyse_thread_comments as _analyse_thread_comments
     _HAS_SENTIMENT = True
 except ImportError:
-    _analyse_comment = None  # type: ignore[assignment]
+    _analyse_thread_comments = None  # type: ignore[assignment]
     _HAS_SENTIMENT = False
 
 
@@ -257,9 +257,6 @@ def count_mentions_in_text(
 
 # ── Cross-thread aggregator ────────────────────────────────────────────────────
 
-MAX_SENTIMENT_CALLS = 50  # hard cap per search session to prevent runaway LLM costs
-
-
 def count_across_threads(
     threads: list[dict],
     registry: dict,
@@ -269,21 +266,21 @@ def count_across_threads(
     run_sentiment: bool = True,
 ) -> dict[str, "MentionResult"]:
     """
-    Count product mentions across all threads and optionally score per-comment sentiment.
+    Count product mentions across all threads and score per-thread sentiment.
 
     Counting strategy:
-      - Title and body: counted at thread level (not per-comment sentiment)
-      - Each comment: counted individually; sentiment scored if product found + run_sentiment=True
+      - Title and body: counted at thread level (pure Aho-Corasick, no LLM)
+      - Each comment: counted individually; products noted for batch sentiment
 
-    LLM call budget:
-      - 0 calls for title/body (pure Aho-Corasick)
-      - 0 calls for comments with no product mention
-      - ≤ MAX_SENTIMENT_CALLS calls total for sentiment (capped to prevent runaway costs)
+    Sentiment strategy (changed from per-comment to per-thread batch):
+      - Rule-based pre-pass handles strong signals (0 LLM calls for those)
+      - ONE batched LLM call per thread for remaining ambiguous comments
+      - Max ~15 LLM calls for sentiment across a full 15-thread search
+        (previously up to 50 per-comment calls)
 
     Returns { canonical_name: MentionResult }
     """
     results: dict[str, MentionResult] = {}
-    sentiment_calls_made = 0
 
     for thread in threads:
         # Bug 5: stable URL fallback using content hash — id(thread) is a memory
@@ -298,23 +295,20 @@ def count_across_threads(
             ).hexdigest()[:12]
         )
 
-        # Count in title
+        # ── Title + body mention counting ─────────────────────────────────────
         title_counts = count_mentions_in_text(
             thread.get("title", ""), automaton, exclude_patterns, registry
         )
-        # Count in body
         body_counts = count_mentions_in_text(
             thread.get("body", ""), automaton, exclude_patterns, registry
         )
 
-        # Merge title + body into thread-level counts
         thread_counts: dict[str, int] = {}
         for counts in (title_counts, body_counts):
             for canonical, cnt in counts.items():
                 thread_counts[canonical] = thread_counts.get(canonical, 0) + cnt
 
         for canonical, cnt in thread_counts.items():
-            # Opt 3: setdefault instead of _get_or_create closure
             mr = results.setdefault(canonical, MentionResult(canonical_name=canonical))
             mr.total_mentions += cnt
             if thread_url not in mr.per_thread:
@@ -322,7 +316,11 @@ def count_across_threads(
                 mr.distinct_threads += 1
             mr.per_thread[thread_url] += cnt
 
-        # Per-comment counting + optional sentiment
+        # ── Per-comment counting — collect sentiment inputs for batch call ────
+        # sentiment_inputs: (comment_body, products_in_comment) for each comment
+        # that has at least one confirmed product mention.
+        sentiment_inputs: list[tuple[str, list[str]]] = []
+
         for comment in thread.get("comments", []):
             comment_body = (comment.get("body") or "").strip()
             if not comment_body:
@@ -345,17 +343,14 @@ def count_across_threads(
                     mr.distinct_threads += 1
                 mr.per_thread[thread_url] += cnt
 
-            # Sentiment analysis — only for comments that have confirmed mentions.
-            # _HAS_SENTIMENT guard: skip entirely if module is unavailable.
-            if (run_sentiment and llm_client is not None
-                    and _HAS_SENTIMENT and sentiment_calls_made < MAX_SENTIMENT_CALLS):
-                # Bug 3: increment BEFORE the call so that exceptions still consume
-                # the budget — prevents infinite hammering of a failing LLM endpoint.
-                sentiment_calls_made += 1
-                try:
-                    sentiment_map = _analyse_comment(
-                        comment_body, products_in_comment, llm_client
-                    )
+            if run_sentiment and llm_client is not None and _HAS_SENTIMENT:
+                sentiment_inputs.append((comment_body, products_in_comment))
+
+        # ── One batched sentiment call for the whole thread ───────────────────
+        if sentiment_inputs:
+            try:
+                sentiment_maps = _analyse_thread_comments(sentiment_inputs, llm_client)
+                for (comment_body, _), sentiment_map in zip(sentiment_inputs, sentiment_maps):
                     for canonical, score_obj in sentiment_map.items():
                         if canonical not in results:
                             continue
@@ -367,13 +362,12 @@ def count_across_threads(
                             mr.negative += 1
                         else:
                             mr.neutral += 1
-
                         mr.sentiment_records.append({
                             "comment_text": comment_body[:300],
                             "sentiment": s,
                             "source": score_obj.source,
                         })
-                except Exception as exc:
-                    logger.warning("[mention_counter] sentiment failed for comment: %s", exc)
+            except Exception as exc:
+                logger.warning("[mention_counter] thread-level sentiment batch failed: %s", exc)
 
     return results

@@ -91,6 +91,17 @@ export default function WatchPage() {
             const s = SSE_TO_SIDEBAR[stage] ?? stage
             updateStage(s, 'running', total ? `${current}/${total}` : undefined)
           },
+          onCacheHit() {
+            setStages((prev) => prev.map((s) =>
+              ['reddit', 'scraping', 'summarizing', 'analyzing', 'scoring'].includes(s.id)
+                ? { ...s, status: 'complete' }
+                : s
+            ))
+            toast.success('Loaded from cache', {
+              description: 'Results are from a recent identical search.',
+              duration: 3000,
+            })
+          },
           onError(message) {
             setError(message)
             setStatus('error')

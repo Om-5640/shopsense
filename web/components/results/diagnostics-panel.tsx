@@ -7,14 +7,21 @@ import { getDiagnostics } from '@/lib/api'
 import type { PipelineDiagnostics } from '@/lib/types'
 
 const STAGE_LABELS: Record<string, string> = {
-  reddit_fetch: 'Reddit Research',
-  review_fetch: 'Review Scraping',
-  summarize:    'Summarization',
-  analyze:      'Analysis',
-  scoring:      'Scoring',
+  reddit_fetch:     'Reddit Research',
+  review_fetch:     'Review Scraping',
+  summarize:        'Summarization',
+  analyze:          'Analysis',
+  cross_validate:   'Cross-validation',
+  mention_counting: 'Mention Pipeline',
+  scoring:          'Scoring',
+  explanations:     'Explanations',
+  cache_hit:        'Cache Hit',
 }
 
-const STAGE_ORDER = ['reddit_fetch', 'review_fetch', 'summarize', 'analyze', 'scoring']
+const STAGE_ORDER = [
+  'reddit_fetch', 'review_fetch', 'summarize', 'analyze',
+  'cross_validate', 'mention_counting', 'scoring', 'explanations', 'cache_hit',
+]
 
 function TimingBar({ label, seconds, maxSeconds }: { label: string; seconds: number; maxSeconds: number }) {
   const pct = maxSeconds > 0 ? Math.max(4, Math.round((seconds / maxSeconds) * 100)) : 4

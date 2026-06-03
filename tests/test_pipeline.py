@@ -10,6 +10,8 @@ Covered:
   B5 — Scorer criterion text shows rationale (not bare description)
   Phase 3 — Analyzer hint prefers structured intent when available
   Phase 9 — Thread dedup removes near-duplicate threads
+  T3-SA — analyse_thread_comments: rule pre-pass, batched LLM, failure fallback
+  T3-CF — build_coref_maps_from_summaries: alias extraction, failed summaries, malformed
 """
 
 import sys
@@ -317,3 +319,260 @@ def test_score_based_explanation_empty_scores():
     product = {"scores": []}
     result = _build_score_based_explanation(product)
     assert result == "", f"Expected empty string for no scores, got: '{result}'"
+
+
+# ---------------------------------------------------------------------------
+# T3-SA: analyse_thread_comments — thread-level sentiment batch
+# ---------------------------------------------------------------------------
+
+from sentiment_analyser import analyse_thread_comments, SentimentScore
+
+
+def test_analyse_thread_comments_empty_input():
+    """Empty input returns empty list — never crashes."""
+    result = analyse_thread_comments([], llm_client=None)
+    assert result == []
+
+
+def test_analyse_thread_comments_rule_resolved_positive():
+    """Strong positive keywords resolve without any LLM call."""
+    llm_called = []
+
+    def mock_llm(agent, user_prompt=None, system=None):
+        llm_called.append(True)
+        return "{}"
+
+    pairs = [
+        ("I highly recommend this product, absolutely worth every penny!", ["ProductX"]),
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert len(result) == 1
+    score = result[0].get("ProductX")
+    assert score is not None
+    assert score.sentiment == "positive"
+    assert score.source == "rule"
+    assert not llm_called, "Strong rule signal should not invoke LLM"
+
+
+def test_analyse_thread_comments_rule_resolved_negative():
+    """Strong negative keywords resolve without any LLM call."""
+    llm_called = []
+
+    def mock_llm(agent, user_prompt=None, system=None):
+        llm_called.append(True)
+        return "{}"
+
+    pairs = [
+        ("Absolute waste of money, avoid this trash product at all costs.", ["ProductY"]),
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert len(result) == 1
+    score = result[0].get("ProductY")
+    assert score is not None
+    assert score.sentiment == "negative"
+    assert score.source == "rule"
+    assert not llm_called, "Strong rule signal should not invoke LLM"
+
+
+def test_analyse_thread_comments_llm_called_for_ambiguous():
+    """Ambiguous comment (no strong rule signal) triggers exactly one batched LLM call."""
+    call_count = []
+
+    def mock_llm(agent, user_prompt=None, system=None):
+        call_count.append(1)
+        return json.dumps({"0": {"ProductA": "positive"}})
+
+    pairs = [
+        ("It seems okay I guess, not sure yet.", ["ProductA"]),
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert len(call_count) == 1, "Exactly one LLM call for ambiguous comment(s)"
+    assert result[0].get("ProductA").sentiment == "positive"
+    assert result[0].get("ProductA").source == "llm"
+
+
+def test_analyse_thread_comments_one_batch_call_for_multiple_ambiguous():
+    """Multiple ambiguous comments in one thread produce exactly ONE batched LLM call."""
+    call_count = []
+
+    def mock_llm(agent, user_prompt=None, system=None):
+        call_count.append(1)
+        return json.dumps({
+            "0": {"ProductA": "positive"},
+            "1": {"ProductB": "negative"},
+            "2": {"ProductC": "neutral"},
+        })
+
+    pairs = [
+        ("not sure about ProductA, maybe decent", ["ProductA"]),
+        ("ProductB is kinda meh", ["ProductB"]),
+        ("ProductC exists I think", ["ProductC"]),
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert len(call_count) == 1, f"Expected 1 LLM call, got {len(call_count)}"
+    assert result[0]["ProductA"].sentiment == "positive"
+    assert result[1]["ProductB"].sentiment == "negative"
+    assert result[2]["ProductC"].sentiment == "neutral"
+
+
+def test_analyse_thread_comments_mixed_rule_and_llm():
+    """Rule-resolved comments don't go to LLM; only ambiguous ones do."""
+    call_count = []
+
+    def mock_llm(agent, user_prompt=None, system=None):
+        call_count.append(1)
+        return json.dumps({"0": {"ProductB": "neutral"}})
+
+    pairs = [
+        ("Absolute must buy, highly recommend ProductA!", ["ProductA"]),  # rule → positive
+        ("ProductB is okay I think", ["ProductB"]),                         # ambiguous → LLM
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert result[0]["ProductA"].sentiment == "positive"
+    assert result[0]["ProductA"].source == "rule"
+    assert result[1]["ProductB"].sentiment == "neutral"
+    assert result[1]["ProductB"].source == "llm"
+    assert len(call_count) == 1
+
+
+def test_analyse_thread_comments_llm_failure_falls_back_to_neutral():
+    """LLM exception must not propagate — ambiguous products fall back to neutral."""
+    def mock_llm(agent, user_prompt=None, system=None):
+        raise RuntimeError("Simulated LLM failure")
+
+    pairs = [
+        ("This product might be decent maybe", ["ProductX"]),
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert len(result) == 1
+    score = result[0].get("ProductX")
+    assert score is not None
+    assert score.sentiment == "neutral", "LLM failure must fall back to neutral"
+
+
+def test_analyse_thread_comments_preserves_rule_results_on_llm_failure():
+    """When LLM fails, rule-resolved products keep their result; ambiguous → neutral."""
+    def mock_llm(agent, user_prompt=None, system=None):
+        raise RuntimeError("Simulated failure")
+
+    # Two separate pairs: first resolves via rule, second is ambiguous
+    pairs = [
+        ("I highly recommend ProductA, worth every penny!", ["ProductA"]),  # rule → positive
+        ("ProductB is a thing that exists I guess", ["ProductB"]),           # ambiguous → LLM → neutral
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+
+    assert result[0]["ProductA"].sentiment == "positive"
+    assert result[0]["ProductA"].source == "rule"
+    assert result[1]["ProductB"].sentiment == "neutral"
+
+
+def test_analyse_thread_comments_parallel_output_length():
+    """Output list is always the same length as input list."""
+    def mock_llm(agent, user_prompt=None, system=None):
+        return json.dumps({"0": {"P1": "positive"}, "1": {"P2": "negative"}})
+
+    pairs = [
+        ("maybe okay", ["P1"]),
+        ("seems bad", ["P2"]),
+        ("", ["P3"]),  # empty comment → neutral fallback
+    ]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+    assert len(result) == len(pairs), "Output must be parallel with input"
+
+
+def test_analyse_thread_comments_case_insensitive_product_match():
+    """LLM response with different capitalisation is still matched to the product."""
+    def mock_llm(agent, user_prompt=None, system=None):
+        return json.dumps({"0": {"productx": "positive"}})
+
+    pairs = [("not sure honestly", ["ProductX"])]
+    result = analyse_thread_comments(pairs, llm_client=mock_llm)
+    assert result[0]["ProductX"].sentiment == "positive"
+
+
+# ---------------------------------------------------------------------------
+# T3-CF: build_coref_maps_from_summaries — alias extraction
+# ---------------------------------------------------------------------------
+
+from thread_summarizer import build_coref_maps_from_summaries
+
+
+def test_build_coref_maps_extracts_aliases():
+    """Aliases from successful summaries are returned in correct format."""
+    summaries = [
+        {
+            "aliases": {"Sony WF-1000XM5": ["XM5", "XM5s"], "Bose QC45": ["QC45"]},
+            "_failed": False,
+        },
+        {
+            "aliases": {"Samsung Galaxy Buds2 Pro": ["Buds2 Pro"]},
+            "_failed": False,
+        },
+    ]
+    maps = build_coref_maps_from_summaries(summaries)
+
+    assert len(maps) == 2
+    assert maps[0] == {"Sony WF-1000XM5": ["XM5", "XM5s"], "Bose QC45": ["QC45"]}
+    assert maps[1] == {"Samsung Galaxy Buds2 Pro": ["Buds2 Pro"]}
+
+
+def test_build_coref_maps_failed_summary_returns_empty_dict():
+    """Failed summaries (_failed=True) produce empty alias dicts — no crash."""
+    summaries = [
+        {"aliases": {"ProductA": ["A"]}, "_failed": False},
+        {"_failed": True},  # failed — no aliases key
+    ]
+    maps = build_coref_maps_from_summaries(summaries)
+
+    assert len(maps) == 2
+    assert maps[0] == {"ProductA": ["A"]}
+    assert maps[1] == {}, "Failed summary must yield empty dict"
+
+
+def test_build_coref_maps_missing_aliases_key():
+    """Summary without 'aliases' key yields empty dict — not a crash."""
+    summaries = [
+        {"thread_summary": "...", "_failed": False},  # no aliases key
+    ]
+    maps = build_coref_maps_from_summaries(summaries)
+
+    assert len(maps) == 1
+    assert maps[0] == {}
+
+
+def test_build_coref_maps_empty_aliases():
+    """Summary with empty aliases dict produces empty dict."""
+    summaries = [{"aliases": {}, "_failed": False}]
+    maps = build_coref_maps_from_summaries(summaries)
+
+    assert maps == [{}]
+
+
+def test_build_coref_maps_empty_input():
+    """Empty input returns empty list."""
+    assert build_coref_maps_from_summaries([]) == []
+
+
+def test_build_coref_maps_output_parallel_with_input():
+    """Output list length always matches input list length."""
+    summaries = [
+        {"aliases": {"A": ["a"]}, "_failed": False},
+        {"_failed": True},
+        {"aliases": {"B": ["b1", "b2"]}, "_failed": False},
+    ]
+    maps = build_coref_maps_from_summaries(summaries)
+    assert len(maps) == len(summaries)
+
+
+def test_build_coref_maps_all_failed():
+    """All failed summaries → all empty dicts, no error."""
+    summaries = [{"_failed": True}, {"_failed": True}]
+    maps = build_coref_maps_from_summaries(summaries)
+    assert maps == [{}, {}]

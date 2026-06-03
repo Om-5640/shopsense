@@ -297,6 +297,14 @@ def find_relevant_signals(
     if not _DB_AVAILABLE:
         return []
 
+    # Skip the embedding API call entirely when the user has no stored signals.
+    # On a fresh install (or new user) every search would otherwise waste one embed call.
+    try:
+        if not _db_list_signals(user_id=user_id, limit=1):
+            return []
+    except Exception:
+        pass
+
     query_vec = embed(query)
     if query_vec is None:
         return []

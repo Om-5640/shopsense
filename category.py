@@ -10,6 +10,7 @@ Choice is cached per query so repeat runs skip the prompt.
 
 import json
 import re
+from functools import lru_cache
 import cache
 from agents import run_agent
 
@@ -81,10 +82,12 @@ When NOT disambiguating:
 NO markdown, NO commentary, JSON only."""
 
 
+@lru_cache(maxsize=256)
 def detect_category(query: str) -> dict:
     """
     Returns {category, confidence, needs_disambiguation, options}.
-    Cached so repeat queries are free.
+    In-process LRU cache (maxsize=256) avoids even the disk read for repeated queries
+    within one server lifetime. The file-based cache provides persistence across restarts.
     """
     cache_key = query.lower().strip()
     rule_based = _rule_based_result(cache_key)

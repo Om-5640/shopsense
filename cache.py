@@ -47,13 +47,19 @@ def get(cache_type: str, key: str):
 
 
 def set(cache_type: str, key: str, value):
-    """Write to cache. Silently skips if disk write fails."""
+    """Write to cache atomically (write to .tmp then rename). Silently skips on failure."""
     path = _cache_path(cache_type, key)
+    tmp = path.with_suffix(".tmp")
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "value": value}, f)
+        tmp.replace(path)
     except Exception as e:
         _logger.warning("[cache] write failed (non-fatal): %s", e)
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def purge_expired(max_age_seconds: int | None = None) -> int:
@@ -67,12 +73,18 @@ def purge_expired(max_age_seconds: int | None = None) -> int:
     try:
         for p in CACHE_DIR.glob("*.json"):
             try:
-                stat = p.stat()
-                if time.time() - stat.st_mtime > cutoff:
+                with open(p, "r", encoding="utf-8") as f:
+                    entry = json.load(f)
+                if time.time() - entry.get("timestamp", 0) > cutoff:
                     p.unlink()
                     deleted += 1
             except Exception:
-                pass
+                # Unreadable / corrupt file — remove it
+                try:
+                    p.unlink()
+                    deleted += 1
+                except Exception:
+                    pass
     except Exception:
         pass
     if deleted:

@@ -14,6 +14,7 @@ import os
 import re
 import time
 import threading as _threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from dotenv import load_dotenv
 
@@ -202,9 +203,12 @@ def _query_variations(query: str, profile: dict | None = None) -> list[str]:
         f"site:reddit.com {query} vs",
     ]
 
-    # Usage-pattern semantic variant (e.g. "…gaming", "…gym workout")
+    # Usage-pattern semantic variant (e.g. "…gaming", "…gym workout").
+    # Guard: skip if the usage hint is already embedded in the query (pipeline_runner
+    # pre-enriches the query with _build_retrieval_query before calling us, so appending
+    # the same term again would produce "…gaming gaming" duplicates in the search URLs).
     usage = _extract_usage_pattern(profile)
-    if usage:
+    if usage and usage.lower() not in query.lower():
         variations.append(f"site:reddit.com {query} {usage}")
 
     # Budget-explicit variant when user has a stated budget
@@ -243,16 +247,29 @@ def find_reddit_urls(query: str, limit: int = 15, profile: dict | None = None) -
     # Track which variant each URL came from so region-specific variants get bonus
     url_to_variant_idx = {}
     if google_search.is_configured():
-        for variant_idx, variant in enumerate(variations):
-            urls = google_search.search(variant, num=10)
-            for r in urls:
+        def _search_variant(args):
+            idx, variant = args
+            try:
+                return idx, google_search.search(variant, num=10)
+            except Exception as e:
+                print(f"[reddit] serper variant {idx} failed: {e}")
+                return idx, []
+
+        n_variants = len(variations)
+        with ThreadPoolExecutor(max_workers=n_variants) as pool:
+            # pool.map preserves input order — results[i] corresponds to variations[i]
+            variant_results = list(pool.map(_search_variant, enumerate(variations)))
+
+        # Merge in strict variant order so earlier (higher-quality) variants win dedup
+        for variant_idx, results in variant_results:
+            for r in results:
                 link = r.get("link", "")
                 if "reddit.com" in link and "/comments/" in link:
                     norm = _normalize_reddit_url(link)
                     if norm and norm not in url_to_variant_idx:
                         url_to_variant_idx[norm] = variant_idx
                         all_urls.append(norm)
-        print(f"[reddit] serper: {len(all_urls)} raw URLs from {len(variations)} variants")
+        print(f"[reddit] serper: {len(all_urls)} raw URLs from {n_variants} variants (parallel)")
 
     # Source 2: Gemini grounding fallback (only if Serper returns too few)
     if len(all_urls) < limit:
@@ -306,11 +323,13 @@ def _score_and_rank_urls(urls: list[str], query: str, region: str | None,
         match = re.search(r"/r/([^/]+)/", url)
         subreddit = match.group(1).lower() if match else ""
 
-        # 1. Region subreddit bonus (huge — Indian sub for Indian query)
+        # 1. Region subreddit bonus.
+        # Capped at +15 (same as secondary) — previously +50 caused region subs to outrank
+        # directly-relevant threads for non-regional queries where any Indian sub matched.
         if subreddit in region_subs.get("primary", set()):
-            score += 50.0  # very strong signal
-        elif subreddit in region_subs.get("secondary", set()):
             score += 15.0
+        elif subreddit in region_subs.get("secondary", set()):
+            score += 8.0
 
         # 2. Title relevance: count query tokens in the URL TITLE SLUG only
         # (Not the full URL — subreddit name like "/r/Watches/" would always match "watch")
@@ -321,14 +340,16 @@ def _score_and_rank_urls(urls: list[str], query: str, region: str | None,
         token_overlap = len(query_tokens & title_tokens)
         score += token_overlap * 5.0
 
-        # 3. Variant source priority (variant 0 = main query, weighted higher)
+        # 3. Variant source priority (variant 0 = main query, weighted higher).
+        # Variant 3 is region-specific only when a region is set — skip the bonus for
+        # global queries where variant 3 may be a generic "worth it" variant.
         variant = variant_idx_map.get(url, 999)
         if variant == 0:
             score += 10.0  # main query result
         elif variant <= 2:
-            score += 5.0   # other variants
-        elif variant == 3:
-            score += 8.0   # region-specific variant (also valuable)
+            score += 5.0   # recommendation / review variants
+        elif variant == 3 and region and region != "global":
+            score += 8.0   # region-specific variant (only when region context exists)
 
         # 4. Penalty for obviously off-topic subreddits
         off_topic = {"phoenix", "askreddit", "outoftheloop"}
@@ -771,12 +792,16 @@ def fetch_all_threads(
     limit: int = 15,
     delay: float = 0.3,
     profile: dict | None = None,
+    cancel_fn=None,
 ) -> list[dict]:
     """
     End-to-end fetch.
     If USE_PRAW=true and Reddit credentials are set, uses the PRAW deep fetcher
     (200+ comments/thread). Otherwise falls back to the JSON endpoint approach.
     `profile` is forwarded to _query_variations for intent-aware semantic variants.
+    `cancel_fn`: optional zero-arg callable that returns True when the caller wants
+    to abort.  Checked between completed futures — stops launching new fetches
+    immediately and returns whatever was already collected (Bug H-5 partial fix).
     """
     if os.environ.get("USE_PRAW", "").lower() == "true" and _praw_credentials_set():
         from reddit_praw import fetch_threads_deep
@@ -791,16 +816,35 @@ def fetch_all_threads(
     for u in urls:
         print(f"   - {u}")
 
-    enriched = []
-    for i, url in enumerate(urls, 1):
-        print(f"[reddit] fetching {i}/{len(urls)}: {url}")
-        full = fetch_thread_comments(url)
-        if full is not None:
-            enriched.append(full)
-            total = full.get('total_comment_count_in_thread', '?')
-            controversial_added = full.get('controversial_comments_added', 0)
-            extra = f" (+{controversial_added} controversial)" if controversial_added > 0 else ""
-            print(f"   got {len(full['comments'])} quality comments{extra} (out of ~{total} total)")
-        time.sleep(delay)
+    print(f"[reddit] fetching {len(urls)} threads in parallel (max 8 concurrent)...")
+    thread_results: dict[int, dict] = {}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        future_to_idx = {pool.submit(fetch_thread_comments, url): i for i, url in enumerate(urls)}
+        for future in as_completed(future_to_idx):
+            # Check cancel between each completed fetch — stops collecting new results
+            # immediately without waiting for all in-flight HTTP calls to finish.
+            if cancel_fn is not None and cancel_fn():
+                print("[reddit] cancel signal received — stopping fetch early")
+                pool.shutdown(wait=False, cancel_futures=True)
+                break
+            idx = future_to_idx[future]
+            url = urls[idx]
+            try:
+                full = future.result()
+                if full is not None:
+                    thread_results[idx] = full
+                    total = full.get("total_comment_count_in_thread", "?")
+                    n_added = full.get("controversial_comments_added", 0)
+                    extra = f" (+{n_added} controversial)" if n_added > 0 else ""
+                    print(f"   [{idx + 1}/{len(urls)}] r/{full.get('subreddit', '?')} — "
+                          f"{len(full['comments'])} comments{extra} (of ~{total})")
+                else:
+                    print(f"   [{idx + 1}/{len(urls)}] {url} — no data returned (skipped)")
+            except Exception as e:
+                print(f"   [{idx + 1}/{len(urls)}] {url} — EXCEPTION: {e}")
+
+    # Reassemble in original URL order so downstream processing is deterministic
+    enriched = [thread_results[i] for i in range(len(urls)) if i in thread_results]
     print(f"[reddit] {len(enriched)}/{len(urls)} threads succeeded")
     return enriched

@@ -135,7 +135,7 @@ export async function startSearch(body: {
   options?: Record<string, unknown>
   qa_history?: QAEntry[]
   primary_noun?: string
-}): Promise<{ search_id: string }> {
+}): Promise<{ search_id: string; deduplicated?: boolean }> {
   const { data } = await client.post('/api/search', {
     options: {},
     qa_history: [],

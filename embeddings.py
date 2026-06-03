@@ -12,11 +12,19 @@ Falls back gracefully; returns None only if every provider fails.
 """
 
 import logging
+import math
 import os
 import hashlib
+import threading
 import requests
 from typing import Optional
 from dotenv import load_dotenv
+
+try:
+    import numpy as _np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
 
 _logger = logging.getLogger(__name__)
 
@@ -55,7 +63,7 @@ def _embed_gemini(text: str) -> Optional[list[float]]:
     try:
         resp = requests.post(
             _EMBED_URL,
-            params={"key": GEMINI_API_KEY},
+            headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
             json={
                 "model": f"models/{_EMBED_MODEL}",
                 "content": {"parts": [{"text": text[:_MAX_TEXT_CHARS]}]},
@@ -143,32 +151,83 @@ def _embed_local(text: str) -> Optional[list[float]]:
 
 
 # ---------------------------------------------------------------------------
+# In-flight dedup — prevents 15 parallel thread-summarizers from each making
+# a separate API call for the same query text (they all call embed(query) at once).
+# Pattern mirrors llm_clients.py: first caller does the work, others wait and reuse.
+# ---------------------------------------------------------------------------
+
+_inflight_lock = threading.Lock()
+_inflight: dict[str, threading.Event] = {}    # ck → event signalled when result is ready
+_inflight_results: dict[str, Optional[list[float]]] = {}  # ck → computed vector
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def embed(text: str) -> Optional[list[float]]:
-    """Return an embedding vector for `text`. Tries Gemini → Cohere → HF → local."""
+    """Return an embedding vector for `text`. Tries Gemini → Cohere → HF → local.
+
+    In-flight dedup: if N threads call embed() with the same text simultaneously,
+    only the first thread makes the API call; the rest block on an Event and reuse
+    the result — zero duplicate API calls.
+    """
     if not text.strip():
         return None
 
     ck = _key(text)
+
+    # Fast path — file cache hit (most common case after first call)
     cached = cache.get(_CACHE_TYPE, ck)
     if cached is not None:
         return cached
 
-    for provider_fn, name in [
-        (_embed_gemini, "gemini"),
-        (_embed_cohere, "cohere"),
-        (_embed_huggingface, "huggingface"),
-        (_embed_local, "local"),
-    ]:
-        vec = provider_fn(text)
-        if vec:
-            cache.set(_CACHE_TYPE, ck, vec)
-            return vec
+    # In-flight dedup: check whether another thread is already computing this vector
+    with _inflight_lock:
+        if ck in _inflight:
+            event = _inflight[ck]
+            is_leader = False
+        else:
+            event = threading.Event()
+            _inflight[ck] = event
+            is_leader = True
 
-    _logger.warning("[embeddings] all providers failed — returning None")
-    return None
+    if not is_leader:
+        # Wait for the leader thread to finish, then read its result
+        event.wait(timeout=60)
+        with _inflight_lock:
+            result = _inflight_results.get(ck)
+        return result
+
+    # Leader: compute the vector
+    vec: Optional[list[float]] = None
+    try:
+        for provider_fn, name in [
+            (_embed_gemini, "gemini"),
+            (_embed_cohere, "cohere"),
+            (_embed_huggingface, "huggingface"),
+            (_embed_local, "local"),
+        ]:
+            vec = provider_fn(text)
+            if vec:
+                cache.set(_CACHE_TYPE, ck, vec)
+                break
+
+        if vec is None:
+            _logger.warning("[embeddings] all providers failed — returning None")
+    finally:
+        # Always signal waiters and clean up, even on exception
+        with _inflight_lock:
+            _inflight_results[ck] = vec
+            event.set()
+            del _inflight[ck]
+        # Clean up result after a short grace period (waiters have already read it)
+        # We leave it in _inflight_results briefly; it's keyed by SHA256 so
+        # a second wave of concurrent callers will hit the file cache instead.
+        # Remove to prevent unbounded growth (the file cache is the durable store).
+        threading.Timer(2.0, lambda: _inflight_results.pop(ck, None)).start()
+
+    return vec
 
 
 def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
@@ -205,7 +264,7 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
             try:
                 resp = requests.post(
                     _BATCH_URL,
-                    params={"key": GEMINI_API_KEY},
+                    headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
                     json={
                         "requests": [
                             {
@@ -244,12 +303,23 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Cosine similarity in [0.0, 1.0]. Returns 0.0 on bad input."""
+    """Cosine similarity in [0.0, 1.0]. Returns 0.0 on bad input.
+
+    Uses numpy when available (~10× faster for 3072-dim Gemini vectors);
+    falls back to math.sqrt-based pure Python otherwise.
+    """
     if not a or not b or len(a) != len(b):
         return 0.0
+    if _HAS_NUMPY:
+        va = _np.array(a, dtype=_np.float32)
+        vb = _np.array(b, dtype=_np.float32)
+        denom = _np.linalg.norm(va) * _np.linalg.norm(vb)
+        if denom == 0.0:
+            return 0.0
+        return float(max(0.0, min(1.0, float(_np.dot(va, vb) / denom))))
     dot = sum(x * y for x, y in zip(a, b))
-    mag_a = sum(x * x for x in a) ** 0.5
-    mag_b = sum(x * x for x in b) ** 0.5
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
     if mag_a == 0.0 or mag_b == 0.0:
         return 0.0
     return max(0.0, min(1.0, dot / (mag_a * mag_b)))

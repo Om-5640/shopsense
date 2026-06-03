@@ -229,7 +229,148 @@ def _coerce_score(raw_value, product_name: str) -> SentimentScore:
     return SentimentScore(sentiment="neutral", source="llm")
 
 
-# ── Core function ─────────────────────────────────────────────────────────────
+# ── Thread-level batch system prompt ─────────────────────────────────────────
+
+THREAD_BATCH_SYSTEM = """You classify purchase sentiment for products mentioned in Reddit comments.
+
+You will receive several numbered comments, each with a list of products mentioned.
+
+Return ONLY a valid JSON object mapping each comment index (as a string key) to an object
+mapping each product to "positive", "negative", or "neutral":
+{"0": {"Product A": "positive", "Product B": "neutral"}, "1": {"Product C": "negative"}}
+
+Rules:
+- "positive": commenter recommends or endorses the product for purchase
+- "negative": commenter discourages or criticizes it as a purchase
+- "neutral": no clear purchase signal
+- Include ALL products listed under each comment index
+- Use the EXACT product names as given
+- JSON only, no markdown, no explanation"""
+
+_MAX_COMMENTS_PER_BATCH = 40   # cap per-thread batch to bound prompt size
+_MAX_COMMENT_CHARS_IN_BATCH = 400  # truncate each comment in the batch for token efficiency
+
+
+def _parse_sentiment_response_batch(raw: str) -> dict:
+    """
+    Parse the thread-level batch response: {"index": {"Product": "sentiment"}, ...}
+    Returns {} on failure — never raises.
+    """
+    cleaned = re.sub(r"^```(?:json|JSON)?\s*\n?", "", raw.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
+    try:
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    logger.warning("[sentiment_analyser] batch JSON parse failed, raw: %.200s", raw)
+    return {}
+
+
+def analyse_thread_comments(
+    comment_product_pairs: list[tuple[str, list[str]]],
+    llm_client,
+) -> list[dict[str, "SentimentScore"]]:
+    """
+    Score sentiment for all product-bearing comments in one thread in a single LLM call.
+
+    Replaces N per-comment calls with:
+      1. Rule-based pre-pass (zero LLM calls when all products resolve)
+      2. One batched LLM call for all ambiguous comments in the thread
+
+    Args:
+        comment_product_pairs: list of (comment_text, [product_name, ...]) tuples
+        llm_client: run_agent-compatible callable
+
+    Returns:
+        List of {product_name: SentimentScore} dicts, parallel with input.
+        Never raises — failed sentiment defaults to neutral.
+    """
+    if not comment_product_pairs:
+        return []
+
+    n = len(comment_product_pairs)
+    per_comment: list[dict[str, SentimentScore]] = [{} for _ in range(n)]
+
+    # ── Stage 1: rule-based pre-pass for every comment ───────────────────────
+    ambiguous_idx: list[int] = []       # indices into comment_product_pairs
+    ambiguous_products: list[list[str]] = []
+    ambiguous_texts: list[str] = []
+
+    for i, (comment_text, products) in enumerate(comment_product_pairs):
+        if not comment_text or not comment_text.strip() or not products:
+            per_comment[i] = {p: _NEUTRAL_FALLBACK for p in products}
+            continue
+
+        text = comment_text.strip()[:1500]
+        still_ambiguous: list[str] = []
+
+        for product in products:
+            rule_result = _rule_based_sentiment(text, product)
+            if rule_result is not None:
+                per_comment[i][product] = SentimentScore(sentiment=rule_result, source="rule")
+            else:
+                still_ambiguous.append(product)
+
+        if still_ambiguous and len(ambiguous_idx) < _MAX_COMMENTS_PER_BATCH:
+            ambiguous_idx.append(i)
+            ambiguous_products.append(still_ambiguous)
+            ambiguous_texts.append(text[:_MAX_COMMENT_CHARS_IN_BATCH])
+
+    if not ambiguous_idx:
+        return per_comment
+
+    # ── Stage 2: one batched LLM call for all ambiguous comments ─────────────
+    blocks: list[str] = []
+    for j, (text, products) in enumerate(zip(ambiguous_texts, ambiguous_products)):
+        products_str = ", ".join(products)
+        blocks.append(f"[{j}]\nProducts: {products_str}\n{text}")
+
+    prompt = (
+        "Classify purchase sentiment for each comment below.\n\n"
+        + "\n\n".join(blocks)
+        + '\n\nReturn JSON: {"0": {"Product": "positive|negative|neutral"}, ...}'
+    )
+
+    try:
+        raw = llm_client("sentiment_analyser", user_prompt=prompt, system=THREAD_BATCH_SYSTEM)
+        parsed = _parse_sentiment_response_batch(raw)
+
+        for j, i in enumerate(ambiguous_idx):
+            batch_entry = parsed.get(str(j), {})
+            for product in ambiguous_products[j]:
+                entry = batch_entry.get(product)
+                if entry is None:
+                    # Case-insensitive fallback for LLMs that alter capitalisation
+                    for k, v in batch_entry.items():
+                        if k.lower() == product.lower():
+                            entry = v
+                            break
+                per_comment[i][product] = (
+                    _coerce_score(entry, product) if entry is not None else _NEUTRAL_FALLBACK
+                )
+
+    except Exception as exc:
+        logger.warning("[sentiment_analyser] thread batch LLM call failed: %s", exc)
+        for j, i in enumerate(ambiguous_idx):
+            for product in ambiguous_products[j]:
+                if product not in per_comment[i]:
+                    per_comment[i][product] = _NEUTRAL_FALLBACK
+
+    rule_count = sum(
+        1 for i, (_, products) in enumerate(comment_product_pairs)
+        if i not in set(ambiguous_idx) and products
+    )
+    logger.debug(
+        "[sentiment_analyser] thread batch: %d rule-resolved, %d LLM-resolved (%d→1 call)",
+        rule_count, len(ambiguous_idx), len(ambiguous_idx),
+    )
+
+    return per_comment
+
+
+# ── Per-comment function (kept for backwards compatibility / direct callers) ──
 
 def analyse_comment(
     comment_text: str,

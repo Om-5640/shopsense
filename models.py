@@ -14,7 +14,7 @@ We round-robin across 4 free providers to multiply our effective rate limit.
 Each provider's free tier has independent quota — using all 4 = 4x capacity.
 """
 
-# ---- Gemini (Google AI Studio, free tier - 250 req/day, 10 RPM) ----
+# ---- Gemini (Google AI Studio, free tier - 1,500 req/day, 15 RPM for Gemini 2.5 Flash) ----
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_TIMEOUT = 120

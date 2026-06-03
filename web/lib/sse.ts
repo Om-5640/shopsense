@@ -13,8 +13,10 @@ export interface SSEHandlers {
   onStageDone: (stage: string, count?: number, productsFound?: number) => void
   onProgress: (stage: string, current: number, total?: number, detail?: string) => void
   onError: (message: string) => void
-  onDone: (searchId: string) => void
+  onDone: (searchId: string, fromCache?: boolean) => void
   onWarning?: (message: string) => void
+  /** Called when the pipeline returned a cached result — all stages can be marked complete. */
+  onCacheHit?: () => void
 }
 
 export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = false): () => void {
@@ -31,13 +33,22 @@ export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = 
     try {
       const event = JSON.parse(evt.data) as PipelineEvent
       if (event.type === 'stage_start') {
-        handlers.onStageStart(event.data.stage ?? '', (event.data.label as string) ?? '')
+        const stage = event.data.stage ?? ''
+        // cache_hit is a special stage that means the whole pipeline was skipped
+        if (stage === 'cache_hit') {
+          handlers.onCacheHit?.()
+        } else {
+          handlers.onStageStart(stage, (event.data.label as string) ?? '')
+        }
       } else if (event.type === 'stage_done') {
-        handlers.onStageDone(
-          event.data.stage ?? '',
-          event.data.count as number | undefined,
-          event.data.products_found as number | undefined,
-        )
+        const stage = event.data.stage ?? ''
+        if (stage !== 'cache_hit') {
+          handlers.onStageDone(
+            stage,
+            event.data.count as number | undefined,
+            event.data.products_found as number | undefined,
+          )
+        }
       } else if (event.type === 'progress') {
         handlers.onProgress(
           event.data.stage ?? '',
@@ -48,6 +59,10 @@ export function connectSSE(searchId: string, handlers: SSEHandlers, reconnect = 
       } else if (event.type === 'error') {
         handlers.onError((event.data.message as string) ?? 'Pipeline error')
         es.close()
+      } else if (event.type === 'done') {
+        es.close()
+        handlers.onDone(searchId, event.data.from_cache === true)
+        return
       } else if (event.type === 'log') {
         const msg = (event.data.message as string) ?? ''
         if (msg.startsWith(TOKEN_BUDGET_WARNING_PREFIX) && msg.includes('exceeds') && handlers.onWarning) {

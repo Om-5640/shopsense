@@ -17,6 +17,7 @@ import re
 import requests
 from typing import Any
 from dotenv import load_dotenv
+from analysis_normalizer import normalize_analysis
 
 _logger = logging.getLogger(__name__)
 
@@ -30,14 +31,17 @@ MAX_INPUT_CHARS = 200_000
 MAX_OUTPUT_TOKENS = 65_000
 
 
-def _post_with_retry(url, body, params, max_attempts=3, wait=10):
+def _post_with_retry(url, body, params=None, max_attempts=3, wait=10, extra_headers=None):
+    headers = {"Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     last_err = None
     for attempt in range(max_attempts):
         try:
             resp = requests.post(
                 url,
-                headers={"Content-Type": "application/json"},
-                params=params,
+                headers=headers,
+                params=params or {},
                 json=body,
                 timeout=180,
             )
@@ -68,7 +72,7 @@ def call_gemini(prompt: str, system: str = "", json_mode: bool = False) -> tuple
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
 
-    resp = _post_with_retry(GEMINI_URL, body, {"key": GEMINI_API_KEY})
+    resp = _post_with_retry(GEMINI_URL, body, extra_headers={"x-goog-api-key": GEMINI_API_KEY})
     data = resp.json()
 
     try:
@@ -82,13 +86,32 @@ def call_gemini(prompt: str, system: str = "", json_mode: bool = False) -> tuple
 
 # ---- prompts ----
 
+# Shared rules that appear in both the raw-sources path and the summaries path.
+# Extracted to a single constant so a change in one place updates both prompts.
+_SHARED_ANALYSIS_RULES = """
+BUDGET (critical):
+- Surface ONLY products that realistically fit the stated budget.
+- "under ₹5000" (≈$60 USD): exclude Rolex, Omega, Tudor, Grand Seiko.
+- "under $50": exclude AirPods Pro, Sony WF-1000XM5 ($200+).
+- When in doubt, include a product only if multiple sources confirm it fits the budget.
+- Currency: ₹/Rs = INR (1 USD ≈ 83), £ = GBP (1 USD ≈ 0.78), € = EUR (1 USD ≈ 0.92).
+
+COMPLAINTS: Surface ALL complaints. Label confidence:
+- "confirmed" = 3+ distinct users mention it
+- "reported" = 2 users
+- "single" = 1 user (still useful — flag it)
+Never censor complaints. Replies that disagree with a top comment count as separate voices.
+
+OUTPUT FORMAT: Subreddits WITHOUT 'r/' prefix. Quotes ≤15 words. Ignore affiliate/marketing language. JSON only — no fences, no commentary."""
+
+
 EXTRACT_SYSTEM = """You are a meticulous shopping research analyst reading Reddit threads AND review articles to extract buying recommendations.
 
 SOURCE WEIGHTING:
 - Reddit gives crowd signal: many anecdotes, mixed quality, lots of noise
 - Review sites give expert signal: fewer voices but more thorough testing
 - A product backed by BOTH sources is the strongest signal
-- A product only in reviews may be SEO-pushed - cross-check Reddit
+- A product only in reviews may be SEO-pushed — cross-check Reddit
 - A product only on Reddit but mentioned by many distinct users is still strong
 - Review site authority tiers (shown as [AUTHORITY: X] in sources):
   - TRUSTED: top-tier editorial (Wirecutter, RTINGS, etc.) — weight heavily
@@ -98,41 +121,14 @@ SOURCE WEIGHTING:
 SEPARATION:
 - "materials" = categories/types like "cotton blanket", "wool comforter", "bamboo sheets"
 - "products" = specific buyable items with brand names like "Buffy Breeze Comforter"
-- A user asking "what should I buy" cares about both, but they're different decisions
-- Never mix them in the same list
-- For each material/category, ALWAYS include 2-3 example_products that fall in that category
-  (e.g., "Dive Watches" → example_products: ["Seiko SKX007", "Citizen Promaster Diver"])
-- Examples should be specific products mentioned in the research, not generic placeholders
-
-BUDGET FEASIBILITY (critical):
-- The user's query includes a budget. ONLY surface products that realistically fit that budget.
-- Example: "best watch under ₹5000" → ₹5000 is ~$60 USD. Do NOT include Rolex, Omega, Tudor, Grand Seiko, etc.
-  Even if Reddit mentions them, they're irrelevant to a ₹5000 buyer.
-- Example: "best earbuds under $50" → exclude AirPods Pro, Sony WF-1000XM5 ($200+).
-- If a Reddit thread is clearly about a higher budget and a different user, skip those products.
-- When in doubt about a product's price, INCLUDE it only if multiple sources mention it as fitting the user's budget.
-- Currency hint: ₹/Rs = Indian rupees (1 USD ≈ 83 INR), £ = GBP (1 USD ≈ 0.78), € = EUR (1 USD ≈ 0.92).
-
-COMPLAINT RULES:
-- Surface ALL complaints you find, but label with confidence:
-  - "confirmed" = 3+ distinct users mention it
-  - "reported" = 2 users mention it
-  - "single" = only 1 user (still useful but flag it)
-- Don't censor complaints. The user wants to know risks.
-- REPLIES MATTER: when a top-level comment praises a product and the replies disagree, that's important counter-signal. Treat replies as separate users with their own opinions.
-
-OTHER:
-- Subreddit names: return WITHOUT 'r/' prefix. Just "Bedding" not "r/Bedding".
-- Quotes: under 15 words each.
-- Ignore obvious marketing/affiliate language.
-- Return STRICT JSON only - no fences, no commentary."""
+- Never mix them. For each material/category, include 2-3 example_products from the research.
+""" + _SHARED_ANALYSIS_RULES
 
 
 # Dedicated system prompt for the summaries-based analysis path (analyze_with_summaries).
 # EXTRACT_SYSTEM above is for the raw-sources path (analyze_sources) and tells the model it
 # is "reading Reddit threads" — wrong when the input is already structured summaries.
-# This prompt: (a) correctly frames the task, (b) embeds the output schema (EXTRACT_SYSTEM
-# has no schema; schema is only in EXTRACT_PROMPT_TEMPLATE used by the raw path),
+# This prompt: (a) correctly frames the task, (b) embeds the output schema,
 # (c) replaces raw-anecdote weighting guidance with structured-summary weighting guidance.
 SUMMARIES_ANALYZER_SYSTEM = """You aggregate pre-processed Reddit summaries and review articles into shopping recommendations.
 
@@ -176,27 +172,17 @@ SOURCE WEIGHTING:
 - Strongest signal: product in multiple Reddit summaries AND review articles
 - [AUTHORITY: TRUSTED] (Wirecutter, RTINGS, Consumer Reports) — weight heavily
 - [AUTHORITY: GOOD] — weight moderately; [AUTHORITY: UNKNOWN] — treat like one Reddit mention
-- High thread_score amplifies that thread's products signal
+- High thread_score amplifies that thread's signal
 - Review-only product with no Reddit corroboration: flag as potentially SEO-pushed
 - Products with "negative" summary sentiment: surface with their downsides documented
+- Check controversial_signals — high-upvote disagreements worth surfacing
 
 SEPARATION:
 - "materials" = category types: "cotton blanket", "bamboo sheets" (never specific brands)
 - "products" = specific buyable items: "Buffy Breeze Comforter" (never generic types)
 - For each material, include 2-3 example_products drawn from the actual research
 - Never mix them in the same list
-
-BUDGET (critical):
-- Surface ONLY products fitting the stated budget.
-- "under ₹5000" (≈$60 USD): exclude Rolex, Omega, Tudor, Grand Seiko.
-- "under $50": exclude AirPods Pro, Sony WF-1000XM5 ($200+).
-- Currency: ₹/Rs = INR (1 USD ≈ 83), £ = GBP (1 USD ≈ 0.78), € = EUR (1 USD ≈ 0.92).
-
-COMPLAINTS: Surface all. Confidence: "confirmed" = 3+ users, "reported" = 2, "single" = 1.
-Check controversial_signals in summaries — these are high-upvote disagreements worth surfacing.
-Never censor complaints.
-
-OTHER: Subreddits WITHOUT 'r/'. Quotes ≤15 words. Ignore affiliate/marketing language."""
+""" + _SHARED_ANALYSIS_RULES
 
 
 EXTRACT_PROMPT_TEMPLATE = """Researching: "{query}"
@@ -336,6 +322,10 @@ def analyze_sources(query: str, sources: list[dict]) -> dict:
 
     Primary: Gemini 2.5 Flash (1M context, handles all sources at once)
     Fallback: Groq Llama 3.3 70B (128K context, truncates to fit if needed)
+
+    NOTE: This is the legacy raw-sources path used by run.py (CLI).
+    The API server uses analyze_with_summaries() which is faster and higher quality.
+    This function is kept for CLI backward-compatibility only.
     """
     char_budget = MAX_INPUT_CHARS
 
@@ -441,37 +431,26 @@ Apply your system instructions and return the final JSON object with materials, 
     print(f"[main_analyzer] aggregating {len(thread_summaries)} thread summaries + "
           f"{len(review_pages)} review pages ({len(prompt):,} chars total)")
 
-    from analysis_normalizer import normalize_analysis
-
     raw = ""
     try:
         raw = run_agent("main_analyzer", user_prompt=prompt, system=SUMMARIES_ANALYZER_SYSTEM)
         parsed = _try_repair_json(raw)
         result = normalize_analysis(parsed)
     except Exception as e:
-        print(f"[main_analyzer] failed: {e}. Falling back to legacy raw mode.")
-        # Reconstruct sources from summaries for the fallback path
-        reconstructed = []
-        for s in thread_summaries:
-            if s.get("_failed"):
-                continue
-            reconstructed.append({
-                "source_type": "reddit",
-                "source_name": f"r/{s.get('subreddit', '?')}",
-                "url": s.get("url", ""),
-                "title": s.get("thread_summary", "")[:200],
-                "body": "",
-                "discussions": [
-                    {"text": c.get("text", ""), "score": c.get("upvotes", 0), "depth": 0}
-                    for c in s.get("top_comments", [])
-                ],
-                "score": s.get("thread_score", 0),
-            })
-        reconstructed.extend([
-            {**r, "source_type": "review", "source_name": r.get("source_name", "")}
-            for r in review_pages
-        ])
-        result = normalize_analysis(analyze_sources(query, reconstructed))
+        print(f"[main_analyzer] failed: {e}. Retrying with trimmed prompt via agent fallback chain.")
+        # Retry once with a shorter prompt — strip review text to reduce token count.
+        # This hits the agent fallback chain (cerebras → mistral → openrouter) automatically.
+        short_prompt = (
+            f"USER'S QUERY: {query}\n\n"
+            f"REDDIT THREAD SUMMARIES:\n{summaries_text[:20000]}\n\n"
+            f"Return the JSON object with materials, products, and summary."
+        )
+        try:
+            raw = run_agent("main_analyzer", user_prompt=short_prompt, system=SUMMARIES_ANALYZER_SYSTEM)
+            result = normalize_analysis(_try_repair_json(raw))
+        except Exception as e2:
+            print(f"[main_analyzer] retry also failed: {e2}. Returning empty result.")
+            result = normalize_analysis({"materials": [], "products": [], "summary": ""})
 
     # ---- RECOVERY: if products is empty, retry with a stripped-down prompt ----
     # Some LLMs in the fallback chain (especially Mistral free tier) don't honor

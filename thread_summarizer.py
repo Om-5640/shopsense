@@ -25,8 +25,9 @@ from agents import run_agent
 # Adaptive parallelism: start at 5, throttle back to 3 on repeated 429s
 MAX_PARALLEL_WORKERS = 5
 _MIN_WORKERS = 2
-# Delay between thread submissions to stagger API calls (seconds)
-SUBMISSION_STAGGER_DELAY = 0.5
+# No baseline stagger needed: ThreadPoolExecutor bounds concurrency to MAX_PARALLEL_WORKERS,
+# so we never burst all threads simultaneously regardless. Stagger only activates after a 429.
+SUBMISSION_STAGGER_DELAY = 0.0
 
 # Adaptive throttle state — shared across parallel workers
 _throttle_lock = threading.Lock()
@@ -76,7 +77,10 @@ Return ONLY a JSON object:
     {"text": "verbatim short quote", "upvotes": 0}
   ],
   "total_upvotes": 0,
-  "controversial_signals": ["specific complaint with high upvotes despite disagreement"]
+  "controversial_signals": ["specific complaint with high upvotes despite disagreement"],
+  "aliases": {
+    "Brand Model Name": ["shorthand1", "nickname", "informal reference seen in this thread"]
+  }
 }
 
 RULES:
@@ -87,6 +91,9 @@ RULES:
 5. Sentiment: "positive" if 2+ users praise it, "negative" if 2+ complain, "mixed" otherwise.
 6. controversial_signals: only include if controversial-tagged comments expose real concerns.
 7. If thread is off-topic or unhelpful, return mostly-empty fields with thread_summary explaining why.
+8. aliases: for each product in products_mentioned, list every shorthand/nickname ACTUALLY seen in
+   this thread (e.g. "XM5" for "Sony WF-1000XM5", "RBA7" for "Realme Buds Air 7"). Empty dict {} is
+   fine if no nicknames appear. NEVER merge different products — "Air 7" and "Air 7 Pro" stay separate.
 
 NO markdown, NO commentary. JSON only."""
 
@@ -214,6 +221,22 @@ def _summarize_one_thread(thread: dict, query: str) -> dict:
                 upvotes = int(upvotes_raw) if str(upvotes_raw).replace("-", "").isdigit() else 0
                 normalized_comments.append({"text": text, "upvotes": upvotes})
 
+    # Normalize aliases: {canonical_name: [alias, ...]} — mirrors coref_pass output format
+    raw_aliases = data.get("aliases") or {}
+    normalized_aliases: dict[str, list[str]] = {}
+    if isinstance(raw_aliases, dict):
+        for name, alias_list in raw_aliases.items():
+            name_str = _coerce_str(name).strip()
+            if not name_str:
+                continue
+            clean = [
+                _coerce_str(a).strip()
+                for a in _coerce_list(alias_list)
+                if _coerce_str(a).strip() and _coerce_str(a).strip().lower() != name_str.lower()
+            ]
+            if clean:
+                normalized_aliases[name_str] = clean
+
     # Build fully-normalized output (don't trust raw LLM structure)
     return {
         "url": url,
@@ -227,6 +250,7 @@ def _summarize_one_thread(thread: dict, query: str) -> dict:
         "controversial_signals": [_coerce_str(c) for c in _coerce_list(data.get("controversial_signals")) if _coerce_str(c)],
         "thread_score": thread.get("score", 0),
         "total_comment_count": thread.get("total_comment_count_in_thread", 0),
+        "aliases": normalized_aliases,
         "_failed": False,
     }
 
@@ -266,9 +290,11 @@ def summarize_threads_parallel(
         future_to_idx = {}
         for i, thread in enumerate(threads):
             future_to_idx[executor.submit(_summarize_one_thread, thread, query)] = i
-            # Adaptive stagger: slow down if rate limits were recently hit
+            # Only sleep when throttled (rate limit was recently hit); no baseline sleep needed.
             if i < len(threads) - 1:
-                time.sleep(_get_stagger())
+                stagger = _get_stagger()
+                if stagger > 0:
+                    time.sleep(stagger)
 
         completed = 0
         for future in as_completed(future_to_idx):
@@ -357,3 +383,19 @@ def format_summaries_for_main_analyzer(summaries: list[dict]) -> str:
         sections.append("\n".join(section))
 
     return "\n".join(sections)
+
+
+def build_coref_maps_from_summaries(summaries: list[dict]) -> list[dict]:
+    """
+    Extract per-thread alias maps from already-computed thread summaries.
+
+    Returns a list parallel with `summaries` where each entry is a
+    {canonical_name: [alias, ...]} dict — the same format coref_pass produces.
+    Passing this to run_pipeline(pre_coref_maps=...) eliminates all coref_pass
+    LLM calls (typically 15 calls, ~15-30s) with zero additional API cost.
+
+    Failed summaries (_failed=True) yield empty dicts — harmless: the registry
+    will still know about those products via base_registry seeds from the main
+    analysis products list.
+    """
+    return [s.get("aliases", {}) for s in summaries]

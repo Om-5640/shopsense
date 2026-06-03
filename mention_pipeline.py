@@ -19,6 +19,7 @@ Result: { canonical_name: MentionResult } sorted dict
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from alias_resolver import coref_pass, merge_into_registry
 from mention_counter import build_automaton, build_exclude_patterns, count_across_threads
 
@@ -30,6 +31,7 @@ def run_pipeline(
     llm_client,
     base_registry: dict | None = None,
     run_sentiment: bool = True,
+    pre_coref_maps: list[dict] | None = None,
 ) -> dict:
     """
     Run the full mention-counting + sentiment pipeline over raw Reddit threads.
@@ -51,12 +53,37 @@ def run_pipeline(
         return {}
 
     try:
-        # ── Step 1: Per-thread coreference passes ──────────────────────────────
-        logger.info("[mention_pipeline] running coref_pass on %d threads", len(threads))
-        per_thread_corefs = []
-        for thread in threads:
-            coref_result = coref_pass(thread, llm_client)
-            per_thread_corefs.append(coref_result)
+        # ── Step 1: Per-thread coreference / alias resolution ─────────────────
+        if pre_coref_maps is not None:
+            # Fast path: aliases already extracted from thread summaries — zero LLM calls.
+            # Pad with empty dicts when there are more raw threads than summaries
+            # (extra threads are de-duplicates; their products are covered by the seeded
+            # base_registry which is built from the main analyzer's product list).
+            per_thread_corefs = list(pre_coref_maps)
+            while len(per_thread_corefs) < len(threads):
+                per_thread_corefs.append({})
+            logger.info(
+                "[mention_pipeline] using %d pre-extracted alias maps from summaries (skipping coref_pass)",
+                len(pre_coref_maps),
+            )
+        else:
+            # Fallback: run coref_pass LLM calls in parallel (original behaviour)
+            logger.info("[mention_pipeline] running coref_pass on %d threads (parallel)", len(threads))
+            per_thread_corefs = [{}] * len(threads)
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                future_to_idx = {
+                    pool.submit(coref_pass, thread, llm_client): i
+                    for i, thread in enumerate(threads)
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        per_thread_corefs[idx] = future.result()
+                    except Exception as exc:
+                        logger.warning(
+                            "[mention_pipeline] coref_pass failed for thread %d: %s", idx, exc
+                        )
+                        per_thread_corefs[idx] = {}
 
         coref_products_found = sum(len(c) for c in per_thread_corefs)
         logger.info("[mention_pipeline] coref found %d unique product names across threads",
