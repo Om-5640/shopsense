@@ -36,7 +36,8 @@ class ReviewCandidate:
 
 
 # Expert editorial domains — used to score Serper results
-_EXPERT_DOMAINS = frozenset({
+# Global + US
+_EXPERT_DOMAINS_GLOBAL = frozenset({
     "rtings.com", "tomsguide.com", "techradar.com", "wirecutter.com",
     "notebookcheck.net", "pcmag.com", "theverge.com", "engadget.com",
     "soundguys.com", "displayninja.com", "laptopmag.com",
@@ -45,6 +46,38 @@ _EXPERT_DOMAINS = frozenset({
     "dxomark.com", "gsmarena.com", "headfonics.com", "trustedreviews.com",
     "expertreviews.co.uk", "which.co.uk", "cnet.com", "arstechnica.com",
 })
+# UK-specific authoritative sources
+_EXPERT_DOMAINS_UK = frozenset({
+    "which.co.uk", "trustedreviews.com", "expertreviews.co.uk",
+    "techradar.com", "t3.com", "pocket-lint.com", "stuff.tv",
+    "alphr.com", "gadgetflow.com", "recombu.com", "knowyourmobile.com",
+    "tomsguide.com",  # covers UK market well
+})
+# Australia-specific authoritative sources
+_EXPERT_DOMAINS_AU = frozenset({
+    "choice.com.au", "gizmodo.com.au", "techguide.com.au",
+    "whathifi.com", "rtings.com", "techradar.com",
+    "cnet.com", "digitaltrends.com",
+})
+# India-specific authoritative sources
+_EXPERT_DOMAINS_IN = frozenset({
+    "91mobiles.com", "gadgets360.com", "smartprix.com",
+    "mysmartprice.com", "fonearena.com", "techpp.com",
+    "digit.in", "bgr.in", "ndtv.com", "firstpost.com",
+})
+
+def _get_expert_domains(region: str | None = None) -> frozenset:
+    """Return the right set of expert domains for the region, merged with global."""
+    region_map = {
+        "uk": _EXPERT_DOMAINS_UK,
+        "australia": _EXPERT_DOMAINS_AU,
+        "india": _EXPERT_DOMAINS_IN,
+    }
+    region_specific = region_map.get(region or "", frozenset())
+    return _EXPERT_DOMAINS_GLOBAL | region_specific
+
+# Backward compat alias — existing callers still work
+_EXPERT_DOMAINS = _EXPERT_DOMAINS_GLOBAL
 
 
 # ---------------------------------------------------------------------------
@@ -64,22 +97,27 @@ def wrap_gemini_urls(urls: list[str]) -> list[ReviewCandidate]:
     ]
 
 
-def fetch_expert_editorial_candidates(query: str, limit: int = 5) -> list[ReviewCandidate]:
+def fetch_expert_editorial_candidates(
+    query: str, limit: int = 5, region: str | None = None
+) -> list[ReviewCandidate]:
     """
     Search for reviews from known expert editorial domains via Serper.
     Uses semantic search — no per-category site lists.
+    region: when provided, biases the domain set toward region-specific outlets.
     """
     try:
-        return _expert_search(query, limit)
+        return _expert_search(query, limit, region=region)
     except Exception as e:
         print(f"[candidates] expert editorial search failed (non-fatal): {e}")
         return []
 
 
-def fetch_news_candidates(query: str, limit: int = 5) -> list[ReviewCandidate]:
+def fetch_news_candidates(
+    query: str, limit: int = 5, region: str | None = None
+) -> list[ReviewCandidate]:
     """Search for recent news coverage: reviews, hands-on, buying guides."""
     try:
-        return _news_search(query, limit)
+        return _news_search(query, limit, region=region)
     except Exception as e:
         print(f"[candidates] news search failed (non-fatal): {e}")
         return []
@@ -107,18 +145,20 @@ def retrieve_review_candidates(
     query: str,
     gemini_urls: list[str] | None = None,
     extra_limit: int = 5,
+    region: str | None = None,
 ) -> list[ReviewCandidate]:
     """
     Full multi-source retrieval entry point.
 
     gemini_urls: URLs already found by Gemini (may be empty list or None).
     extra_limit: max additional URLs to fetch per supplementary source.
+    region: when set, biases expert domain selection to region-specific outlets.
 
     Returns deduplicated merged list, Gemini sources first.
     """
     gemini = wrap_gemini_urls(gemini_urls or [])
-    expert = fetch_expert_editorial_candidates(query, limit=extra_limit)
-    news = fetch_news_candidates(query, limit=extra_limit)
+    expert = fetch_expert_editorial_candidates(query, limit=extra_limit, region=region)
+    news = fetch_news_candidates(query, limit=extra_limit, region=region)
     return merge_and_deduplicate(gemini, expert, news)
 
 
@@ -126,12 +166,19 @@ def retrieve_review_candidates(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _expert_search(query: str, limit: int) -> list[ReviewCandidate]:
+def _expert_search(query: str, limit: int, region: str | None = None) -> list[ReviewCandidate]:
     import google_search
     if not google_search.is_configured():
         return []
 
-    results = google_search.search(f"{query} in-depth review measurements test", num=limit * 3)
+    expert_domains = _get_expert_domains(region)
+
+    # Add region term to search query so results are market-relevant
+    _REGION_TERMS = {"uk": " uk", "australia": " australia", "india": " india", "canada": " canada"}
+    region_term = _REGION_TERMS.get(region or "", "")
+    search_q = f"{query}{region_term} in-depth review measurements test"
+
+    results = google_search.search(search_q, num=limit * 3)
     candidates: list[ReviewCandidate] = []
     seen: set[str] = set()
     for r in results:
@@ -139,7 +186,7 @@ def _expert_search(query: str, limit: int) -> list[ReviewCandidate]:
         if not link or link in seen:
             continue
         dom = _domain(link)
-        if dom not in _EXPERT_DOMAINS:
+        if dom not in expert_domains:
             continue
         seen.add(link)
         candidates.append(ReviewCandidate(
@@ -154,12 +201,14 @@ def _expert_search(query: str, limit: int) -> list[ReviewCandidate]:
     return candidates
 
 
-def _news_search(query: str, limit: int) -> list[ReviewCandidate]:
+def _news_search(query: str, limit: int, region: str | None = None) -> list[ReviewCandidate]:
     import google_search
     if not google_search.is_configured():
         return []
 
-    queries = [f"{query} review", f"{query} buying guide", f"{query} hands on"]
+    _REGION_TERMS = {"uk": " uk", "australia": " australia", "india": " india", "canada": " canada"}
+    rt = _REGION_TERMS.get(region or "", "")
+    queries = [f"{query}{rt} review", f"{query}{rt} buying guide", f"{query}{rt} hands on"]
     candidates: list[ReviewCandidate] = []
     seen: set[str] = set()
 

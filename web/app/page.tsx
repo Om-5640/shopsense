@@ -17,10 +17,12 @@ export default function HomePage() {
   const router = useRouter()
   const [commandOpen, setCommandOpen] = useState(false)
   
-  const handleSearch = useCallback((query: string) => {
-    router.push(`/research?q=${encodeURIComponent(query)}`)
+  const handleSearch = useCallback((query: string, region: string = 'global') => {
+    const params = new URLSearchParams({ q: query })
+    if (region && region !== 'global') params.set('region', region)
+    router.push(`/research?${params.toString()}`)
   }, [router])
-  
+
   const handleChipClick = useCallback((query: string) => {
     setTimeout(() => {
       router.push(`/research?q=${encodeURIComponent(query)}`)

@@ -170,6 +170,8 @@ function ResearchPageContent() {
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const query = searchParams.get('q') ?? ''
+  // Region explicitly chosen by the user in the home search bar — skip clarification phase
+  const urlRegion = searchParams.get('region') ?? ''
 
   const [commandOpen, setCommandOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('detecting')
@@ -737,7 +739,7 @@ function ResearchPageContent() {
     setDetection(null)
     setCategory('')
     setPrimaryNoun('')
-    setRegion('india')
+    setRegion(urlRegion || 'india')
     setCriteria([])
     setQaHistory([])
     setMessages([])
@@ -762,16 +764,23 @@ function ResearchPageContent() {
         setDetection(d)
         if (d.needs_disambiguation) {
           setPhase('disambiguation')
-        } else if (d.needs_region_clarification) {
-          setCategory(d.category)
-          setPrimaryNoun(d.primary_noun ?? '')
-          setPhase('region')
         } else {
-          const reg = d.region !== 'global' ? d.region : 'india'
+          // If user explicitly picked a region in the search bar, honour it and
+          // skip the clarification phase entirely.
+          const explicitRegion = urlRegion && urlRegion !== 'global' ? urlRegion : null
+          const detectedRegion = d.region !== 'global' ? d.region : null
+          const reg = explicitRegion ?? detectedRegion ?? (d.needs_region_clarification ? null : 'india')
+
           setCategory(d.category)
           setPrimaryNoun(d.primary_noun ?? '')
-          setRegion(reg)
-          await loadCriteriaAndStart(d.category, reg, d.primary_noun ?? '')
+
+          if (!reg) {
+            // No region from URL or detection — show clarification UI
+            setPhase('region')
+          } else {
+            setRegion(reg)
+            await loadCriteriaAndStart(d.category, reg, d.primary_noun ?? '')
+          }
         }
       } catch (e) {
         handleError(`Category detection failed: ${e instanceof Error ? e.message : e}`)
@@ -853,7 +862,7 @@ function ResearchPageContent() {
               <button
                 key={opt.slug}
                 onClick={async () => {
-                  const reg = detection.region !== 'global' ? detection.region : region
+                  const reg = (urlRegion && urlRegion !== 'global') ? urlRegion : (detection.region !== 'global' ? detection.region : region)
                   setCategory(opt.slug)
                   setPrimaryNoun(detection.primary_noun ?? '')
                   setRegion(reg)

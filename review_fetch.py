@@ -512,7 +512,10 @@ def fetch_all_reviews(query: str, limit: int = 10, delay: float = 1.0) -> list[d
 
     if _HAS_CANDIDATES:
         try:
-            extra = _retrieve_candidates(query, gemini_urls=[], extra_limit=limit // 2)
+            extra = _retrieve_candidates(
+                query, gemini_urls=[], extra_limit=limit // 2,
+                region=detect_region(query),
+            )
             for cand in extra:
                 if cand.url not in url_metadata:
                     url_metadata[cand.url] = {

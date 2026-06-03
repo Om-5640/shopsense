@@ -428,13 +428,175 @@ def _fetch_bestbuy(product_name: str) -> dict | None:
     return first_result
 
 
+def _parse_gbp(text: str | None) -> int | None:
+    """Extract integer GBP price from strings like '£49.99', '49', etc."""
+    if not text:
+        return None
+    cleaned = re.sub(r"[^0-9.]", "", str(text))
+    if cleaned:
+        try:
+            val = float(cleaned)
+            if 1 <= val <= 100_000:
+                return int(val)
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_aud(text: str | None) -> int | None:
+    """Extract integer AUD price from strings like 'A$49.99', '$49', etc."""
+    return _parse_gbp(text)  # same numeric format
+
+
+def _fetch_amazon_uk(product_name: str) -> dict | None:
+    """Search Amazon.co.uk via Serper Shopping — collect top-5 candidates."""
+    results = _serper_shopping_search(f"{product_name} site:amazon.co.uk", num=5)
+    if not results:
+        results = _serper_google_search(f"{product_name} amazon.co.uk buy", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
+
+    for r in results:
+        url = r.get("link") or r.get("url") or ""
+        if "amazon.co.uk" not in url.lower():
+            continue
+        price_raw = r.get("price") or r.get("extracted_price")
+        price = _parse_gbp(str(price_raw)) if price_raw else None
+        if not price:
+            continue
+        review_raw = r.get("ratingCount") or r.get("reviews")
+        entry = {
+            "name": "Amazon UK",
+            "price_usd": price,   # stored as price_usd; currency field carries "GBP"
+            "url": _apply_affiliate_tag(url),
+            "in_stock": True,
+            "rating": float(r["rating"]) if r.get("rating") else None,
+            "review_count": int(re.sub(r"[^\d]", "", str(review_raw))) if review_raw else None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
+            "title": r.get("title", ""),
+        }
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
+
+
+def _fetch_argos(product_name: str) -> dict | None:
+    """Search Argos (UK) via Serper — major UK high-street electronics retailer."""
+    results = _serper_google_search(f"{product_name} site:argos.co.uk buy", num=5)
+    candidates: list[dict] = []
+    first_result: dict | None = None
+
+    for r in results:
+        url = r.get("link") or r.get("url") or ""
+        if "argos.co.uk" not in url.lower():
+            continue
+        price_raw = r.get("price") or r.get("extracted_price")
+        price = _parse_gbp(str(price_raw)) if price_raw else None
+        if not price:
+            continue
+        entry = {
+            "name": "Argos",
+            "price_usd": price,
+            "url": url,
+            "in_stock": True,
+            "rating": float(r["rating"]) if r.get("rating") else None,
+            "review_count": None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
+            "title": r.get("title", ""),
+        }
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
+
+
+def _fetch_amazon_au(product_name: str) -> dict | None:
+    """Search Amazon.com.au via Serper Shopping — collect top-5 candidates."""
+    results = _serper_shopping_search(f"{product_name} site:amazon.com.au", num=5)
+    if not results:
+        results = _serper_google_search(f"{product_name} amazon.com.au buy", num=5)
+
+    candidates: list[dict] = []
+    first_result: dict | None = None
+
+    for r in results:
+        url = r.get("link") or r.get("url") or ""
+        if "amazon.com.au" not in url.lower():
+            continue
+        price_raw = r.get("price") or r.get("extracted_price")
+        price = _parse_aud(str(price_raw)) if price_raw else None
+        if not price:
+            continue
+        review_raw = r.get("ratingCount") or r.get("reviews")
+        entry = {
+            "name": "Amazon AU",
+            "price_usd": price,   # stored as price_usd; currency field carries "AUD"
+            "url": _apply_affiliate_tag(url),
+            "in_stock": True,
+            "rating": float(r["rating"]) if r.get("rating") else None,
+            "review_count": int(re.sub(r"[^\d]", "", str(review_raw))) if review_raw else None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
+            "title": r.get("title", ""),
+        }
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
+
+
+def _fetch_jbhifi(product_name: str) -> dict | None:
+    """Search JB Hi-Fi (AU) via Serper — major Australian electronics retailer."""
+    results = _serper_google_search(f"{product_name} site:jbhifi.com.au buy", num=5)
+    candidates: list[dict] = []
+    first_result: dict | None = None
+
+    for r in results:
+        url = r.get("link") or r.get("url") or ""
+        if "jbhifi.com.au" not in url.lower():
+            continue
+        price_raw = r.get("price") or r.get("extracted_price")
+        price = _parse_aud(str(price_raw)) if price_raw else None
+        if not price:
+            continue
+        entry = {
+            "name": "JB Hi-Fi",
+            "price_usd": price,
+            "url": url,
+            "in_stock": True,
+            "rating": float(r["rating"]) if r.get("rating") else None,
+            "review_count": None,
+            "image_url": r.get("imageUrl") or r.get("thumbnailUrl"),
+            "title": r.get("title", ""),
+        }
+        candidates.append(entry)
+        if first_result is None:
+            first_result = entry
+
+    if first_result:
+        first_result["_candidates"] = candidates
+    return first_result
+
+
 # ---------------------------------------------------------------------------
 # Per-product orchestration
 # ---------------------------------------------------------------------------
 
 _RETAILER_FETCHERS = {
-    "india": [_fetch_amazon_india, _fetch_flipkart, _fetch_croma],
-    "usa": [_fetch_amazon_usa, _fetch_bestbuy],
+    "india":     [_fetch_amazon_india, _fetch_flipkart, _fetch_croma],
+    "usa":       [_fetch_amazon_usa, _fetch_bestbuy],
+    "uk":        [_fetch_amazon_uk, _fetch_argos],
+    "australia": [_fetch_amazon_au, _fetch_jbhifi],
 }
 
 
@@ -453,7 +615,11 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         # Unsupported region — return search-URL fallback
         return _search_url_fallback(product_name, region)
 
-    currency = "INR" if region == "india" else "USD"
+    _REGION_CURRENCY = {
+        "india": "INR", "usa": "USD", "uk": "GBP",
+        "australia": "AUD", "canada": "CAD", "europe": "EUR",
+    }
+    currency = _REGION_CURRENCY.get(region, "USD")
     price_field = "price_inr" if region == "india" else "price_usd"
 
     retailers: list[dict] = []
@@ -548,26 +714,38 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
 def _search_url_fallback(product_name: str, region: str) -> dict:
     """When all retailer fetches fail, return generic search URLs."""
     encoded = quote_plus(product_name)
-    if region == "india":
-        retailers = [
+    _FALLBACK_RETAILERS = {
+        "india": [
             {"name": "Amazon India", "url": f"https://www.amazon.in/s?k={encoded}", "is_search": True},
             {"name": "Flipkart", "url": f"https://www.flipkart.com/search?q={encoded}", "is_search": True},
-        ]
-    elif region == "usa":
-        retailers = [
+        ],
+        "usa": [
             {"name": "Amazon US", "url": f"https://www.amazon.com/s?k={encoded}", "is_search": True},
             {"name": "Best Buy", "url": f"https://www.bestbuy.com/site/searchpage.jsp?st={encoded}", "is_search": True},
-        ]
-    else:
-        retailers = [
-            {"name": "Google Shopping", "url": f"https://www.google.com/search?tbm=shop&q={encoded}", "is_search": True},
-        ]
+        ],
+        "uk": [
+            {"name": "Amazon UK", "url": f"https://www.amazon.co.uk/s?k={encoded}", "is_search": True},
+            {"name": "Argos", "url": f"https://www.argos.co.uk/search/{encoded}/", "is_search": True},
+        ],
+        "australia": [
+            {"name": "Amazon AU", "url": f"https://www.amazon.com.au/s?k={encoded}", "is_search": True},
+            {"name": "JB Hi-Fi", "url": f"https://www.jbhifi.com.au/search?query={encoded}", "is_search": True},
+        ],
+        "canada": [
+            {"name": "Amazon Canada", "url": f"https://www.amazon.ca/s?k={encoded}", "is_search": True},
+            {"name": "Best Buy Canada", "url": f"https://www.bestbuy.ca/en-ca/search?query={encoded}", "is_search": True},
+        ],
+    }
+    retailers = _FALLBACK_RETAILERS.get(region, [
+        {"name": "Google Shopping", "url": f"https://www.google.com/search?tbm=shop&q={encoded}", "is_search": True},
+    ])
+    _CURRENCY = {"india": "INR", "uk": "GBP", "australia": "AUD", "canada": "CAD", "europe": "EUR"}
     return {
         "product_name": product_name,
         "retailers": retailers,
         "best_price": None,
         "price_range": None,
-        "currency": "INR" if region == "india" else "USD",
+        "currency": _CURRENCY.get(region, "USD"),
         "fetched_at": datetime.utcnow().isoformat() + "Z",
         "is_fallback": True,
     }

@@ -378,19 +378,33 @@ def _region_subreddits(region: str | None) -> dict:
         return {
             "primary": {
                 "ukpersonalfinance", "casualuk", "unitedkingdom", "britishproblems",
-                "buyitforlifeuk",
+                "buyitforlifeuk", "uktechdeals", "techuk",
             },
-            "secondary": set(),
+            "secondary": {
+                "moneysavingexpert", "frugaluk", "amateurradio",
+                "headphones", "audiophile", "mechanicalkeyboards",
+            },
         }
     elif region == "australia":
         return {
-            "primary": {"australia", "ausfinance", "askanaustralian", "ozbargain"},
-            "secondary": set(),
+            "primary": {
+                "australia", "ausfinance", "askanaustralian", "ozbargain",
+                "autech", "australiantechforum",
+            },
+            "secondary": {
+                "headphones", "audiophile", "buildapc",
+                "mechanicalkeyboards", "photography",
+            },
         }
     elif region == "canada":
         return {
-            "primary": {"canada", "personalfinancecanada", "askacanadian"},
-            "secondary": set(),
+            "primary": {
+                "canada", "personalfinancecanada", "askacanadian",
+                "canadiandeals", "bapcsalescanada",
+            },
+            "secondary": {
+                "headphones", "audiophile", "buildapc",
+            },
         }
     else:  # usa / global
         return {
