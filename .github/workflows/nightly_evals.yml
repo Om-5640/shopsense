@@ -1,0 +1,94 @@
+name: Nightly Golden Evals
+
+on:
+  schedule:
+    # Run at 02:00 UTC every day
+    - cron: '0 2 * * *'
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  golden-evals:
+    name: Golden-file LLM output regression tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r api/requirements.txt
+
+      - name: Run golden-file normalizer tests
+        id: normalizer_tests
+        run: python -m pytest tests/evals/test_golden_normalizer.py -v --tb=short
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+        continue-on-error: true
+
+      - name: Run golden-file scorer tests
+        id: scorer_tests
+        run: python -m pytest tests/evals/test_golden_scorer.py -v --tb=short
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+        continue-on-error: true
+
+      - name: Determine overall result
+        id: result
+        run: |
+          if [ "${{ steps.normalizer_tests.outcome }}" == "failure" ] || [ "${{ steps.scorer_tests.outcome }}" == "failure" ]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open GitHub issue on regression
+        if: steps.result.outputs.failed == 'true'
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          BODY="## Golden Eval Regression Detected
+
+**Date:** $DATE
+**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+### What this means
+A golden-file test failed, which means one of the following happened:
+- A provider updated its model and changed the LLM output shape
+- A code change in \`normalize_analysis()\` or \`_build_scored_dict()\` introduced a regression
+- A scored product percentage deviated by more than ±0.5 percentage points from the known-good snapshot
+
+### Action required
+1. Open the failed workflow run above and check which test(s) failed
+2. If the change is **intentional** (e.g. a normalizer improvement): update the fixture JSON with the new expected values and close this issue
+3. If the change is **unintentional** (provider model update causing shape change): add a new fixture for the new shape and fix the normalizer
+
+### Files to check
+- \`tests/evals/fixtures/\` — fixture JSON files
+- \`analysis_normalizer.py\` — normalize_analysis() function
+- \`scorer.py\` — _build_scored_dict() and _compute_percentage()
+
+> Auto-opened by the Nightly Golden Evals workflow"
+
+          gh issue create \
+            --title "Golden eval regression detected ($DATE)" \
+            --body "$BODY" \
+            --label "regression"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail the workflow if tests failed
+        if: steps.result.outputs.failed == 'true'
+        run: |
+          echo "Golden eval tests failed — see issue created above."
+          exit 1

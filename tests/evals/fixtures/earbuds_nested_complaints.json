@@ -1,0 +1,47 @@
+{
+  "id": "earbuds_nested_complaints",
+  "description": "Complaints as [[c1, c2], c3] nested list — Bug 4 scenario, must be flattened",
+  "category": "electronics/earbuds",
+  "provider": "gemini",
+  "raw_llm_output": {
+    "summary": "Community discusses Sony XM5 and Jabra Elite pros/cons.",
+    "materials": [],
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count": 15,
+        "distinct_recommenders": 7,
+        "positive_mentions": 12,
+        "negative_mentions": 3,
+        "signal_strength": "high",
+        "praise": ["Great ANC", "Long battery"],
+        "complaints": [
+          ["Expensive", "No IP68 rating"],
+          "Average mic quality"
+        ],
+        "sources": ["r/headphones"]
+      },
+      {
+        "name": "Jabra Elite 5",
+        "mention_count": 8,
+        "distinct_recommenders": 4,
+        "positive_mentions": 6,
+        "negative_mentions": 2,
+        "signal_strength": "low",
+        "praise": ["Budget friendly"],
+        "complaints": [
+          [{"text": "Average sound", "confidence": "single"}, {"text": "Plastic build", "confidence": "reported"}],
+          {"text": "Short cable", "confidence": "single"}
+        ],
+        "sources": ["r/headphones"]
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 2,
+    "products": [
+      {"name": "Sony WF-1000XM5", "complaints_count": 3},
+      {"name": "Jabra Elite 5",   "complaints_count": 3}
+    ]
+  }
+}

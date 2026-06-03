@@ -55,7 +55,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          python -m pytest tests/unit/ -v
+          python -m pytest tests/unit/ tests/evals/ -v
         env:
           GEMINI_API_KEY: dummy
           GROQ_API_KEY: dummy

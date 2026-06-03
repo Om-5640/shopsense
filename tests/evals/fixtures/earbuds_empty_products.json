@@ -1,0 +1,16 @@
+{
+  "id": "earbuds_empty_products",
+  "description": "products=[] but summary mentions specific model names — last-resort recovery",
+  "category": "electronics/earbuds",
+  "provider": "gemini",
+  "raw_llm_output": {
+    "summary": "The Sony WF-1000XM5 is frequently recommended by audiophiles. Apple AirPods Pro 2 is praised for ecosystem integration. Bose QC45 remains a top pick for comfort.",
+    "materials": [],
+    "products": []
+  },
+  "expected": {
+    "product_count_min": 0,
+    "products_or_recovery": true,
+    "no_crash": true
+  }
+}

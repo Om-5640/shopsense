@@ -1,0 +1,60 @@
+{
+  "id": "scorer_earbuds_golden",
+  "description": "Golden scorer test: known products + rubric + mock LLM scores → expected percentages",
+  "category": "electronics/earbuds",
+  "rubric": {
+    "weighted_criteria": [
+      {"name": "noise_cancellation", "label": "Noise Cancellation", "weight": 9,  "description": "ANC quality"},
+      {"name": "sound_quality",      "label": "Sound Quality",      "weight": 8,  "description": "Audio fidelity"},
+      {"name": "battery_life",       "label": "Battery Life",       "weight": 6,  "description": "Playtime"},
+      {"name": "comfort",            "label": "Comfort",            "weight": 5,  "description": "Wearability"},
+      {"name": "price_to_value",     "label": "Value for Money",    "weight": 7,  "description": "Cost effectiveness"}
+    ]
+  },
+  "products": [
+    {
+      "name": "Sony WF-1000XM5",
+      "signal_strength": "high",
+      "mention_count": 42,
+      "positive_mentions": 35,
+      "negative_mentions": 7
+    },
+    {
+      "name": "Jabra Elite 5",
+      "signal_strength": "low",
+      "mention_count": 12,
+      "positive_mentions": 10,
+      "negative_mentions": 2
+    }
+  ],
+  "mock_llm_scores": {
+    "Sony WF-1000XM5": [
+      {"criterion": "noise_cancellation", "score": 9.5, "evidence": "Industry leading ANC"},
+      {"criterion": "sound_quality",      "score": 9.0, "evidence": "Exceptional sound"},
+      {"criterion": "battery_life",       "score": 8.0, "evidence": "8hr ANC, 24hr total"},
+      {"criterion": "comfort",            "score": 7.5, "evidence": "Comfortable for most"},
+      {"criterion": "price_to_value",     "score": 6.0, "evidence": "Premium priced"}
+    ],
+    "Jabra Elite 5": [
+      {"criterion": "noise_cancellation", "score": 6.0, "evidence": "Decent ANC"},
+      {"criterion": "sound_quality",      "score": 6.5, "evidence": "Good for price"},
+      {"criterion": "battery_life",       "score": 7.0, "evidence": "7hr battery"},
+      {"criterion": "comfort",            "score": 7.0, "evidence": "Comfortable"},
+      {"criterion": "price_to_value",     "score": 9.0, "evidence": "Excellent value"}
+    ]
+  },
+  "expected_scores": {
+    "Sony WF-1000XM5": {
+      "weighted_total": 285.0,
+      "max_possible": 350.0,
+      "percentage": 81.4,
+      "percentage_tolerance": 0.5
+    },
+    "Jabra Elite 5": {
+      "weighted_total": 246.0,
+      "max_possible": 350.0,
+      "percentage": 70.3,
+      "percentage_tolerance": 0.5
+    }
+  }
+}

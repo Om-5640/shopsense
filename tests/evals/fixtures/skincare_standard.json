@@ -1,0 +1,61 @@
+{
+  "id": "skincare_standard",
+  "description": "Non-tech category (facewash for oily skin) — different material types, no model numbers",
+  "category": "personal_care/facewash",
+  "provider": "groq",
+  "raw_llm_output": {
+    "summary": "CeraVe Foaming Cleanser and Neutrogena Oil-Free Acne Wash lead recommendations for oily skin.",
+    "materials": [
+      {"name": "salicylic acid", "mention_count": 22, "distinct_recommenders": 12, "praise": ["unclogs pores", "reduces breakouts"], "complaints": [{"text": "Can be drying", "confidence": "reported"}], "example_products": ["Neutrogena Oil-Free"], "sources": ["r/SkincareAddiction"]},
+      {"name": "niacinamide",   "mention_count": 15, "distinct_recommenders": 9,  "praise": ["reduces oiliness", "fades marks"],   "complaints": [], "example_products": ["Minimalist facewash"], "sources": ["r/IndianSkincareAddicts"]}
+    ],
+    "products": [
+      {
+        "name": "CeraVe Foaming Facial Cleanser",
+        "mention_count": 40,
+        "distinct_recommenders": 18,
+        "positive_mentions": 36,
+        "negative_mentions": 4,
+        "signal_strength": "high",
+        "praise": ["Gentle", "pH balanced", "No fragrance", "Removes oil without stripping"],
+        "complaints": [{"text": "May be too gentle for very oily skin", "confidence": "single"}],
+        "sources": ["r/SkincareAddiction", "r/IndianSkincareAddicts"],
+        "representative_quote": "CeraVe foaming is the gold standard for oily skin."
+      },
+      {
+        "name": "Neutrogena Oil-Free Acne Wash",
+        "mention_count": 28,
+        "distinct_recommenders": 12,
+        "positive_mentions": 22,
+        "negative_mentions": 6,
+        "signal_strength": "high",
+        "praise": ["Clears breakouts", "Effective salicylic acid"],
+        "complaints": [{"text": "Can dry out skin", "confidence": "confirmed"}, {"text": "Strong fragrance", "confidence": "reported"}],
+        "sources": ["r/SkincareAddiction"],
+        "representative_quote": "Works great for acne-prone oily skin."
+      },
+      {
+        "name": "Minimalist 2% Salicylic Acid Face Wash",
+        "mention_count": 20,
+        "distinct_recommenders": 10,
+        "positive_mentions": 17,
+        "negative_mentions": 3,
+        "signal_strength": "medium",
+        "praise": ["Budget-friendly", "Contains niacinamide", "Available in India"],
+        "complaints": [{"text": "Packaging not great", "confidence": "single"}],
+        "sources": ["r/IndianSkincareAddicts"],
+        "representative_quote": "Best budget option for Indian users."
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 3,
+    "summary_nonempty": true,
+    "products": [
+      {"name": "CeraVe Foaming Facial Cleanser",          "signal_strength": "high"},
+      {"name": "Neutrogena Oil-Free Acne Wash",           "signal_strength": "high"},
+      {"name": "Minimalist 2% Salicylic Acid Face Wash",  "signal_strength": "medium"}
+    ],
+    "materials_count": 2
+  }
+}

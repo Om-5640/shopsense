@@ -1,0 +1,53 @@
+{
+  "id": "earbuds_invalid_signal_strength",
+  "description": "signal_strength has invalid values — must be normalised to 'low'",
+  "category": "electronics/earbuds",
+  "provider": "mistral",
+  "raw_llm_output": {
+    "summary": "Mixed bag of earbuds with varying community signal.",
+    "materials": [],
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count": 20,
+        "distinct_recommenders": 8,
+        "positive_mentions": 17,
+        "negative_mentions": 3,
+        "signal_strength": "excellent",
+        "praise": ["Top ANC"],
+        "complaints": [],
+        "sources": []
+      },
+      {
+        "name": "Random Budget Buds",
+        "mention_count": 2,
+        "distinct_recommenders": 1,
+        "positive_mentions": 2,
+        "negative_mentions": 0,
+        "signal_strength": "5/10",
+        "praise": [],
+        "complaints": [],
+        "sources": []
+      },
+      {
+        "name": "Jabra Elite 5",
+        "mention_count": 6,
+        "distinct_recommenders": 3,
+        "positive_mentions": 5,
+        "negative_mentions": 1,
+        "signal_strength": "medium",
+        "praise": ["Budget friendly"],
+        "complaints": [],
+        "sources": []
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 3,
+    "products": [
+      {"name": "Sony WF-1000XM5",  "signal_strength": "low"},
+      {"name": "Random Budget Buds","signal_strength": "low"},
+      {"name": "Jabra Elite 5",     "signal_strength": "medium"}
+    ]
+  }
+}

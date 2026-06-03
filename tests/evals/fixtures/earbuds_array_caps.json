@@ -1,0 +1,40 @@
+{
+  "id": "earbuds_array_caps",
+  "description": "praise/complaints/sources > max caps — arrays must be truncated, no crash",
+  "category": "electronics/earbuds",
+  "provider": "gemini",
+  "raw_llm_output": {
+    "summary": "Sony XM5 is overwhelmingly recommended with many detailed opinions.",
+    "materials": [],
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count": 50,
+        "distinct_recommenders": 20,
+        "positive_mentions": 45,
+        "negative_mentions": 5,
+        "signal_strength": "high",
+        "praise": ["Point 1","Point 2","Point 3","Point 4","Point 5","Point 6","Point 7","Point 8","Point 9","Point 10","Point 11","Point 12","Point 13","Point 14","Point 15","Point 16","Point 17","Point 18","Point 19","Point 20","Point 21","Point 22","Point 23","Point 24","Point 25"],
+        "complaints": [
+          {"text": "Complaint 1","confidence":"single"},{"text":"Complaint 2","confidence":"single"},{"text":"Complaint 3","confidence":"single"},{"text":"Complaint 4","confidence":"single"},{"text":"Complaint 5","confidence":"single"},
+          {"text": "Complaint 6","confidence":"single"},{"text":"Complaint 7","confidence":"single"},{"text":"Complaint 8","confidence":"single"},{"text":"Complaint 9","confidence":"single"},{"text":"Complaint 10","confidence":"single"},
+          {"text": "Complaint 11","confidence":"single"},{"text":"Complaint 12","confidence":"single"},{"text":"Complaint 13","confidence":"single"},{"text":"Complaint 14","confidence":"single"},{"text":"Complaint 15","confidence":"single"},
+          {"text": "Complaint 16","confidence":"single"},{"text":"Complaint 17","confidence":"single"},{"text":"Complaint 18","confidence":"single"},{"text":"Complaint 19","confidence":"single"},{"text":"Complaint 20","confidence":"single"},
+          {"text": "Complaint 21","confidence":"single"},{"text":"Complaint 22","confidence":"single"}
+        ],
+        "sources": ["r/sub1","r/sub2","r/sub3","r/sub4","r/sub5","r/sub6","r/sub7","r/sub8","r/sub9","r/sub10","r/sub11","r/sub12","r/sub13","r/sub14","r/sub15","r/sub16","r/sub17","r/sub18","r/sub19","r/sub20","r/sub21","r/sub22","r/sub23","r/sub24","r/sub25","r/sub26","r/sub27","r/sub28","r/sub29","r/sub30","r/sub31","r/sub32","r/sub33","r/sub34","r/sub35","r/sub36","r/sub37","r/sub38","r/sub39","r/sub40","r/sub41","r/sub42","r/sub43","r/sub44","r/sub45","r/sub46","r/sub47","r/sub48","r/sub49","r/sub50","r/sub51","r/sub52","r/sub53","r/sub54","r/sub55"]
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 1,
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "praise_count_max": 20,
+        "complaints_count_max": 20,
+        "sources_count_max": 50
+      }
+    ]
+  }
+}

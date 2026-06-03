@@ -1,0 +1,12 @@
+{
+  "id": "earbuds_none_input",
+  "description": "LLM returned None / null — normalize_analysis must never crash",
+  "category": "electronics/earbuds",
+  "provider": "groq",
+  "raw_llm_output": null,
+  "expected": {
+    "product_count": 0,
+    "no_crash": true,
+    "summary": ""
+  }
+}

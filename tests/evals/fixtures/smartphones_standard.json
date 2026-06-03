@@ -1,0 +1,73 @@
+{
+  "id": "smartphones_standard",
+  "description": "Standard output for smartphone category — different product names and signals",
+  "category": "electronics/smartphones",
+  "provider": "groq",
+  "raw_llm_output": {
+    "summary": "OnePlus 12 leads for value. Samsung Galaxy S24 Ultra for power users. iPhone 15 Pro for iOS fans. Google Pixel 8 Pro for camera enthusiasts.",
+    "materials": [
+      {"name": "gorilla glass", "mention_count": 5, "distinct_recommenders": 3, "praise": ["scratch resistant"], "complaints": [], "example_products": ["Samsung Galaxy S24 Ultra"], "sources": ["r/android"]}
+    ],
+    "products": [
+      {
+        "name": "OnePlus 12",
+        "mention_count": 35,
+        "distinct_recommenders": 14,
+        "positive_mentions": 28,
+        "negative_mentions": 7,
+        "signal_strength": "high",
+        "praise": ["Best value flagship", "Fast charging", "Smooth performance"],
+        "complaints": [{"text": "No wireless charging in some markets", "confidence": "reported"}],
+        "sources": ["r/OnePlus", "r/android"],
+        "representative_quote": "OnePlus 12 is the sweet spot for price/performance."
+      },
+      {
+        "name": "Samsung Galaxy S24 Ultra",
+        "mention_count": 28,
+        "distinct_recommenders": 11,
+        "positive_mentions": 22,
+        "negative_mentions": 6,
+        "signal_strength": "high",
+        "praise": ["S-Pen included", "Best display", "Excellent zoom"],
+        "complaints": [{"text": "Expensive", "confidence": "confirmed"}, {"text": "Heavy", "confidence": "reported"}],
+        "sources": ["r/samsung", "r/android"],
+        "representative_quote": "If budget is no concern, S24 Ultra is unmatched."
+      },
+      {
+        "name": "iPhone 15 Pro",
+        "mention_count": 22,
+        "distinct_recommenders": 9,
+        "positive_mentions": 18,
+        "negative_mentions": 4,
+        "signal_strength": "medium",
+        "praise": ["Titanium build", "A17 Pro chip", "Best iOS experience"],
+        "complaints": [{"text": "USB-C finally but still slow", "confidence": "confirmed"}],
+        "sources": ["r/apple", "r/iphone"],
+        "representative_quote": "Best phone if you're in the Apple ecosystem."
+      },
+      {
+        "name": "Google Pixel 8 Pro",
+        "mention_count": 18,
+        "distinct_recommenders": 7,
+        "positive_mentions": 15,
+        "negative_mentions": 3,
+        "signal_strength": "medium",
+        "praise": ["Best camera system", "Pure Android", "7 years updates"],
+        "complaints": [{"text": "Tensor G3 gets warm under load", "confidence": "reported"}],
+        "sources": ["r/GooglePixel"],
+        "representative_quote": "For pure Android and camera quality, Pixel 8 Pro is king."
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 4,
+    "summary_nonempty": true,
+    "products": [
+      {"name": "OnePlus 12",               "signal_strength": "high",   "mention_count_min": 30},
+      {"name": "Samsung Galaxy S24 Ultra",  "signal_strength": "high"},
+      {"name": "iPhone 15 Pro",             "signal_strength": "medium"},
+      {"name": "Google Pixel 8 Pro",        "signal_strength": "medium"}
+    ],
+    "materials_count": 1
+  }
+}

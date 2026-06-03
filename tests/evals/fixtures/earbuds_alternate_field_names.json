@@ -1,0 +1,42 @@
+{
+  "id": "earbuds_alternate_field_names",
+  "description": "LLM used alternate field names: product_name, recommenders, signal — all must normalise",
+  "category": "electronics/earbuds",
+  "provider": "openrouter",
+  "raw_llm_output": {
+    "summary": "Reddit community strongly recommends Sony XM5.",
+    "materials": [],
+    "products": [
+      {
+        "product_name": "Sony WF-1000XM5",
+        "mentions": 30,
+        "recommenders": 12,
+        "positive": 25,
+        "negative": 5,
+        "signal": "high",
+        "pros": ["Great ANC", "Long battery life"],
+        "cons": [{"issue": "Pricey", "confidence": "confirmed"}],
+        "reddit_sources": ["r/headphones"]
+      },
+      {
+        "brand_model": "Jabra Elite 5",
+        "mention_count": 10,
+        "distinct_recommenders": 5,
+        "positive_mentions": 8,
+        "negative_mentions": 2,
+        "signal_strength": "low",
+        "praise": ["Budget option"],
+        "complaints": [],
+        "sources": ["r/headphones"]
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 2,
+    "products": [
+      {"name": "Sony WF-1000XM5"},
+      {"name": "Jabra Elite 5"}
+    ],
+    "all_products_have_required_keys": true
+  }
+}

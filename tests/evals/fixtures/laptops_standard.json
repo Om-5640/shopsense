@@ -1,0 +1,60 @@
+{
+  "id": "laptops_standard",
+  "description": "Laptops category — different price points, spec-heavy complaints",
+  "category": "electronics/laptops",
+  "provider": "groq",
+  "raw_llm_output": {
+    "summary": "ASUS TUF A15 leads for budget gaming. MacBook Air M2 for productivity. Dell XPS 15 for professionals.",
+    "materials": [
+      {"name": "IPS display", "mention_count": 18, "distinct_recommenders": 9, "praise": ["accurate colors", "wide viewing angles"], "complaints": [], "example_products": ["Dell XPS 15"], "sources": ["r/laptops"]}
+    ],
+    "products": [
+      {
+        "name": "ASUS TUF Gaming A15",
+        "mention_count": 32,
+        "distinct_recommenders": 14,
+        "positive_mentions": 26,
+        "negative_mentions": 6,
+        "signal_strength": "high",
+        "praise": ["Best gaming value under ₹70k", "Good thermals", "RTX 4060"],
+        "complaints": [{"text": "Mediocre display quality", "confidence": "confirmed"}, {"text": "Fan noise under load", "confidence": "reported"}],
+        "sources": ["r/IndiaGaming", "r/laptops"],
+        "representative_quote": "For gaming on a budget, TUF A15 is hard to beat."
+      },
+      {
+        "name": "Apple MacBook Air M2",
+        "mention_count": 25,
+        "distinct_recommenders": 11,
+        "positive_mentions": 23,
+        "negative_mentions": 2,
+        "signal_strength": "high",
+        "praise": ["Fanless design", "Excellent battery 15hr", "Best performance per watt"],
+        "complaints": [{"text": "No upgradeable RAM", "confidence": "confirmed"}],
+        "sources": ["r/apple", "r/laptops"],
+        "representative_quote": "MacBook Air M2 is the best productivity laptop for most users."
+      },
+      {
+        "name": "Dell XPS 15",
+        "mention_count": 15,
+        "distinct_recommenders": 7,
+        "positive_mentions": 11,
+        "negative_mentions": 4,
+        "signal_strength": "medium",
+        "praise": ["Premium build", "4K OLED option", "Compact for a 15 inch"],
+        "complaints": [{"text": "Expensive", "confidence": "confirmed"}, {"text": "Gets hot under load", "confidence": "reported"}],
+        "sources": ["r/Dell", "r/laptops"],
+        "representative_quote": "Best Windows laptop for creative professionals."
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 3,
+    "summary_nonempty": true,
+    "products": [
+      {"name": "ASUS TUF Gaming A15", "signal_strength": "high"},
+      {"name": "Apple MacBook Air M2", "signal_strength": "high"},
+      {"name": "Dell XPS 15", "signal_strength": "medium"}
+    ],
+    "materials_count": 1
+  }
+}

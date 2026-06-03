@@ -1,0 +1,60 @@
+{
+  "id": "scorer_smartphones_golden",
+  "description": "Golden scorer test: smartphone products with camera/battery/performance rubric",
+  "category": "electronics/smartphones",
+  "rubric": {
+    "weighted_criteria": [
+      {"name": "camera_quality",  "label": "Camera Quality",  "weight": 9, "description": "Photo/video capability"},
+      {"name": "performance",     "label": "Performance",     "weight": 8, "description": "Speed and multitasking"},
+      {"name": "battery_life",    "label": "Battery Life",    "weight": 7, "description": "Screen-on time"},
+      {"name": "build_quality",   "label": "Build Quality",   "weight": 5, "description": "Materials and durability"},
+      {"name": "value_for_money", "label": "Value for Money", "weight": 6, "description": "Price vs specs"}
+    ]
+  },
+  "products": [
+    {
+      "name": "OnePlus 12",
+      "signal_strength": "high",
+      "mention_count": 35,
+      "positive_mentions": 28,
+      "negative_mentions": 7
+    },
+    {
+      "name": "Google Pixel 8 Pro",
+      "signal_strength": "medium",
+      "mention_count": 18,
+      "positive_mentions": 15,
+      "negative_mentions": 3
+    }
+  ],
+  "mock_llm_scores": {
+    "OnePlus 12": [
+      {"criterion": "camera_quality",  "score": 8.0, "evidence": "Hasselblad tuned"},
+      {"criterion": "performance",     "score": 9.0, "evidence": "Snapdragon 8 Gen 3"},
+      {"criterion": "battery_life",    "score": 9.0, "evidence": "5400mAh, 100W charge"},
+      {"criterion": "build_quality",   "score": 7.5, "evidence": "Curved glass and metal"},
+      {"criterion": "value_for_money", "score": 9.0, "evidence": "Best value flagship"}
+    ],
+    "Google Pixel 8 Pro": [
+      {"criterion": "camera_quality",  "score": 9.5, "evidence": "Best computational photography"},
+      {"criterion": "performance",     "score": 7.5, "evidence": "Tensor G3 good but not fastest"},
+      {"criterion": "battery_life",    "score": 8.0, "evidence": "Strong battery life"},
+      {"criterion": "build_quality",   "score": 8.5, "evidence": "Premium glass and titanium"},
+      {"criterion": "value_for_money", "score": 7.0, "evidence": "Good but expensive"}
+    ]
+  },
+  "expected_scores": {
+    "OnePlus 12": {
+      "weighted_total": 298.5,
+      "max_possible": 350.0,
+      "percentage": 85.3,
+      "percentage_tolerance": 0.5
+    },
+    "Google Pixel 8 Pro": {
+      "weighted_total": 286.0,
+      "max_possible": 350.0,
+      "percentage": 81.7,
+      "percentage_tolerance": 0.5
+    }
+  }
+}

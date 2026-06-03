@@ -1,0 +1,24 @@
+{
+  "id": "earbuds_string_products",
+  "description": "products is a list of bare strings, not objects — LLM forgot the schema",
+  "category": "electronics/earbuds",
+  "provider": "cerebras",
+  "raw_llm_output": {
+    "summary": "Community recommends Sony WF-1000XM5 and AirPods Pro 2.",
+    "materials": [],
+    "products": [
+      "Sony WF-1000XM5",
+      "Apple AirPods Pro 2",
+      "Bose QuietComfort Earbuds II"
+    ]
+  },
+  "expected": {
+    "product_count": 3,
+    "all_products_have_required_keys": true,
+    "products": [
+      {"name": "Sony WF-1000XM5"},
+      {"name": "Apple AirPods Pro 2"},
+      {"name": "Bose QuietComfort Earbuds II"}
+    ]
+  }
+}

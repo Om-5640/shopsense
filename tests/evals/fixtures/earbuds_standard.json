@@ -1,0 +1,86 @@
+{
+  "id": "earbuds_standard",
+  "description": "Clean Groq output — 5 products, all fields present, standard shape",
+  "category": "electronics/earbuds",
+  "provider": "groq",
+  "raw_llm_output": {
+    "summary": "The Sony WF-1000XM5 leads community recommendations for noise cancellation. Apple AirPods Pro 2 is praised for seamless iPhone integration. Bose QuietComfort Earbuds II scores high on comfort. Samsung Galaxy Buds 2 Pro offers value for Android users. Jabra Elite 5 is the top budget pick.",
+    "materials": [
+      {"name": "silicone", "mention_count": 8, "distinct_recommenders": 5, "praise": ["soft", "durable"], "complaints": [], "example_products": ["AirPods Pro 2"], "sources": ["r/headphones"]}
+    ],
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count": 42,
+        "distinct_recommenders": 18,
+        "positive_mentions": 35,
+        "negative_mentions": 7,
+        "signal_strength": "high",
+        "praise": ["Best ANC on the market", "Excellent sound quality", "8 hour battery"],
+        "complaints": [{"text": "Expensive at ₹19,990", "confidence": "confirmed"}, {"text": "Average mic quality", "confidence": "reported"}],
+        "sources": ["r/headphones", "r/audiophile", "r/IndiaInvestments"],
+        "representative_quote": "The XM5 is simply the best ANC earbuds money can buy right now."
+      },
+      {
+        "name": "Apple AirPods Pro 2",
+        "mention_count": 38,
+        "distinct_recommenders": 15,
+        "positive_mentions": 30,
+        "negative_mentions": 8,
+        "signal_strength": "high",
+        "praise": ["Seamless iPhone integration", "Great ANC", "Comfortable fit"],
+        "complaints": [{"text": "Only worth it for iPhone users", "confidence": "confirmed"}],
+        "sources": ["r/headphones", "r/apple"],
+        "representative_quote": "If you're in the Apple ecosystem, nothing beats AirPods Pro 2."
+      },
+      {
+        "name": "Bose QuietComfort Earbuds II",
+        "mention_count": 22,
+        "distinct_recommenders": 10,
+        "positive_mentions": 18,
+        "negative_mentions": 4,
+        "signal_strength": "medium",
+        "praise": ["Most comfortable earbuds", "Excellent noise cancellation"],
+        "complaints": [{"text": "Bulky case", "confidence": "reported"}, {"text": "Short battery life", "confidence": "confirmed"}],
+        "sources": ["r/headphones"],
+        "representative_quote": "Bose comfort is unmatched — wear them all day no problem."
+      },
+      {
+        "name": "Samsung Galaxy Buds 2 Pro",
+        "mention_count": 18,
+        "distinct_recommenders": 8,
+        "positive_mentions": 14,
+        "negative_mentions": 4,
+        "signal_strength": "medium",
+        "praise": ["Great for Samsung phones", "Good sound quality"],
+        "complaints": [{"text": "Limited to Samsung ecosystem for best features", "confidence": "confirmed"}],
+        "sources": ["r/android", "r/headphones"],
+        "representative_quote": "Best choice if you're on Android/Samsung."
+      },
+      {
+        "name": "Jabra Elite 5",
+        "mention_count": 12,
+        "distinct_recommenders": 6,
+        "positive_mentions": 10,
+        "negative_mentions": 2,
+        "signal_strength": "low",
+        "praise": ["Budget-friendly", "Decent ANC"],
+        "complaints": [{"text": "Average sound compared to Sony", "confidence": "single"}],
+        "sources": ["r/headphones"],
+        "representative_quote": "Solid budget option if you don't need the best."
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 5,
+    "summary_nonempty": true,
+    "products": [
+      {"name": "Sony WF-1000XM5",        "mention_count_min": 40, "signal_strength": "high"},
+      {"name": "Apple AirPods Pro 2",     "mention_count_min": 35, "signal_strength": "high"},
+      {"name": "Bose QuietComfort Earbuds II", "signal_strength": "medium"},
+      {"name": "Samsung Galaxy Buds 2 Pro",   "signal_strength": "medium"},
+      {"name": "Jabra Elite 5",               "signal_strength": "low"}
+    ],
+    "materials_count": 1
+  }
+}

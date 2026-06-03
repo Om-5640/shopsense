@@ -1,0 +1,55 @@
+{
+  "id": "earbuds_malformed_counts",
+  "description": "mention_count as strings '5+', floats, None, negative — tests numeric coercion",
+  "category": "electronics/earbuds",
+  "provider": "mistral",
+  "raw_llm_output": {
+    "summary": "Sony XM5 and AirPods Pro 2 dominate discussions.",
+    "materials": [],
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count": "5+",
+        "mentions": 25,
+        "distinct_recommenders": 3.7,
+        "positive_mentions": null,
+        "negative_mentions": -2,
+        "signal_strength": "high",
+        "praise": ["Great ANC"],
+        "complaints": [],
+        "sources": ["r/headphones"]
+      },
+      {
+        "name": "Apple AirPods Pro 2",
+        "mention_count": 0,
+        "mentions": 30,
+        "distinct_recommenders": "many",
+        "positive_mentions": 20,
+        "negative_mentions": 5,
+        "signal_strength": "medium",
+        "praise": [],
+        "complaints": [],
+        "sources": []
+      }
+    ]
+  },
+  "expected": {
+    "product_count": 2,
+    "summary_nonempty": true,
+    "products": [
+      {
+        "name": "Sony WF-1000XM5",
+        "mention_count_exact": 5,
+        "mention_count_not_fallback_to_mentions": true,
+        "negative_mentions_min": 0,
+        "signal_strength": "high"
+      },
+      {
+        "name": "Apple AirPods Pro 2",
+        "mention_count_exact": 0,
+        "mention_count_not_fallback_to_mentions": true,
+        "signal_strength": "medium"
+      }
+    ]
+  }
+}
