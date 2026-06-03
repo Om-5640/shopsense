@@ -148,7 +148,7 @@ def _run_ci(args) -> int:
 
     if result.intelligence_index < CI_MIN_INDEX:
         print(
-            f"\n  ✗ CI FAIL: Intelligence Index {result.intelligence_index:.1f} "
+            f"\n  [FAIL] CI FAIL: Intelligence Index {result.intelligence_index:.1f} "
             f"below minimum {CI_MIN_INDEX}",
             file=sys.stderr,
         )
@@ -158,7 +158,7 @@ def _run_ci(args) -> int:
         mr = result.metric_results.get(metric)
         if mr and mr.score < threshold:
             print(
-                f"  ✗ CI FAIL: {metric} score {mr.score:.1f} below CI threshold {threshold}",
+                f"  [FAIL] CI FAIL: {metric} score {mr.score:.1f} below CI threshold {threshold}",
                 file=sys.stderr,
             )
             exit_code = 1
@@ -167,12 +167,12 @@ def _run_ci(args) -> int:
     for reg in regressions:
         if reg["delta"] < -10.0:
             print(
-                f"  ✗ CI FAIL: severe regression in {reg['metric']} ({reg['delta']:+.1f})",
+                f"  [FAIL] CI FAIL: severe regression in {reg['metric']} ({reg['delta']:+.1f})",
                 file=sys.stderr,
             )
             exit_code = 1
 
     if exit_code == 0:
-        print(f"\n  ✓ CI PASS — Intelligence Index {result.intelligence_index:.1f}/100")
+        print(f"\n  [PASS] CI PASS -- Intelligence Index {result.intelligence_index:.1f}/100")
 
     return exit_code
