@@ -63,13 +63,14 @@ const INIT_STAGES: PipelineStage[] = [
 
 // SSE stage id → sidebar stage id
 const SSE_TO_SIDEBAR: Record<string, string> = {
-  reddit_fetch:   'reddit',
-  review_fetch:   'scraping',
-  summarize:      'summarizing',
-  analyze:        'analyzing',
-  cross_validate: 'analyzing',
-  scoring:        'scoring',
-  explanations:   'scoring',
+  reddit_fetch:     'reddit',
+  review_fetch:     'scraping',
+  summarize:        'summarizing',
+  analyze:          'analyzing',
+  cross_validate:   'analyzing',
+  mention_counting: 'analyzing',  // Aho-Corasick mention pipeline runs after main analyzer
+  scoring:          'scoring',
+  explanations:     'scoring',
 }
 
 // ─── Phase type ───────────────────────────────────────────────────────────────

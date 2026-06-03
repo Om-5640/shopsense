@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Clock, Package, MessageSquare, Zap, GitMerge, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
+import { Clock, Package, MessageSquare, Zap, GitMerge, AlertTriangle, CheckCircle2, Loader2, Cpu } from 'lucide-react'
 import { getDiagnostics } from '@/lib/api'
 import type { PipelineDiagnostics } from '@/lib/types'
 
@@ -149,6 +149,16 @@ export function DiagnosticsPanel({ searchId }: DiagnosticsPanelProps) {
               label="Tokens Processed (est.)"
               value={`~${tokensK}K`}
               sub="research context"
+            />
+          )}
+          {stats.scoring_mode && (
+            <StatCard
+              icon={Cpu}
+              label="Scoring Mode"
+              value={stats.scoring_mode}
+              sub={stats.providers_used && stats.providers_used.length > 0
+                ? stats.providers_used.join(', ')
+                : undefined}
             />
           )}
         </div>

@@ -343,5 +343,7 @@ export interface PipelineDiagnostics {
     llm_calls_estimated: number
     tokens_estimated: number
     warnings: string[]
+    scoring_mode?: string        // "hybrid" | "llm" | "fast" — added in Tier 5
+    providers_used?: string[]    // active providers at pipeline end — added in Tier 6
   }
 }
