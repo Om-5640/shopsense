@@ -191,29 +191,59 @@ def test_region_thread_isolation():
 
 
 # ---------------------------------------------------------------------------
-# Test 6: _dead_providers resets on create_session
+# Test 6: _dead_providers TTL behaviour (Tier 3 rewrite)
 # ---------------------------------------------------------------------------
 
 def test_dead_providers_reset_on_new_session():
-    """create_session must reset _dead_providers so each search gets fresh providers."""
+    """
+    Verify the TTL-based dead-provider semantics introduced in Tier 3.
+
+    Old behaviour (broken): reset_dead_providers() blindly cleared ALL dead providers,
+    causing a concurrent-search race where Search B's create_session wiped flags that
+    Search A was still relying on.
+
+    New behaviour: dead providers stay dead for _DEAD_PROVIDER_TTL seconds (10 min)
+    so concurrent searches don't interfere.  reset_dead_providers() only evicts
+    *expired* entries.  is_provider_dead() auto-evicts on read once TTL passes.
+    """
+    import time
     import agents
-    from agents import mark_provider_dead, is_provider_dead, reset_dead_providers
+    from agents import (
+        mark_provider_dead, is_provider_dead, reset_dead_providers,
+        _dead_providers, _provider_state_lock, _DEAD_PROVIDER_TTL,
+    )
 
-    # Simulate a previous request marking groq dead
+    # 1. Mark a provider dead — it should be dead immediately.
     mark_provider_dead("groq")
-    assert is_provider_dead("groq"), "setup: groq should be dead"
+    if not is_provider_dead("groq"):
+        _fail("dead_providers_ttl", "groq should be dead immediately after mark_provider_dead")
 
-    # create_session must clear it — patch DB/queue to avoid side effects
-    with patch("pipeline_runner.PipelineSession") as MockSession:
-        mock_sess = MagicMock()
-        MockSession.return_value = mock_sess
-        import pipeline_runner
-        with patch.object(pipeline_runner, "_sessions", {}):
-            pipeline_runner.create_session("test-id-123", "best earbuds")
+    # 2. reset_dead_providers must NOT evict recently-dead providers (within TTL).
+    #    This is intentional: it prevents Search B from clearing flags Search A needs.
+    reset_dead_providers()
+    if not is_provider_dead("groq"):
+        _fail("dead_providers_ttl",
+              "groq was evicted by reset_dead_providers even though TTL hasn't expired — "
+              "concurrent-search race protection is broken")
 
+    # 3. is_provider_dead must auto-evict a provider whose TTL has expired.
+    #    Simulate an expired entry by back-dating the timestamp.
+    with _provider_state_lock:
+        if "groq" in _dead_providers:
+            _dead_providers["groq"] = time.time() - (_DEAD_PROVIDER_TTL + 1)
     if is_provider_dead("groq"):
-        _fail("dead_providers_reset", "groq still dead after create_session — reset_dead_providers not called")
-    _pass("dead_providers_reset_on_new_session")
+        _fail("dead_providers_ttl",
+              "groq should be auto-evicted by is_provider_dead when TTL has expired")
+
+    # 4. reset_dead_providers evicts expired entries.
+    mark_provider_dead("expired_test_provider")
+    with _provider_state_lock:
+        _dead_providers["expired_test_provider"] = time.time() - (_DEAD_PROVIDER_TTL + 1)
+    reset_dead_providers()
+    if is_provider_dead("expired_test_provider"):
+        _fail("dead_providers_ttl", "reset_dead_providers failed to evict an expired entry")
+
+    _pass("dead_providers_ttl_behaviour")
 
 
 # ---------------------------------------------------------------------------
