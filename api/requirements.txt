@@ -17,3 +17,4 @@ pyahocorasick>=2.0.0
 
 # CI / testing
 pytest>=7.0
+httpx>=0.27          # required by FastAPI TestClient (starlette.testclient)
