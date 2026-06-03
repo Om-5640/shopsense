@@ -337,13 +337,31 @@ def summarize_threads_parallel(
     return ordered
 
 
-def format_summaries_for_main_analyzer(summaries: list[dict]) -> str:
+def format_summaries_for_main_analyzer(summaries: list[dict], max_threads: int = 10) -> str:
     """
     Format the parallel summaries into a compact text block for the main analyzer.
     Much smaller than raw threads (~30K vs 150K chars).
+
+    Token optimisation: cap at `max_threads` (default 10) by selecting the
+    highest-signal threads first.  Signal is scored by distinct product count +
+    total mention count — threads that discuss many products with strong community
+    signal are more useful to the main analyzer than single-product threads.
+    Dropping the lowest 5 threads saves ~33% input tokens with negligible quality
+    loss (their products are already covered by the richer threads).
     """
+    good = [s for s in summaries if not s.get("_failed")]
+
+    def _signal_score(s: dict) -> float:
+        products = s.get("products_mentioned") or []
+        product_count = len(products)
+        mention_total = sum(p.get("mention_count", 0) for p in products)
+        return product_count * 2.0 + mention_total
+
+    if len(good) > max_threads:
+        good = sorted(good, key=_signal_score, reverse=True)[:max_threads]
+
     sections = []
-    for i, s in enumerate(summaries, 1):
+    for i, s in enumerate(good, 1):
         if s.get("_failed"):
             continue
         sub = s.get("subreddit", "?")

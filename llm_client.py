@@ -383,17 +383,43 @@ def analyze_with_summaries(query: str, thread_summaries: list[dict], review_page
     # Format reviews compactly (these were NOT summarized in parallel, kept as-is)
     # review_fetch.py returns dicts with 'domain' (not 'source_name') and 'content' (not 'body').
     # Fall back gracefully so this works whether called with raw or normalizer-mapped dicts.
+    #
+    # Token optimisation: when review_extractor already produced structured data
+    # (verdict + pros + cons + rating), send that compact summary (~200 chars) instead
+    # of the raw page content (~6 000 chars).  Raw content is only sent when no
+    # structured data was extracted (e.g. YouTube transcripts, paywall pages).
     review_text_parts = []
     for r in review_pages:
         authority = r.get("authority_tier", "unknown")
         source_name = r.get("source_name") or r.get("domain", "?")
-        content = (r.get("body") or r.get("content") or "")[:6000]
-        review_text_parts.append(
-            f"\n--- REVIEW SITE: {source_name} [AUTHORITY: {authority.upper()}] ---\n"
-            f"Title: {r.get('title', '')}\n"
-            f"URL: {r.get('url', '')}\n"
-            f"Content: {content}"
-        )
+        sr = r.get("structured_review") or {}
+        has_structured = bool(sr.get("verdict") or sr.get("pros") or sr.get("rating"))
+
+        if has_structured:
+            # Compact structured path — ~200 chars vs 6 000
+            lines = [
+                f"\n--- REVIEW: {source_name} [AUTHORITY: {authority.upper()}] ---",
+                f"Title: {r.get('title', '')}",
+            ]
+            if sr.get("rating"):
+                lines.append(f"Rating: {sr['rating']}/10")
+            if sr.get("verdict"):
+                lines.append(f"Verdict: {sr['verdict']}")
+            if sr.get("pros"):
+                lines.append("Pros: " + "; ".join(sr["pros"][:4]))
+            if sr.get("cons"):
+                lines.append("Cons: " + "; ".join(sr["cons"][:4]))
+            if sr.get("best_for"):
+                lines.append("Best for: " + "; ".join(sr["best_for"][:3]))
+            review_text_parts.append("\n".join(lines))
+        else:
+            # Raw content fallback — capped at 3 000 chars (was 6 000)
+            content = (r.get("body") or r.get("content") or "")[:3000]
+            review_text_parts.append(
+                f"\n--- REVIEW SITE: {source_name} [AUTHORITY: {authority.upper()}] ---\n"
+                f"Title: {r.get('title', '')}\n"
+                f"Content: {content}"
+            )
     reviews_text = "\n".join(review_text_parts)
 
     # Build strong product-type constraint if we know the primary noun

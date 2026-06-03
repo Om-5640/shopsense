@@ -374,7 +374,7 @@ def _score_batch(
     full_research_text: str,
     user_intent: dict | None = None,
     per_product_budget: int | None = None,
-) -> list[dict]:
+) -> tuple[list[dict | None], list[str]]:
     """
     Score a batch of products in a single LLM call.
 
@@ -387,6 +387,9 @@ def _score_batch(
 
     per_product_budget: pre-computed by the caller (score_all_products) so it is not
     recomputed for every batch. Falls back to _get_provider_research_budget() if omitted.
+
+    Returns (results_list, filtered_research_list) so the caller can reuse already-
+    computed per-product filtered research in single-product fallback retries.
 
     Returns list of scored dicts. Products that fail get None — caller retries them.
     """
@@ -451,7 +454,7 @@ def _score_batch(
         raw_products = data.get("products", []) if isinstance(data, dict) else []
     except Exception as e:
         print(f"[scorer] batch failed: {e}")
-        return [None] * len(products)
+        return [None] * len(products), filtered_research
 
     # Match LLM outputs back to input products (by name)
     by_name = {}
@@ -477,7 +480,7 @@ def _score_batch(
         scored = _build_scored_dict(p, match["scores"], rubric)
         results.append(scored)
 
-    return results
+    return results, filtered_research
 
 
 _COMMUNITY_FIELDS = (
@@ -610,16 +613,20 @@ def _run_parallel_batch_scoring(
 
     def score_batch_with_retry(batch: list[dict]) -> list[dict]:
         """Try batch scoring; fall back to per-product if batch parse fails."""
-        batch_results = _score_batch(batch, rubric, full_research_text, user_intent, per_product_budget=_budget)
-        # For any None results (parse failures), retry individually
+        batch_results, filtered_research = _score_batch(
+            batch, rubric, full_research_text, user_intent, per_product_budget=_budget
+        )
+        # For any None results (parse failures), retry individually.
+        # Pass the already-filtered per-product research from the batch run so
+        # score_product doesn't re-run _filter_research_for_product from scratch.
         final = []
-        for p, br in zip(batch, batch_results):
+        for p, br, filt in zip(batch, batch_results, filtered_research):
             if br is not None:
                 final.append(br)
             else:
                 print(f"  [scorer] batch miss for {p.get('name','?')}, retrying individually")
                 try:
-                    single = score_product(p, rubric, full_research_text, user_intent)
+                    single = score_product(p, rubric, filt or full_research_text, user_intent)
                     final.append(single if single is not None else _default_score(p, rubric))
                 except Exception as e:
                     print(f"  [scorer] single retry failed for {p.get('name','?')}: {e}")

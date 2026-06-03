@@ -155,13 +155,21 @@ def generate_rubric(category: str, criteria: list[dict], profile: dict) -> dict:
     prefs = profile.get("preferences_summary", "")
     _skip_tokens = {"[Skipped]", "(skipped)"}
 
-    # Bug 5: pass Q&A as structured JSON to prevent prompt injection from user answers
+    # Bug 5: pass Q&A as structured JSON to prevent prompt injection from user answers.
+    # Token optimisation: when preferences_summary is already rich (>= 150 chars) it
+    # fully captures the user's stated preferences — sending the raw Q&A on top adds
+    # redundant tokens without improving weight quality.  Include Q&A only when the
+    # summary is short / missing (i.e. no interview was conducted yet).
     qa_entries = [
         {"question": qa["question"], "answer": qa["answer"]}
         for qa in profile.get("interview", [])
         if qa.get("answer", "") not in _skip_tokens
     ]
-    qa_text = json.dumps(qa_entries, ensure_ascii=False, indent=2)
+    include_qa = len(prefs) < 150 and bool(qa_entries)
+    qa_section = (
+        f"\n\nFull interview Q&A:\n{json.dumps(qa_entries, ensure_ascii=False, indent=2)}"
+        if include_qa else ""
+    )
 
     constraint_block = _build_intent_context(profile)
     constraint_section = (
@@ -176,10 +184,7 @@ Criteria to weight:
 {criteria_text}
 
 User's preferences summary:
-{prefs}{constraint_section}
-
-Full interview Q&A:
-{qa_text}
+{prefs}{constraint_section}{qa_section}
 
 Build the weighted rubric."""
 
