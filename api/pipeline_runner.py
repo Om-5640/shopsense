@@ -597,6 +597,15 @@ def _build_review_intel_summary(review_pages: list[dict]) -> dict:
         sources = []
         for page in review_pages:
             sr = page.get("structured_review") or {}
+            is_trusted_channel = bool(page.get("channel_is_trusted"))
+            explicit_tier = page.get("authority_tier")
+            # YouTube trusted channels deserve "trusted" tier, not "good"
+            if explicit_tier:
+                authority_tier = explicit_tier
+            elif is_trusted_channel:
+                authority_tier = "trusted"
+            else:
+                authority_tier = "unknown"
             sources.append({
                 "domain": page.get("domain", ""),
                 "title": (page.get("title") or page.get("video_title") or "")[:120],
@@ -605,10 +614,15 @@ def _build_review_intel_summary(review_pages: list[dict]) -> dict:
                 "freshness_score": round(float(page.get("freshness_score", 0.5)), 3),
                 "review_rank_score": round(float(page.get("review_rank_score", 0.5)), 3),
                 "source_type": page.get("source_type", "gemini_grounding"),
-                "authority_tier": page.get("authority_tier", "trusted" if page.get("channel_is_trusted") else "unknown"),
+                "authority_tier": authority_tier,
                 "published_date": page.get("published_date"),
                 "rating": sr.get("rating"),
                 "verdict": (sr.get("verdict") or "")[:200] or None,
+                # Structured content from expert reviews — surfaced in Sources tab
+                "pros": (sr.get("pros") or [])[:5],
+                "cons": (sr.get("cons") or [])[:5],
+                "best_for": (sr.get("best_for") or [])[:3],
+                "not_for": (sr.get("not_for") or [])[:3],
                 # YouTube-specific: channel name for self-verification in the UI
                 "channel_name": page.get("channel") or None,
             })

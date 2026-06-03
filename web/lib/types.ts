@@ -298,11 +298,15 @@ export interface ReviewSource {
   trust_score: number          // 0.0–1.0 continuous
   freshness_score: number      // 0.0–1.0 time-decay
   review_rank_score: number    // composite rank
-  source_type: 'gemini_grounding' | 'expert_editorial' | 'news' | 'youtube' | string
+  source_type: 'gemini_grounding' | 'expert_editorial' | 'news' | 'youtube' | 'serper_fallback' | string
   authority_tier: 'trusted' | 'good' | 'unknown' | string
   published_date?: string | null
   rating?: number | null       // extracted by review_extractor (normalized to /10)
   verdict?: string | null      // extracted verdict snippet
+  pros?: string[]              // structured pros extracted from review text
+  cons?: string[]              // structured cons extracted from review text
+  best_for?: string[]          // "best for" use-cases extracted from review text
+  not_for?: string[]           // "not for" warnings extracted from review text
   channel_name?: string | null // YouTube only: channel name for self-verification
 }
 
@@ -317,7 +321,7 @@ export interface ReviewConflict {
 export interface ReviewIntelligenceStats {
   total: number
   trusted_count: number
-  editorial_count: number
+  editorial_count: number    // gemini_grounding + expert_editorial sources
   youtube_count: number
   avg_trust: number
   avg_freshness: number

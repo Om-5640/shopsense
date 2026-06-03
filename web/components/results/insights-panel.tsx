@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   AlertTriangle,
@@ -12,6 +13,11 @@ import {
   Youtube,
   Globe,
   Zap,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -70,6 +76,7 @@ function SourceTypeIcon({ type }: { type: string }) {
   if (type === 'youtube') return <Youtube className="w-3 h-3 text-rose-400 shrink-0" />
   if (type === 'expert_editorial') return <BookOpen className="w-3 h-3 text-violet-400 shrink-0" />
   if (type === 'news') return <Globe className="w-3 h-3 text-sky-400 shrink-0" />
+  if (type === 'serper_fallback') return <Search className="w-3 h-3 text-[#71717A] shrink-0" />
   return <Zap className="w-3 h-3 text-amber-400 shrink-0" />  // gemini_grounding
 }
 
@@ -82,6 +89,8 @@ function AuthorityBadge({ tier }: { tier: string }) {
 }
 
 function SourceRow({ source }: { source: ReviewSource }) {
+  const [expanded, setExpanded] = useState(false)
+
   // For YouTube: show channel name as primary identifier; fall back to domain
   const displayName = source.source_type === 'youtube' && source.channel_name
     ? source.channel_name
@@ -96,6 +105,12 @@ function SourceRow({ source }: { source: ReviewSource }) {
       return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
     } catch { return null }
   })()
+
+  const hasProsConsData =
+    (source.pros?.length ?? 0) > 0 ||
+    (source.cons?.length ?? 0) > 0 ||
+    (source.best_for?.length ?? 0) > 0 ||
+    (source.not_for?.length ?? 0) > 0
 
   return (
     <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.10] transition-colors">
@@ -114,7 +129,7 @@ function SourceRow({ source }: { source: ReviewSource }) {
         )}
       </div>
 
-      {/* Video/article title — for YouTube this is the video title, for others the page title */}
+      {/* Video/article title */}
       {source.title && (
         <p className="text-[10px] text-[#71717A] leading-relaxed line-clamp-1 pl-4">{source.title}</p>
       )}
@@ -136,18 +151,78 @@ function SourceRow({ source }: { source: ReviewSource }) {
         </div>
       </div>
 
-      {/* Extracted rating */}
-      {source.rating != null && (
-        <p className="text-[10px] text-amber-300/80 pl-4">
-          Rating extracted: {source.rating}/10
-        </p>
-      )}
+      {/* Extracted rating + verdict row */}
+      <div className="pl-4 flex items-center gap-3 flex-wrap">
+        {source.rating != null && (
+          <span className="text-[10px] text-amber-300/80">
+            ★ {source.rating}/10
+          </span>
+        )}
+        {source.verdict && (
+          <p className="text-[10px] text-[#71717A] italic leading-relaxed line-clamp-2 flex-1 border-t border-white/[0.04] pt-1.5 w-full">
+            &ldquo;{source.verdict}&rdquo;
+          </p>
+        )}
+      </div>
 
-      {/* Extracted verdict snippet — key opinion in a few words */}
-      {source.verdict && (
-        <p className="text-[10px] text-[#71717A] italic leading-relaxed line-clamp-2 pl-4 border-t border-white/[0.04] pt-1.5">
-          &ldquo;{source.verdict}&rdquo;
-        </p>
+      {/* Expandable pros / cons / best-for from structured review extraction */}
+      {hasProsConsData && (
+        <>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="pl-4 flex items-center gap-1.5 text-[10px] text-[#52525B] hover:text-[#A1A1AA] transition-colors pt-0.5"
+          >
+            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {expanded ? 'Hide details' : 'Show review details'}
+          </button>
+          {expanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="pl-4 space-y-2 overflow-hidden"
+            >
+              {(source.pros?.length ?? 0) > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[9px] text-[#52525B] uppercase tracking-wide">Pros</p>
+                  {source.pros!.map((p, i) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <Check className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-[#A1A1AA] leading-relaxed">{p}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(source.cons?.length ?? 0) > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[9px] text-[#52525B] uppercase tracking-wide">Cons</p>
+                  {source.cons!.map((c, i) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <X className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-[#A1A1AA] leading-relaxed">{c}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(source.best_for?.length ?? 0) > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[9px] text-[#52525B] uppercase tracking-wide">Best for</p>
+                  {source.best_for!.map((b, i) => (
+                    <span key={i} className="inline-block text-[10px] px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-300 mr-1 mb-1">{b}</span>
+                  ))}
+                </div>
+              )}
+              {(source.not_for?.length ?? 0) > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[9px] text-[#52525B] uppercase tracking-wide">Not for</p>
+                  {source.not_for!.map((n, i) => (
+                    <span key={i} className="inline-block text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-300 mr-1 mb-1">{n}</span>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </>
       )}
     </div>
   )
@@ -179,7 +254,7 @@ function ReviewSourcesTab({ intel }: { intel: ReviewIntelligence }) {
     <div className="space-y-4">
       {/* Stats row */}
       {stats.total > 0 && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <div className="text-center p-2 rounded-lg bg-violet-500/10 border border-violet-500/20">
             <div className="text-lg font-bold text-violet-400">{stats.total}</div>
             <div className="text-[10px] text-[#71717A] mt-0.5">Sources</div>
@@ -187,6 +262,10 @@ function ReviewSourcesTab({ intel }: { intel: ReviewIntelligence }) {
           <div className="text-center p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
             <div className="text-lg font-bold text-emerald-400">{stats.trusted_count}</div>
             <div className="text-[10px] text-[#71717A] mt-0.5">Trusted</div>
+          </div>
+          <div className="text-center p-2 rounded-lg bg-sky-500/10 border border-sky-500/20">
+            <div className="text-lg font-bold text-sky-400">{stats.editorial_count ?? 0}</div>
+            <div className="text-[10px] text-[#71717A] mt-0.5">Expert</div>
           </div>
           <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <div className="text-lg font-bold text-amber-400">{Math.round(stats.avg_trust * 100)}</div>
@@ -247,7 +326,7 @@ function ReviewSourcesTab({ intel }: { intel: ReviewIntelligence }) {
             Sources consulted · ranked by trust
           </p>
           {[...sources]
-            .sort((a, b) => b.trust_score - a.trust_score)
+            .sort((a, b) => (b.review_rank_score ?? b.trust_score) - (a.review_rank_score ?? a.trust_score))
             .map((src) => (
               <SourceRow key={src.url || src.domain} source={src} />
             ))}
