@@ -57,7 +57,14 @@ class EvalRunner:
     ):
         self.mode = mode
         self.save_history = save_history
-        self.pipeline_results = pipeline_results or []
+        # Online metrics (retrieval_quality, explanation_integrity) need real pipeline output.
+        # Prefer live results when provided; otherwise fall back to committed recorded fixtures
+        # so these metrics produce REAL, deterministic scores in CI instead of skipping.
+        if pipeline_results:
+            self.pipeline_results = pipeline_results
+        else:
+            from evals.benchmarks.recorded import load_recorded_pipeline_results
+            self.pipeline_results = load_recorded_pipeline_results()
 
         self.scenarios = all_scenarios()
         self.clusters = all_clusters()

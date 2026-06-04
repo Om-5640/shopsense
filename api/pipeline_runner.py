@@ -815,6 +815,23 @@ def _execute_pipeline(
     # (weights differ) and we'll find the post-gap entry instead — ensuring no stale results.
     _pre_gap_cache_key = _pipeline_cache_key(query, category, rubric, profile)
     _cached_result = _load_pipeline_cache(_pre_gap_cache_key)
+
+    # Semantic cache: if no exact hit, check whether a near-identical query (same category,
+    # region, and rubric) was researched recently and reuse its result — skipping all research.
+    try:
+        import semantic_cache as _semcache
+        _rubric_fp = _semcache.fingerprint(rubric)  # pre-gap fingerprint; registered the same way
+    except Exception:
+        _semcache = None
+        _rubric_fp = None
+    if not _cached_result and _semcache is not None:
+        _sem_key = _semcache.lookup(query, category, region, _rubric_fp)
+        if _sem_key:
+            _sem_hit = _load_pipeline_cache(_sem_key)
+            if _sem_hit:
+                session.emit("log", {"message": "[cache] Semantic match — reusing a near-identical recent search"})
+                _cached_result = _sem_hit
+
     if _cached_result:
         age_s = int(time.time() - _cached_result.get("_cached_at", 0))
         session.emit("log", {"message": f"[cache] Returning cached result from {age_s}s ago"})
@@ -1228,6 +1245,11 @@ def _execute_pipeline(
     }
 
     _save_pipeline_cache(_post_gap_cache_key, session.result)
+
+    # Register this search in the semantic cache so future near-identical queries reuse it.
+    # Uses the pre-gap rubric fingerprint to match the pre-research lookup above.
+    if _semcache is not None and _rubric_fp is not None:
+        _semcache.register(query, category, region, _rubric_fp, _post_gap_cache_key)
 
     # Phase 7 + 11: Log total pipeline time with full diagnostics
     _total_elapsed = round(time.time() - _pipeline_start, 1)

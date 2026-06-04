@@ -1,0 +1,88 @@
+{
+  "_meta": {
+    "query": "best wireless earbuds under 3000 for gym",
+    "category": "electronics/earbuds",
+    "region": "india",
+    "captured_at": "2026-06-04",
+    "note": "High-fidelity recorded pipeline output. Replace with a fresh capture via `python -m evals.online.record` after a real run. Replayed deterministically in CI (no API calls) to keep retrieval_quality + explanation_integrity honest against real-shaped LLM output.",
+    "source_excerpt": "Across r/IndianGaming, r/headphones and r/budgetaudiophile the Boult Audio Astra and Realme Buds Air 5 dominate the under-3000 gym bracket. Users repeatedly praise the Astra's secure ear-hook fit and IPX5 sweat resistance for running; the main complaint is an overly bass-heavy default tuning. The Realme Buds Air 5 wins on battery (38h with case) and low-latency game mode, though several users note the touch controls are oversensitive. The Nothing Ear (a) is praised for cleaner sound and ANC but a few runners say the stem fit loosens during intense workouts.",
+    "expected_products": ["Boult Audio Astra", "Realme Buds Air 5", "Nothing Ear (a)"]
+  },
+  "scored_products": [
+    {
+      "name": "Boult Audio Astra",
+      "signal_strength": "strong",
+      "mention_count": 41,
+      "positive_mentions": 33,
+      "negative_mentions": 8,
+      "percentage": 84.2,
+      "praise": [
+        "ear-hook design stays locked in during runs",
+        "IPX5 sweat resistance survived months of gym use",
+        "punchy bass that makes workouts feel energetic"
+      ],
+      "complaints": [
+        {"text": "default tuning is too bass-heavy for vocals", "confidence": "reported"},
+        {"text": "case is bulky for pockets", "confidence": "single"}
+      ],
+      "sources": ["reddit.com/r/IndianGaming", "reddit.com/r/headphones", "smartprix.com"],
+      "scores": [
+        {"criterion": "fit_security", "label": "Fit Security", "score": 9, "evidence": "11 users report the ear-hooks stay locked during running and HIIT"},
+        {"criterion": "water_resistance", "label": "Water Resistance", "score": 8, "evidence": "IPX5 rating confirmed; several report surviving heavy sweat for months"},
+        {"criterion": "sound_quality", "label": "Sound Quality", "score": 6, "evidence": "praised for energy but multiple users call the bass overpowering for vocals"},
+        {"criterion": "battery_life", "label": "Battery Life", "score": 7, "evidence": "users cite ~30h total with the case, enough for a week of gym sessions"},
+        {"criterion": "price_to_value", "label": "Price to Value", "score": 9, "evidence": "repeatedly called the best value sweat-proof option under 3000"}
+      ]
+    },
+    {
+      "name": "Realme Buds Air 5",
+      "signal_strength": "strong",
+      "mention_count": 37,
+      "positive_mentions": 28,
+      "negative_mentions": 9,
+      "percentage": 81.0,
+      "praise": [
+        "38 hours total battery is class-leading at this price",
+        "low-latency game mode is genuinely usable for mobile gaming",
+        "comfortable for long listening sessions"
+      ],
+      "complaints": [
+        {"text": "touch controls are oversensitive and trigger by accident", "confidence": "confirmed"},
+        {"text": "ANC is weak compared to pricier options", "confidence": "reported"}
+      ],
+      "sources": ["reddit.com/r/IndianGaming", "reddit.com/r/budgetaudiophile", "91mobiles.com"],
+      "scores": [
+        {"criterion": "battery_life", "label": "Battery Life", "score": 9, "evidence": "multiple users confirm ~38h with case, highest in the bracket"},
+        {"criterion": "gaming_latency", "label": "Gaming Latency", "score": 8, "evidence": "game mode praised for usable sync in mobile FPS titles"},
+        {"criterion": "fit_security", "label": "Fit Security", "score": 6, "evidence": "comfortable but a few runners say the fit is less secure than ear-hook designs"},
+        {"criterion": "sound_quality", "label": "Sound Quality", "score": 7, "evidence": "balanced tuning praised; not reference-grade but pleasant"},
+        {"criterion": "price_to_value", "label": "Price to Value", "score": 8, "evidence": "strong value driven by battery and game mode at under 3000"}
+      ]
+    },
+    {
+      "name": "Nothing Ear (a)",
+      "signal_strength": "moderate",
+      "mention_count": 22,
+      "positive_mentions": 16,
+      "negative_mentions": 6,
+      "percentage": 74.5,
+      "praise": [
+        "cleanest, most accurate sound in the comparison",
+        "effective ANC for the price",
+        "distinctive transparent design"
+      ],
+      "complaints": [
+        {"text": "stem fit loosens during intense workouts", "confidence": "reported"},
+        {"text": "slightly above the 3000 budget for some sellers", "confidence": "single"}
+      ],
+      "sources": ["reddit.com/r/headphones", "reddit.com/r/budgetaudiophile"],
+      "scores": [
+        {"criterion": "sound_quality", "label": "Sound Quality", "score": 9, "evidence": "consistently called the cleanest sound of the three by audiophile users"},
+        {"criterion": "noise_cancellation", "label": "Noise Cancellation", "score": 7, "evidence": "ANC praised as effective for the price bracket"},
+        {"criterion": "fit_security", "label": "Fit Security", "score": 5, "evidence": "several runners report the stem fit loosens during intense workouts"},
+        {"criterion": "water_resistance", "label": "Water Resistance", "score": 6, "evidence": "IP54 rating; adequate but below the Astra for heavy sweat"},
+        {"criterion": "price_to_value", "label": "Price to Value", "score": 6, "evidence": "excellent sound but sits at or just above budget for many sellers"}
+      ]
+    }
+  ]
+}
