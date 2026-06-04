@@ -31,8 +31,32 @@ class RetrievalQualityMetric(BaseMetric):
 
     def evaluate(self, scenarios: list[OfflineScenario], **kwargs) -> MetricResult:
         """
-        Evaluate evidence coverage across all products in benchmark scenarios.
+        Online: evaluate evidence coverage from real pipeline results.
+        Offline (no pipeline_results): SKIP — synthetic benchmark products always have
+        praise/complaints by construction, so an offline score measures benchmark-data
+        completeness, not the production retrieval system (Gap #1). Excluded from the index.
         """
+        pipeline_results: list[dict] = kwargs.get("pipeline_results", [])
+        if pipeline_results:
+            scores = [
+                _eval_product_evidence(p)
+                for run in pipeline_results
+                for p in run.get("scored_products", [])
+            ]
+            avg = sum(scores) / max(len(scores), 1)
+            threshold = PASS_THRESHOLDS[self.name]
+            return MetricResult(
+                name=self.name, score=round(avg, 1), passed=avg >= threshold,
+                pass_threshold=threshold, details={"products_evaluated": len(scores)},
+            )
+
+        return MetricResult.skip(
+            self.name, PASS_THRESHOLDS[self.name],
+            "online-only: requires real pipeline output (pass pipeline_results)",
+        )
+
+    def _evaluate_offline_unused(self, scenarios: list[OfflineScenario], **kwargs) -> MetricResult:
+        """Retained for reference — benchmark-data completeness check (not used in index)."""
         product_results = []
 
         seen = set()

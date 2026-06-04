@@ -193,6 +193,10 @@ class EvalRunner:
 
 
 def _print_metric_summary(result: MetricResult) -> None:
+    if result.skipped:
+        reason = result.details.get("skipped_reason", "not measurable in this run")
+        print(f"    [SKIP] {result.name}: {reason}")
+        return
     status = "PASS" if result.passed else "FAIL"
     print(f"    [{status}] {result.name}: {result.score:.1f}/100"
           f"  (threshold {result.pass_threshold})"

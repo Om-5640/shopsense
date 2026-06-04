@@ -45,8 +45,12 @@ def print_report(result: EvalRunResult) -> None:
         weight = data["weight"]
         contrib = data["contribution"]
         grade_m = data["grade"]
-        passed = data["passed"]
-        status = "PASS" if passed else "FAIL"
+        if data.get("skipped"):
+            print(
+                f"  {metric:<35}  {'n/a':>6}  {weight:>4.2f}  {'n/a':>7}  {grade_m:>4}  SKIP (online-only)"
+            )
+            continue
+        status = "PASS" if data["passed"] else "FAIL"
         print(
             f"  {metric:<35}  {score:>6.1f}  {weight:>4.2f}  {contrib:>7.2f}  {grade_m:>4}  {status}"
         )

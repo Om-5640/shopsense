@@ -31,14 +31,22 @@ PASS_THRESHOLDS: dict[str, float] = {
 }
 
 # ── CI blocking thresholds (fail build below these) ───────────────────────
+# These gate the deterministic offline metrics, which are fully stable run-to-run
+# (no LLM calls). Each sits ~10pt below its current cross-category score, so a real
+# regression fails the build immediately while legitimate small changes have headroom.
+# Online-only metrics (retrieval/explanation) are not gated here — they skip offline.
 CI_BLOCK_THRESHOLDS: dict[str, float] = {
-    "recommendation_quality":     60.0,
-    "counterfactual_sensitivity": 55.0,
-    "robustness":                 70.0,
+    "recommendation_quality":     90.0,   # current 100.0
+    "personalization_strength":   80.0,   # current  92.5
+    "counterfactual_sensitivity": 88.0,   # current 100.0
+    "ranking_quality":            90.0,   # current 100.0
+    "semantic_consistency":       85.0,   # current  96.0
+    "robustness":                 90.0,   # current 100.0
+    "human_alignment":            65.0,   # current  76.9 (cross-category expert panel)
 }
 
-# Minimum Intelligence Index to pass CI
-CI_MIN_INDEX: float = 65.0
+# Minimum Intelligence Index to pass CI (current full-mode index ≈ 96.8).
+CI_MIN_INDEX: float = 88.0
 
 # ── Eval modes ────────────────────────────────────────────────────────────
 QUICK_EVAL_METRICS = [

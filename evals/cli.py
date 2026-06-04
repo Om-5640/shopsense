@@ -137,7 +137,7 @@ def _run_ci(args) -> int:
       - Intelligence Index < CI_MIN_INDEX
       - Any critical metric below CI_BLOCK_THRESHOLDS
     """
-    runner = EvalRunner(mode="quick", save_history=True)
+    runner = EvalRunner(mode="full", save_history=True)
     result = runner.run()
     print_report(result)
 
@@ -156,7 +156,8 @@ def _run_ci(args) -> int:
 
     for metric, threshold in CI_BLOCK_THRESHOLDS.items():
         mr = result.metric_results.get(metric)
-        if mr and mr.score < threshold:
+        # Skipped metrics (online-only, run offline) are not gated — they were not measured.
+        if mr and not mr.skipped and mr.score < threshold:
             print(
                 f"  [FAIL] CI FAIL: {metric} score {mr.score:.1f} below CI threshold {threshold}",
                 file=sys.stderr,

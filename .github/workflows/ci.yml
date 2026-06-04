@@ -89,6 +89,15 @@ jobs:
           SERPER_API_KEY: dummy
           OPENROUTER_API_KEY: dummy
 
+      - name: Validate benchmark pools (schema + winner integrity)
+        run: |
+          python -m evals.benchmarks.validate_pools
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
       - name: Intelligence eval (regression gate)
         run: |
           python -m evals ci

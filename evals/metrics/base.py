@@ -16,14 +16,24 @@ class MetricResult:
     details: dict = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    skipped: bool = False  # True = not measurable in this run (e.g. online-only metric run offline)
 
     @property
     def grade(self) -> str:
+        if self.skipped: return "n/a"
         if self.score >= 90: return "A"
         if self.score >= 80: return "B"
         if self.score >= 70: return "C"
         if self.score >= 60: return "D"
         return "F"
+
+    @classmethod
+    def skip(cls, name: str, threshold: float, reason: str) -> "MetricResult":
+        """Build a skipped result — excluded from the Intelligence Index, never a PASS/FAIL."""
+        return cls(
+            name=name, score=0.0, passed=True, pass_threshold=threshold,
+            details={"skipped_reason": reason}, skipped=True,
+        )
 
 
 @dataclass

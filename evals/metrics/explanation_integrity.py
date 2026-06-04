@@ -52,32 +52,14 @@ class ExplanationIntegrityMetric(BaseMetric):
 
     def _evaluate_offline(self, scenarios: list[OfflineScenario]) -> MetricResult:
         """
-        In offline mode: scores are synthetic so evidence is minimal.
-        We measure structural integrity of the score dicts themselves.
+        Explanation integrity is meaningless on synthetic offline data — the evidence
+        strings are placeholders, not real LLM output. Rather than fake a score that
+        masquerades as LLM-quality measurement (Gap #1), we SKIP it offline. It is
+        excluded from the Intelligence Index. Pass pipeline_results to measure it for real.
         """
-        scored_products: list[dict] = []
-        seen = set()
-        for s in scenarios:
-            products = build_scored_products(s.products, s.rubric_weights)
-            for p in products:
-                if p["name"] not in seen:
-                    seen.add(p["name"])
-                    scored_products.append(p)
-
-        integrity_scores = [_score_product_integrity(p) for p in scored_products]
-        avg = sum(integrity_scores) / max(len(integrity_scores), 1)
-        threshold = PASS_THRESHOLDS[self.name]
-
-        return MetricResult(
-            name=self.name,
-            score=round(avg, 1),
-            passed=avg >= threshold,
-            pass_threshold=threshold,
-            details={
-                "products_evaluated": len(scored_products),
-                "note": "offline mode — evidence is synthetic; online mode provides real evidence",
-                "avg_integrity_score": round(avg, 1),
-            },
+        return MetricResult.skip(
+            self.name, PASS_THRESHOLDS[self.name],
+            "online-only: requires real pipeline output (pass pipeline_results)",
         )
 
     def _evaluate_online(self, pipeline_results: list[dict]) -> MetricResult:

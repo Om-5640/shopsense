@@ -18,7 +18,7 @@ def compute_index(metric_results: dict[str, MetricResult]) -> float:
     """
     present_weights = {
         k: v for k, v in INDEX_WEIGHTS.items()
-        if k in metric_results
+        if k in metric_results and not metric_results[k].skipped
     }
     if not present_weights:
         return 0.0
@@ -39,9 +39,10 @@ def compute_index_breakdown(metric_results: dict[str, MetricResult]) -> dict:
         contributions[key] = {
             "score": result.score,
             "weight": weight,
-            "contribution": round(result.score * weight, 2),
+            "contribution": 0.0 if result.skipped else round(result.score * weight, 2),
             "passed": result.passed,
             "grade": result.grade,
+            "skipped": result.skipped,
         }
 
     index = compute_index(metric_results)
@@ -49,7 +50,10 @@ def compute_index_breakdown(metric_results: dict[str, MetricResult]) -> dict:
         "intelligence_index": index,
         "grade": _grade(index),
         "components": contributions,
-        "weights_sum": round(sum(INDEX_WEIGHTS[k] for k in metric_results if k in INDEX_WEIGHTS), 3),
+        "weights_sum": round(
+            sum(INDEX_WEIGHTS[k] for k, r in metric_results.items()
+                if k in INDEX_WEIGHTS and not r.skipped), 3
+        ),
     }
 
 
