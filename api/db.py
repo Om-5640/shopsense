@@ -159,6 +159,15 @@ CREATE TABLE IF NOT EXISTS Search (
     shoppingLinks  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ShareToken (
+    token       TEXT PRIMARY KEY,
+    search_id   TEXT NOT NULL REFERENCES Search(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS sharetoken_search_idx ON ShareToken (search_id);
+
 CREATE TABLE IF NOT EXISTS Profile (
     category    TEXT PRIMARY KEY,
     data        TEXT NOT NULL,
@@ -263,6 +272,15 @@ ON "ProductMemory" ("userId", "canonicalName");
 
 CREATE INDEX IF NOT EXISTS usersignal_user_idx
 ON "UserSignal" ("userId", "createdAt" DESC);
+
+CREATE TABLE IF NOT EXISTS "ShareToken" (
+    token       TEXT PRIMARY KEY,
+    search_id   TEXT NOT NULL REFERENCES "Search"(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS sharetoken_search_idx ON "ShareToken" (search_id);
 """
 
 
@@ -993,3 +1011,55 @@ def clear_product_memories(user_id: str = "default") -> int:
         cur = conn.execute("DELETE FROM ProductMemory WHERE userId = ?", (user_id,))
         conn.commit()
         return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# ShareToken CRUD
+# ---------------------------------------------------------------------------
+
+def create_share_token(token: str, search_id: str, expires_at: Optional[str] = None) -> None:
+    if _use_postgres():
+        with _pg_transaction() as cur:
+            cur.execute(
+                'INSERT INTO "ShareToken" (token, search_id, created_at, expires_at) '
+                'VALUES (%s, %s, now(), %s) ON CONFLICT (token) DO NOTHING',
+                (token, search_id, expires_at),
+            )
+    else:
+        conn = _sqlite_connect()
+        conn.execute(
+            "INSERT OR IGNORE INTO ShareToken (token, search_id, created_at, expires_at) VALUES (?,?,?,?)",
+            (token, search_id, _now_iso(), expires_at),
+        )
+        conn.commit()
+
+
+def resolve_share_token(token: str) -> Optional[str]:
+    """Return the search_id for a token, or None if not found / expired."""
+    if _use_postgres():
+        with _pg_transaction() as cur:
+            cur.execute(
+                'SELECT search_id, expires_at FROM "ShareToken" WHERE token = %s',
+                (token,),
+            )
+            row = _pg_fetchone_as_dict(cur)
+    else:
+        conn = _sqlite_connect()
+        row = conn.execute(
+            "SELECT search_id, expires_at FROM ShareToken WHERE token = ?",
+            (token,),
+        ).fetchone()
+        row = _sqlite_row_to_dict(row) if row else None
+
+    if not row:
+        return None
+    expires = row.get("expires_at")
+    if expires:
+        from datetime import datetime, timezone
+        try:
+            exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            if exp_dt < datetime.now(timezone.utc):
+                return None  # expired
+        except Exception:
+            pass
+    return row.get("search_id")

@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity } from 'lucide-react'
+import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity, Download, FileText, FileSpreadsheet, Share2, Link, Check } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
 import { CommandPalette } from '@/components/layout/command-palette'
@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
-import { deleteProductMemory, getSearchResult, fetchPrices, recordPurchase } from '@/lib/api'
+import { deleteProductMemory, getSearchResult, fetchPrices, recordPurchase, downloadCSV, downloadPDF, createShareLink } from '@/lib/api'
 import { useResultsStore, useAppStore, deriveSidebarCriteria } from '@/lib/store'
 import type { ScoredProduct, RetailerPrice, AnalysisProduct, SentimentRecord, ProductPrice, ReviewIntelligence } from '@/lib/types'
 import { fmtRelative } from '@/lib/utils'
@@ -136,6 +136,7 @@ export default function ResultsPage() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [copyLinkDone, setCopyLinkDone] = useState(false)
 
   const { rubric, weights, products, compareSet, initResults, setWeight, resetWeights, toggleCompare } =
     useResultsStore()
@@ -323,6 +324,30 @@ export default function ResultsPage() {
     },
     [searchMeta],
   )
+
+  const handleExport = useCallback(async (type: 'csv' | 'pdf' | 'share') => {
+    if (!id) return
+    if (type === 'csv') {
+      downloadCSV(id)
+      toast.success('CSV download started')
+    } else if (type === 'pdf') {
+      downloadPDF(id)
+      toast.success('PDF download started')
+    } else {
+      try {
+        const shareUrl = await createShareLink(id)
+        await navigator.clipboard.writeText(shareUrl)
+        setCopyLinkDone(true)
+        toast.success('Share link copied to clipboard', {
+          description: shareUrl,
+          duration: 6000,
+        })
+        setTimeout(() => setCopyLinkDone(false), 3000)
+      } catch {
+        toast.error('Could not create share link')
+      }
+    }
+  }, [id])
 
   const handleCompare = useCallback(() => {
     if (compareSet.size >= 2) {
@@ -534,6 +559,41 @@ export default function ResultsPage() {
                       <Activity className="w-3.5 h-3.5 mr-1.5" />
                       Diagnostics
                     </Button>
+
+                    {/* Export dropdown */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="text-[#A1A1AA] hover:text-[#FAFAFA]">
+                          <Download className="w-3.5 h-3.5 mr-1.5" />
+                          Export
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="bg-[#0F0F12] border-white/[0.1] w-48">
+                        <DropdownMenuItem
+                          onClick={() => handleExport('pdf')}
+                          className="text-[#FAFAFA] hover:bg-white/[0.06] cursor-pointer gap-2"
+                        >
+                          <FileText className="w-4 h-4 text-violet-400" />
+                          Download PDF
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleExport('csv')}
+                          className="text-[#FAFAFA] hover:bg-white/[0.06] cursor-pointer gap-2"
+                        >
+                          <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                          Download CSV
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleExport('share')}
+                          className="text-[#FAFAFA] hover:bg-white/[0.06] cursor-pointer gap-2"
+                        >
+                          {copyLinkDone
+                            ? <Check className="w-4 h-4 text-emerald-400" />
+                            : <Link className="w-4 h-4 text-sky-400" />}
+                          {copyLinkDone ? 'Copied!' : 'Copy share link'}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
 
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

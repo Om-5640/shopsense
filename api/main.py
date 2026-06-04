@@ -69,6 +69,7 @@ _logger = _logging.getLogger(__name__)
 
 from db import init_db, create_search, update_search, get_search, list_searches
 from db import get_profile, save_profile_db
+from db import create_share_token, resolve_share_token
 from pipeline_runner import create_session, find_inflight_session, start_pipeline, get_session, cancel_session, cleanup_old_sessions
 
 # ---------------------------------------------------------------------------
@@ -780,6 +781,78 @@ def get_diagnostics(search_id: str) -> dict:
         "status": row.get("status"),
         "stats": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Export endpoints — CSV, PDF, shareable links
+# ---------------------------------------------------------------------------
+
+@app.get("/api/search/{search_id}/csv")
+def export_csv(search_id: str):
+    """Download scored products as a CSV file."""
+    from fastapi.responses import Response as _Response
+    row = get_search(search_id)
+    if not row:
+        raise HTTPException(404, "Search not found")
+    if row.get("status") != "done" or not row.get("scoredProducts"):
+        raise HTTPException(422, "Results not ready — search must be complete before exporting")
+    from export import generate_csv
+    csv_bytes = generate_csv(row)
+    safe_q = (row.get("query", "results") or "results")[:40].replace(" ", "_")
+    safe_q = "".join(c for c in safe_q if c.isalnum() or c == "_")
+    return _Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f'attachment; filename="shopsense_{safe_q}.csv"'},
+    )
+
+
+@app.get("/api/search/{search_id}/pdf")
+def export_pdf(search_id: str):
+    """Download search results as a formatted PDF report."""
+    from fastapi.responses import Response as _Response
+    row = get_search(search_id)
+    if not row:
+        raise HTTPException(404, "Search not found")
+    if row.get("status") != "done" or not row.get("scoredProducts"):
+        raise HTTPException(422, "Results not ready — search must be complete before exporting")
+    from export import generate_pdf
+    pdf_bytes = generate_pdf(row)
+    safe_q = (row.get("query", "results") or "results")[:40].replace(" ", "_")
+    safe_q = "".join(c for c in safe_q if c.isalnum() or c == "_")
+    return _Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="shopsense_{safe_q}.pdf"'},
+    )
+
+
+@app.post("/api/search/{search_id}/share")
+def create_share(search_id: str, request: Request):
+    """Generate a shareable short link for this search result."""
+    import secrets
+    row = get_search(search_id)
+    if not row:
+        raise HTTPException(404, "Search not found")
+    if row.get("status") != "done":
+        raise HTTPException(422, "Search must be complete before sharing")
+
+    token = secrets.token_urlsafe(16)
+    create_share_token(token, search_id)
+
+    # Build the share URL using the frontend origin
+    origin = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    share_url = f"{origin}/s/{token}"
+    return {"token": token, "share_url": share_url}
+
+
+@app.get("/api/share/{token}")
+def resolve_share(token: str):
+    """Resolve a share token to its search_id."""
+    search_id = resolve_share_token(token)
+    if not search_id:
+        raise HTTPException(404, "Share link not found or expired")
+    return {"search_id": search_id}
 
 
 @app.get("/api/health")

@@ -294,6 +294,42 @@ export async function wipeAllMemory(): Promise<void> {
   await client.delete('/api/memory/all')
 }
 
+// ── Export & Sharing ─────────────────────────────────────────────────────────
+
+/** Trigger a CSV download for the given search result. */
+export function downloadCSV(searchId: string): void {
+  const url = `${BASE}/api/search/${searchId}/csv`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `shopsense_${searchId.slice(0, 8)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+/** Trigger a PDF download for the given search result. */
+export function downloadPDF(searchId: string): void {
+  const url = `${BASE}/api/search/${searchId}/pdf`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `shopsense_${searchId.slice(0, 8)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+/** Create a shareable short link and return the URL. */
+export async function createShareLink(searchId: string): Promise<string> {
+  const { data } = await client.post(`/api/search/${searchId}/share`)
+  return data.share_url as string
+}
+
+/** Resolve a share token to a search_id (used by /s/[token] page). */
+export async function resolveShareToken(token: string): Promise<string> {
+  const { data } = await client.get(`/api/share/${token}`)
+  return data.search_id as string
+}
+
 // ── Parse JSON string fields from SQLite rows ─────────────────────────────────
 
 function _parseSearch(row: SearchResult): SearchResult {
