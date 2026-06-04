@@ -19,6 +19,9 @@ from product_canonicalizer import CanonicalProduct, canonicalize_product
 __all__ = ["MatchResult", "match_product_candidate"]
 
 
+_RE_ALNUM = re.compile(r"[a-z0-9]+")
+
+
 @dataclass
 class MatchResult:
     brand_match: float
@@ -37,11 +40,29 @@ def _jaccard(a: str | None, b: str | None) -> float:
     """Token-level Jaccard similarity. Returns 0.5 when either side is unknown."""
     if not a or not b:
         return 0.5
-    a_tok = set(re.sub(r"[^a-z0-9]", " ", a.lower()).split())
-    b_tok = set(re.sub(r"[^a-z0-9]", " ", b.lower()).split())
+    a_tok = _similarity_tokens(a)
+    b_tok = _similarity_tokens(b)
     if not a_tok or not b_tok:
         return 0.5
     return len(a_tok & b_tok) / len(a_tok | b_tok)
+
+
+def _compact_alnum(text: str | None) -> str:
+    if not text:
+        return ""
+    return "".join(_RE_ALNUM.findall(text.lower()))
+
+
+def _similarity_tokens(text: str) -> set[str]:
+    tokens = set(_RE_ALNUM.findall(text.lower()))
+    compact = _compact_alnum(text)
+    if compact:
+        tokens.add(compact)
+    expanded: set[str] = set()
+    for token in tokens:
+        if len(token) >= 6 and any(ch.isdigit() for ch in token) and any(ch.isalpha() for ch in token):
+            expanded.update(re.findall(r"[a-z]+|\d+", token))
+    return {tok for tok in tokens | expanded if tok}
 
 
 def _to_gb(s: str) -> float | None:
@@ -89,8 +110,13 @@ def _model_score(a: str | None, b: str | None) -> float:
     if not a or not b:
         return 0.5
     al, bl = a.lower().strip(), b.lower().strip()
+    ac, bc = _compact_alnum(a), _compact_alnum(b)
     if al == bl:
         return 1.0
+    if ac and ac == bc:
+        return 1.0
+    if ac and bc and (ac in bc or bc in ac):
+        return max(_jaccard(a, b), 0.88)
     if al in bl or bl in al:
         return max(_jaccard(a, b), 0.80)
     return _jaccard(a, b)
@@ -139,6 +165,38 @@ def _ram_score(a: str | None, b: str | None) -> float:
     return 0.2   # RAM mismatch is less severe than storage mismatch
 
 
+def _variant_penalty(a: str | None, b: str | None) -> float:
+    """Variant mismatches like Pro vs non-Pro should materially reduce confidence."""
+    if not a or not b:
+        return 1.0
+    ac, bc = _compact_alnum(a), _compact_alnum(b)
+    if not ac or not bc or ac == bc:
+        return 1.0
+    if ac in bc or bc in ac:
+        return 0.92
+    return 0.45
+
+
+def _generation_penalty(a: str | None, b: str | None) -> float:
+    if not a or not b:
+        return 1.0
+    return 1.0 if _compact_alnum(a) == _compact_alnum(b) else 0.7
+
+
+def _screen_penalty(a: str | None, b: str | None) -> float:
+    if not a or not b:
+        return 1.0
+    a_num = _to_gb(a.replace('"', "GB"))  # reuse numeric extractor
+    b_num = _to_gb(b.replace('"', "GB"))
+    if a_num is None or b_num is None:
+        return 1.0
+    if abs(a_num - b_num) <= 0.11:
+        return 1.0
+    if abs(a_num - b_num) <= 0.35:
+        return 0.85
+    return 0.5
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def match_product_candidate(canonical: CanonicalProduct, candidate_title: str) -> MatchResult:
@@ -169,6 +227,9 @@ def match_product_candidate(canonical: CanonicalProduct, candidate_title: str) -
     ram     = _ram_score(canonical.ram, cand.ram)
     color   = _color_score(canonical.color, cand.color)
     title_sim = _jaccard(canonical.canonical_name, candidate_title)
+    variant_penalty = _variant_penalty(canonical.variant, cand.variant)
+    generation_penalty = _generation_penalty(canonical.generation, cand.generation)
+    screen_penalty = _screen_penalty(canonical.screen_size, cand.screen_size)
 
     raw = (
         model   * 0.40
@@ -178,6 +239,7 @@ def match_product_candidate(canonical: CanonicalProduct, candidate_title: str) -
         + color   * 0.05
         + title_sim * 0.05
     )
+    raw *= variant_penalty * generation_penalty * screen_penalty
 
     # Storage mismatch → heavy penalty so wrong variants never win
     overall = raw * 0.30 if storage_mismatch else raw

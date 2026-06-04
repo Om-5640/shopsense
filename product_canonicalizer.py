@@ -11,6 +11,7 @@ Usage:
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 __all__ = ["CanonicalProduct", "canonicalize_product", "extract_product_attributes"]
 
@@ -340,7 +341,8 @@ def _extract_model(
     noise = (
         r'\b(?:buy|online|india|price|review|specifications?|spec|official|'
         r'new|latest|brand new|ram|ssd|hdd|nvme|emmc|storage|memory|'
-        r'5g|4g|lte|wi-?fi|bluetooth)\b'
+        r'5g|4g|lte|wi-?fi|bluetooth|wireless|earbuds?|earphones?|'
+        r'headphones?|headsets?|noise cancel(?:ling|lation)?|true wireless|tws|anc)\b'
     )
     cleaned = re.sub(noise, ' ', cleaned, flags=re.IGNORECASE)
 
@@ -350,6 +352,63 @@ def _extract_model(
     cleaned = re.sub(r'\s+', ' ', cleaned).strip().strip('-_,. ')
 
     return cleaned or None
+
+
+@lru_cache(maxsize=4096)
+def _canonicalize_cached(text: str) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str,
+    float,
+]:
+    """Cache deterministic parses so repeated matching stays cheap."""
+    brand      = _extract_brand(text)
+    storage    = _normalize_storage(text)
+    ram        = _normalize_ram(text)
+    color      = _extract_color(text)
+    generation = _extract_generation(text)
+    screen     = _extract_screen(text)
+    variant    = _extract_variant(text)
+    model      = _extract_model(text, brand, storage, ram, color, generation, screen)
+
+    parts: list[str] = []
+    if brand:
+        parts.append(brand)
+    if model:
+        parts.append(model)
+    if ram:
+        parts.append(f"{ram} RAM")
+    if storage:
+        parts.append(storage)
+    if color:
+        parts.append(color)
+    canonical_name = " ".join(parts) if parts else text
+
+    fields_found = sum(1 for f in [brand, model, storage] if f)
+    confidence = fields_found / 3.0
+    if storage:
+        confidence = min(1.0, confidence + 0.1)
+    if brand and model:
+        confidence = min(1.0, confidence + 0.1)
+
+    return (
+        brand,
+        model,
+        storage,
+        ram,
+        color,
+        generation,
+        screen,
+        variant,
+        canonical_name,
+        round(confidence, 3),
+    )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -369,38 +428,19 @@ def canonicalize_product(name: str) -> CanonicalProduct:
             canonical_name=name or "", parse_confidence=0.0,
         )
 
-    text = name.strip()
-
-    brand      = _extract_brand(text)
-    storage    = _normalize_storage(text)
-    ram        = _normalize_ram(text)
-    color      = _extract_color(text)
-    generation = _extract_generation(text)
-    screen     = _extract_screen(text)
-    variant    = _extract_variant(text)
-    model      = _extract_model(text, brand, storage, ram, color, generation, screen)
-
-    # Build canonical name from structured parts (omit None)
-    parts: list[str] = []
-    if brand:
-        parts.append(brand)
-    if model:
-        parts.append(model)
-    if ram:
-        parts.append(f"{ram} RAM")
-    if storage:
-        parts.append(storage)
-    if color:
-        parts.append(color)
-    canonical_name = " ".join(parts) if parts else text
-
-    # Confidence: 0–1 based on how many critical fields we found
-    fields_found = sum(1 for f in [brand, model, storage] if f)
-    confidence = fields_found / 3.0
-    if storage:
-        confidence = min(1.0, confidence + 0.1)
-    if brand and model:
-        confidence = min(1.0, confidence + 0.1)
+    text = re.sub(r"[\u2010-\u2015]+", "-", name).strip()
+    (
+        brand,
+        model,
+        storage,
+        ram,
+        color,
+        generation,
+        screen,
+        variant,
+        canonical_name,
+        confidence,
+    ) = _canonicalize_cached(text)
 
     return CanonicalProduct(
         brand=brand,
@@ -412,7 +452,7 @@ def canonicalize_product(name: str) -> CanonicalProduct:
         screen_size=screen,
         variant=variant,
         canonical_name=canonical_name,
-        parse_confidence=round(confidence, 3),
+        parse_confidence=confidence,
     )
 
 

@@ -42,6 +42,8 @@ MIN_CONFIDENCE_THRESHOLD = 0.72  # Below this → status="uncertain", fallback b
 _SOURCE_TRUST: dict[str, float] = {
     "amazon.in":          0.95,
     "amazon.com":         0.95,
+    "amazon.co.uk":       0.95,
+    "amazon.com.au":      0.95,
     "flipkart.com":       0.90,
     "samsung.com":        0.98,
     "samsung.com/in":     0.98,
@@ -52,6 +54,8 @@ _SOURCE_TRUST: dict[str, float] = {
     "sony.com":           0.93,
     "bestbuy.com":        0.88,
     "croma.com":          0.80,
+    "argos.co.uk":        0.82,
+    "jbhifi.com.au":      0.84,
     "reliancedigital.in": 0.80,
     "vijaysales.com":     0.75,
     "tatacliq.com":       0.78,
@@ -62,12 +66,16 @@ _SOURCE_TRUST: dict[str, float] = {
 _RETAILER_PRIORITY: dict[str, int] = {
     "amazon.in":    1,
     "amazon.com":   1,
+    "amazon.co.uk": 1,
+    "amazon.com.au": 1,
     "flipkart.com": 2,
     "samsung.com":  3,
     "apple.com":    3,
     "lenovo.com":   3,
     "asus.com":     3,
     "bestbuy.com":  2,
+    "argos.co.uk":  2,
+    "jbhifi.com.au": 2,
     "croma.com":    4,
 }
 
@@ -134,6 +142,58 @@ class LinkIntelResult:
         }
 
 
+def _normalize_domain(domain: str) -> str:
+    norm = domain.lower().strip()
+    return norm[4:] if norm.startswith("www.") else norm
+
+
+def _lookup_domain_value(mapping: dict[str, float | int], domain: str, default: float | int) -> float | int:
+    norm = _normalize_domain(domain)
+    if norm in mapping:
+        return mapping[norm]
+    for key, value in mapping.items():
+        if norm.endswith(f".{key}"):
+            return value
+    return default
+
+
+def _compact_alnum(text: str | None) -> str:
+    if not text:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _identity_key_from_attrs(attrs: dict) -> str:
+    parts = [
+        _compact_alnum(attrs.get("brand")),
+        _compact_alnum(attrs.get("model")),
+        _compact_alnum(attrs.get("variant")),
+        _compact_alnum(attrs.get("generation")),
+        _compact_alnum(attrs.get("screen_size")),
+        _compact_alnum(attrs.get("storage")),
+    ]
+    if not any(parts):
+        return "unknown"
+    return "|".join(parts)
+
+
+def _identity_key_for_candidate(candidate: ProductCandidate) -> str:
+    return _identity_key_from_attrs(extract_product_attributes(candidate.title))
+
+
+def _identity_key_for_canonical(canonical: CanonicalProduct) -> str:
+    return _identity_key_from_attrs(
+        {
+            "brand": canonical.brand,
+            "model": canonical.model,
+            "variant": canonical.variant,
+            "generation": canonical.generation,
+            "screen_size": canonical.screen_size,
+            "storage": canonical.storage,
+        }
+    )
+
+
 # ── Phase 7: Consensus Validation ─────────────────────────────────────────────
 
 def compute_consensus_score(candidates: list[ProductCandidate]) -> float:
@@ -146,21 +206,20 @@ def compute_consensus_score(candidates: list[ProductCandidate]) -> float:
         return 0.5
 
     # Group by domain (one vote per domain)
-    domain_storage: dict[str, str] = {}
+    domain_identity: dict[str, str] = {}
     for c in candidates:
-        if c.domain not in domain_storage:
-            attrs = extract_product_attributes(c.title)
-            domain_storage[c.domain] = attrs.get("storage") or "unknown"
+        if c.domain not in domain_identity:
+            domain_identity[c.domain] = _identity_key_for_candidate(c)
 
-    if len(domain_storage) < 2:
+    if len(domain_identity) < 2:
         return 0.6  # single source — partial confidence
 
-    storage_votes: dict[str, int] = {}
-    for storage in domain_storage.values():
-        storage_votes[storage] = storage_votes.get(storage, 0) + 1
+    identity_votes: dict[str, int] = {}
+    for identity in domain_identity.values():
+        identity_votes[identity] = identity_votes.get(identity, 0) + 1
 
-    total = sum(storage_votes.values())
-    max_agree = max(storage_votes.values())
+    total = sum(identity_votes.values())
+    max_agree = max(identity_votes.values())
     return round(max_agree / total, 3)
 
 
@@ -202,22 +261,22 @@ def _compute_price_consistency(candidates: list[ProductCandidate]) -> float:
 
 def _cluster_by_storage(
     candidates: list[ProductCandidate],
-    target_storage: str | None,
+    canonical: CanonicalProduct,
 ) -> list[list[ProductCandidate]]:
     """
     Group candidates by storage variant.
     Cluster matching target storage comes first.
     """
+    target_identity = _identity_key_for_canonical(canonical)
     buckets: dict[str, list[ProductCandidate]] = {}
     for c in candidates:
-        attrs = extract_product_attributes(c.title)
-        storage_key = attrs.get("storage") or "unknown"
-        c.cluster_id = storage_key
-        buckets.setdefault(storage_key, []).append(c)
+        identity_key = _identity_key_for_candidate(c)
+        c.cluster_id = identity_key
+        buckets.setdefault(identity_key, []).append(c)
 
     def priority(item: tuple[str, list]) -> int:
         k = item[0]
-        if k == target_storage:
+        if k == target_identity:
             return 0
         if k == "unknown":
             return 2
@@ -236,14 +295,25 @@ def rank_offers(candidates: list[ProductCandidate]) -> list[ProductCandidate]:
     Does NOT simply choose lowest price.
     """
     def score(c: ProductCandidate) -> float:
-        trust    = _SOURCE_TRUST.get(c.domain, 0.55)
-        priority = 1.0 / max(1, _RETAILER_PRIORITY.get(c.domain, 5))
-        has_price = 0.15 if c.price else 0.0
+        trust    = float(_lookup_domain_value(_SOURCE_TRUST, c.domain, 0.55))
+        priority = 1.0 / max(1, int(_lookup_domain_value(_RETAILER_PRIORITY, c.domain, 5)))
+        has_price = 0.10 if c.price else 0.0
         rating_bonus = 0.0
         if c.rating:
             rating_bonus = (max(0.0, c.rating - 3.0) / 2.0) * 0.08
+        review_bonus = 0.0
+        if c.review_count:
+            review_bonus = min(0.05, (len(str(max(1, c.review_count))) - 1) * 0.01)
         image_bonus = 0.05 if c.image_url else 0.0
-        return trust * 0.55 + priority * 0.25 + has_price + rating_bonus + image_bonus
+        return (
+            c.match_score * 0.35
+            + trust * 0.30
+            + priority * 0.15
+            + has_price
+            + rating_bonus
+            + review_bonus
+            + image_bonus
+        )
 
     return sorted(candidates, key=score, reverse=True)
 
@@ -273,7 +343,7 @@ def _brand_store_bonus(
     if not expected_domain:
         return 0.0
     for c in candidates:
-        if expected_domain in c.domain and not c.storage_mismatch:
+        if _normalize_domain(c.domain).endswith(expected_domain) and not c.storage_mismatch:
             return 0.04   # +4% bonus — brand site agrees
     return 0.0
 
@@ -314,7 +384,7 @@ def run_link_intelligence(
                 if not title:
                     continue
 
-                domain = urlparse(url).netloc.lstrip("www.") if url else ""
+                domain = _normalize_domain(urlparse(url).netloc) if url else ""
                 price  = raw.get(price_field) or raw.get("price_inr") or raw.get("price_usd")
 
                 # Parse review_count safely (Serper returns strings like "1,234")
@@ -357,7 +427,7 @@ def run_link_intelligence(
         working.sort(key=lambda c: c.match_score, reverse=True)
 
         # Phase 6: cluster by storage
-        clusters = _cluster_by_storage(working, canonical.storage)
+        clusters = _cluster_by_storage(working, canonical)
         winning_cluster = clusters[0] if clusters else working
 
         # Phase 10: rank offers within winning cluster
@@ -372,7 +442,7 @@ def run_link_intelligence(
         consensus   = min(1.0, consensus + brand_bonus)
 
         # Phase 8: confidence
-        source_trust      = _SOURCE_TRUST.get(best.domain if best else "", 0.55)
+        source_trust      = float(_lookup_domain_value(_SOURCE_TRUST, best.domain if best else "", 0.55))
         match_sc          = best.match_score if best else 0.0
         price_consistency = _compute_price_consistency(winning_cluster)
 

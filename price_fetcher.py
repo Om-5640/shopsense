@@ -41,7 +41,7 @@ import time
 import logging
 import threading
 import requests
-from datetime import datetime
+from datetime import UTC, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote_plus, urlparse, urlencode, parse_qs, urlunparse
 
@@ -75,6 +75,11 @@ HEADERS = {
 # Global rate-limiter: no more than one Serper request every SERPER_CALL_DELAY seconds
 _serper_lock = threading.Lock()
 _serper_last_call = 0.0
+_RE_PRICE_TOKEN = re.compile(r"(\d[\d,\s]*\.?\d{0,2})")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _serper_throttle() -> None:
@@ -182,35 +187,55 @@ def _serper_shopping_search(query: str, num: int = 5) -> list[dict]:
 # Price extraction helpers
 # ---------------------------------------------------------------------------
 
-def _parse_inr(text: str | None) -> int | None:
-    """Extract an integer INR price from strings like '₹2,499', 'Rs. 2499', etc."""
+def _coerce_price_token(token: str | None) -> int | None:
+    if not token:
+        return None
+    cleaned = token.replace(",", "").replace(" ", "").strip()
+    if not cleaned or cleaned.count(".") > 1:
+        return None
+    try:
+        return int(float(cleaned))
+    except ValueError:
+        return None
+
+
+def _parse_price_value(
+    text: str | None,
+    currency_markers: tuple[str, ...],
+    *,
+    minimum: int,
+    maximum: int,
+) -> int | None:
     if not text:
         return None
-    text = str(text)
-    cleaned = re.sub(r"[^\d]", "", text)
-    if cleaned:
-        val = int(cleaned)
-        # Sanity: ignore absurd values (< ₹50 or > ₹10 lakh)
-        if 50 <= val <= 1_000_000:
-            return val
+    raw = " ".join(str(text).split())
+    marker_group = "|".join(currency_markers)
+    patterns = (
+        rf"(?i)(?:{marker_group})\s*({_RE_PRICE_TOKEN.pattern})",
+        rf"({_RE_PRICE_TOKEN.pattern})\s*(?:{marker_group})",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw):
+            value = _coerce_price_token(match.group(1) or match.group(2))
+            if value is not None and minimum <= value <= maximum:
+                return value
+
+    if re.search(r"(?i)\b(price|sale|deal|now|only|from|mrp)\b", raw):
+        for match in _RE_PRICE_TOKEN.finditer(raw):
+            value = _coerce_price_token(match.group(1))
+            if value is not None and minimum <= value <= maximum:
+                return value
     return None
+
+
+def _parse_inr(text: str | None) -> int | None:
+    """Extract an integer INR price from strings like '₹2,499', 'Rs. 2499', etc."""
+    return _parse_price_value(text, (r"₹", r"rs\.?", r"inr"), minimum=50, maximum=1_000_000)
 
 
 def _parse_usd(text: str | None) -> int | None:
     """Extract integer USD price from strings like '$49.99', '49', etc."""
-    if not text:
-        return None
-    text = str(text)
-    # Remove $ and commas, keep digits and dot
-    cleaned = re.sub(r"[^0-9.]", "", text)
-    if cleaned:
-        try:
-            val = float(cleaned)
-            if 1 <= val <= 100_000:
-                return int(val)
-        except ValueError:
-            pass
-    return None
+    return _parse_price_value(text, (r"us\$", r"\$"), minimum=1, maximum=100_000)
 
 
 def _apply_affiliate_tag(url: str) -> str:
@@ -430,22 +455,12 @@ def _fetch_bestbuy(product_name: str) -> dict | None:
 
 def _parse_gbp(text: str | None) -> int | None:
     """Extract integer GBP price from strings like '£49.99', '49', etc."""
-    if not text:
-        return None
-    cleaned = re.sub(r"[^0-9.]", "", str(text))
-    if cleaned:
-        try:
-            val = float(cleaned)
-            if 1 <= val <= 100_000:
-                return int(val)
-        except ValueError:
-            pass
-    return None
+    return _parse_price_value(text, (r"£", r"gbp"), minimum=1, maximum=100_000)
 
 
 def _parse_aud(text: str | None) -> int | None:
     """Extract integer AUD price from strings like 'A$49.99', '$49', etc."""
-    return _parse_gbp(text)  # same numeric format
+    return _parse_price_value(text, (r"a\$", r"aud", r"\$"), minimum=1, maximum=100_000)
 
 
 def _fetch_amazon_uk(product_name: str) -> dict | None:
@@ -600,6 +615,56 @@ _RETAILER_FETCHERS = {
 }
 
 
+def _retailer_key(entry: dict) -> str:
+    url = entry.get("url") or ""
+    if url:
+        domain = urlparse(url).netloc.lower()
+        return domain[4:] if domain.startswith("www.") else domain
+    return str(entry.get("name", "")).lower().strip()
+
+
+def _candidate_rank_key(candidate) -> tuple[float, float, float, float]:
+    return (
+        0.0 if getattr(candidate, "storage_mismatch", False) else 1.0,
+        float(getattr(candidate, "match_score", 0.0)),
+        1.0 if getattr(candidate, "price", None) else 0.0,
+        float(getattr(candidate, "review_count", 0) or 0),
+    )
+
+
+def _merge_link_intel_into_retailers(retailers: list[dict], intel) -> None:
+    """Promote the best per-retailer candidate so price/link stay aligned."""
+    best_by_retailer: dict[str, object] = {}
+    for candidate in intel.all_candidates:
+        key = candidate.domain or candidate.retailer_name.lower().strip()
+        current = best_by_retailer.get(key)
+        if current is None or _candidate_rank_key(candidate) > _candidate_rank_key(current):
+            best_by_retailer[key] = candidate
+
+    promoted = 0
+    for retailer in retailers:
+        key = _retailer_key(retailer)
+        candidate = best_by_retailer.get(key)
+        if not candidate:
+            continue
+
+        original_title = retailer.get("title")
+        original_url = retailer.get("url")
+        original_candidates = retailer.get("_candidates")
+
+        retailer.update({k: v for k, v in candidate.raw.items() if k != "_candidates"})
+        if original_candidates:
+            retailer["_candidates"] = original_candidates
+        retailer["match_score"] = round(candidate.match_score, 3)
+        retailer["storage_mismatch"] = bool(candidate.storage_mismatch)
+
+        if retailer.get("url") != original_url or retailer.get("title") != original_title:
+            promoted += 1
+
+    if promoted:
+        logger.debug("Promoted %d retailer entries to better-matching candidates", promoted)
+
+
 def _fetch_one_product(product_name: str, region: str) -> dict:
     """
     Fetch prices for a single product from 2-3 retailers in parallel.
@@ -647,6 +712,7 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
             if canonical.parse_confidence >= 0.30:
                 intel = run_link_intelligence(canonical, retailers, price_field)
                 if intel:
+                    _merge_link_intel_into_retailers(retailers, intel)
                     intel_data = intel.to_dict()
                     # If intelligence found a better-matching result, promote it
                     # by reordering retailers so best match appears first.
@@ -655,17 +721,14 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
                         retailers.sort(
                             key=lambda r: 0 if r.get("url") == best_url else 1
                         )
-                        # Tag each retailer with its match score
-                        for r in retailers:
-                            for cand in intel.all_candidates:
-                                if r.get("url") == cand.url:
-                                    r["match_score"] = round(cand.match_score, 3)
-                                    break
         except Exception as _ie:
             logger.debug("Link intelligence failed (non-fatal): %s", _ie)
 
     # Determine best price — prefer intelligence-selected retailer when confident
     priced = [r for r in retailers if r.get(price_field)]
+    validated_priced = [r for r in priced if not r.get("storage_mismatch")]
+    if validated_priced:
+        priced = validated_priced
     if priced:
         if (
             intel_data
@@ -702,7 +765,7 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         "best_price": best_price,
         "price_range": price_range,
         "currency": currency,
-        "fetched_at": datetime.utcnow().isoformat() + "Z",
+        "fetched_at": _utc_now_iso(),
     }
     if intel_data:
         output["intelligence"] = intel_data
@@ -746,7 +809,7 @@ def _search_url_fallback(product_name: str, region: str) -> dict:
         "best_price": None,
         "price_range": None,
         "currency": _CURRENCY.get(region, "USD"),
-        "fetched_at": datetime.utcnow().isoformat() + "Z",
+        "fetched_at": _utc_now_iso(),
         "is_fallback": True,
     }
 
