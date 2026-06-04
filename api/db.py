@@ -267,6 +267,12 @@ CREATE TABLE IF NOT EXISTS "_SchemaVersion" (
     "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Self-heal: a ProductMemory table created by an older schema version lacks
+-- canonicalName. CREATE TABLE IF NOT EXISTS is a no-op on the existing table, so
+-- guarantee the column exists before the index below references it. Without this,
+-- init_db() crashes on legacy databases before run_migrations() can patch it.
+ALTER TABLE "ProductMemory" ADD COLUMN IF NOT EXISTS "canonicalName" TEXT;
+
 CREATE INDEX IF NOT EXISTS productmemory_canonical_idx
 ON "ProductMemory" ("userId", "canonicalName");
 
