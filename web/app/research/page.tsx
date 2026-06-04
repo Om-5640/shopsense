@@ -14,6 +14,7 @@ import {
   Zap,
   Check,
   AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnimatedBackground } from '@/components/layout/animated-background'
@@ -24,10 +25,6 @@ import {
   type PipelineStage,
   type StageStatus,
 } from '@/components/research/pipeline-timeline'
-import { InterviewChat } from '@/components/research/interview-chat'
-import { RubricConfirmation } from '@/components/research/rubric-confirmation'
-import { AnalyzerAnimation } from '@/components/research/analyzer-animation'
-import { RedditFetchGrid } from '@/components/research/reddit-fetch-grid'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Criterion, QAEntry, Rubric, MemoryContext, InterviewQuestion, ProcessMessageResult, UserIntent } from '@/lib/types'
@@ -47,6 +44,32 @@ import {
 } from '@/lib/api'
 import { connectSSE } from '@/lib/sse'
 import { extractWeights } from '@/lib/rerank'
+import dynamic from 'next/dynamic'
+
+// ─── Lazy-loaded heavy components (O3 — only rendered in specific phases) ─────
+
+const _DynSpinner = () => (
+  <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-8">
+    <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+)
+
+const InterviewChat = dynamic(
+  () => import('@/components/research/interview-chat').then(m => ({ default: m.InterviewChat })),
+  { ssr: false, loading: _DynSpinner },
+)
+const RubricConfirmation = dynamic(
+  () => import('@/components/research/rubric-confirmation').then(m => ({ default: m.RubricConfirmation })),
+  { ssr: false, loading: _DynSpinner },
+)
+const AnalyzerAnimation = dynamic(
+  () => import('@/components/research/analyzer-animation').then(m => ({ default: m.AnalyzerAnimation })),
+  { ssr: false },
+)
+const RedditFetchGrid = dynamic(
+  () => import('@/components/research/reddit-fetch-grid').then(m => ({ default: m.RedditFetchGrid })),
+  { ssr: false },
+)
 
 // ─── Pipeline stage config ────────────────────────────────────────────────────
 
@@ -96,36 +119,66 @@ interface ChatMessage {
   isTyping?: boolean
 }
 
-// ─── Checkpoint helpers (BUG-05 + MEMORY-02) ─────────────────────────────────
+// ─── Checkpoint helpers (Bug 2: slim format · Bug 4: tab-scoped key) ──────────
 
 const _CKPT_TTL_MS = 24 * 60 * 60 * 1000  // 24 hours
 
+/** Tab-scoped ID in sessionStorage — isolates concurrent tabs so they don't overwrite each other (Bug 4). */
+function _getTabId(): string {
+  if (typeof window === 'undefined') return 'ssr'
+  const KEY = 'shopsense_tab_id'
+  let id = sessionStorage.getItem(KEY)
+  if (!id) {
+    id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
+    sessionStorage.setItem(KEY, id)
+  }
+  return id
+}
+
 function _ckptKey(query: string): string {
-  const sid = getOrCreateSessionId()
-  return `shopsense_ckpt_${sid}_${query}`
+  return `shopsense_ckpt_${getOrCreateSessionId()}_${_getTabId()}_${query}`
 }
 
-function _saveCkpt(query: string, history: unknown[]): void {
+/** Slim wire format — keeps each entry compact to avoid quota errors (Bug 2). */
+interface _SlimQA { q: string; a: string; t?: string; w?: string }
+
+function _saveCkpt(query: string, history: QAEntry[]): void {
+  const slim: _SlimQA[] = history.map(e => ({
+    q: e.question,
+    a: e.answer,
+    t: e.targets_criterion || undefined,
+    w: e.why_asked || undefined,
+  }))
   try {
-    localStorage.setItem(_ckptKey(query), JSON.stringify({ ts: Date.now(), history }))
-  } catch { /* ignore */ }
+    localStorage.setItem(_ckptKey(query), JSON.stringify({ ts: Date.now(), history: slim }))
+  } catch {
+    // QuotaExceededError — fall back to minimal payload (question + answer only)
+    try {
+      const minimal = history.map(e => ({ q: e.question.slice(0, 120), a: e.answer.slice(0, 400) }))
+      localStorage.setItem(_ckptKey(query), JSON.stringify({ ts: Date.now(), history: minimal }))
+    } catch { /* give up silently */ }
+  }
 }
 
-function _loadCkpt(query: string): unknown[] | null {
+function _loadCkpt(query: string): QAEntry[] | null {
   try {
     const raw = localStorage.getItem(_ckptKey(query))
     if (!raw) return null
     const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && 'ts' in parsed && 'history' in parsed) {
-      if (Date.now() - (parsed.ts as number) > _CKPT_TTL_MS) {
-        localStorage.removeItem(_ckptKey(query))
-        return null
-      }
-      return parsed.history as unknown[]
+    if (!parsed || typeof parsed !== 'object' || !('ts' in parsed) || !Array.isArray(parsed.history)) {
+      localStorage.removeItem(_ckptKey(query))
+      return null
     }
-    // Legacy format (no TTL wrapper) — treat as expired
-    localStorage.removeItem(_ckptKey(query))
-    return null
+    if (Date.now() - (parsed.ts as number) > _CKPT_TTL_MS) {
+      localStorage.removeItem(_ckptKey(query))
+      return null
+    }
+    return (parsed.history as Array<_SlimQA | QAEntry>).map(e => ({
+      question:          'q' in e ? e.q : (e as QAEntry).question,
+      answer:            'a' in e ? e.a : (e as QAEntry).answer,
+      targets_criterion: ('t' in e ? e.t : (e as QAEntry).targets_criterion) ?? '',
+      why_asked:         ('w' in e ? e.w : (e as QAEntry).why_asked) ?? '',
+    }))
   } catch { return null }
 }
 
@@ -230,6 +283,14 @@ function ResearchPageContent() {
   const hasInitRef = useRef<string | null>(null)
   const clarificationCountRef = useRef(0)  // how many clarification follow-ups asked for current Q
   const inClarificationRef = useRef(false)  // next message should bypass intent detection
+  // Bug 3: watchdog — timestamp of the last received SSE event
+  const lastEventRef = useRef<number>(Date.now())
+  // Bug 1: reconnection indicator (ref avoids stale closure in SSE callbacks)
+  const reconnectingRef = useRef(false)
+  const [reconnecting, setReconnecting] = useState(false)
+  // O2: batch rapid SSE reddit-grid progress events to reduce re-renders
+  const redditBatchRef = useRef<{ current: number; total: number } | null>(null)
+  const redditTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // UI-02: Reset the init guard when the pathname changes (user navigated away and back).
   // The guard exists to stop React StrictMode double-fires (same mount), but it must not
@@ -250,19 +311,48 @@ function ResearchPageContent() {
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [])
 
-  // Cleanup SSE on unmount
+  // Cleanup SSE and debounce timers on unmount
   useEffect(() => {
-    return () => { sseCleanupRef.current?.() }
+    return () => {
+      sseCleanupRef.current?.()
+      if (redditTimerRef.current) clearTimeout(redditTimerRef.current)
+    }
   }, [])
 
   // ── Update a sidebar stage status ──────────────────────────────────────────
   const updateStage = useCallback((id: string, status: StageStatus, description?: string, elapsed?: number) => {
-    setStages((prev) =>
-      prev.map((s) =>
+    setStages((prev) => {
+      const target = prev.find(s => s.id === id)
+      // O1: skip re-render if nothing actually changed
+      if (
+        target &&
+        target.status === status &&
+        (description === undefined || target.description === description) &&
+        (elapsed === undefined || target.elapsedTime === elapsed)
+      ) return prev
+      return prev.map((s) =>
         s.id === id ? { ...s, status, description: description ?? s.description, elapsedTime: elapsed ?? s.elapsedTime } : s,
-      ),
-    )
+      )
+    })
   }, [])
+
+  // Bug 3: watchdog — if no SSE event arrives within 30 min of 'running', surface an error
+  const WATCHDOG_MS = 30 * 60 * 1_000
+  useEffect(() => {
+    if (phase !== 'running') return
+    lastEventRef.current = Date.now()
+    const timer = setInterval(() => {
+      if (Date.now() - lastEventRef.current > WATCHDOG_MS) {
+        sseCleanupRef.current?.()
+        if (redditTimerRef.current) { clearTimeout(redditTimerRef.current); redditTimerRef.current = null }
+        setPhase('error')
+        setError('Research is taking too long — the pipeline may have stalled. Try again or check the server.')
+        toast.error('Research timed out', { duration: 8000 })
+      }
+    }, 60_000)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
 
   // ── Load criteria, profile, memory for a category ─────────────────────────
   // preQA: optional pre-answered entries injected from disambiguation choice
@@ -289,8 +379,8 @@ function ResearchPageContent() {
         // W-01: Check for a saved interview checkpoint (from a prior session that crashed mid-interview)
         let startQA = preQA
         const ckpt = _loadCkpt(query)
-        if (Array.isArray(ckpt) && ckpt.length > preQA.length) {
-          startQA = ckpt as QAEntry[]
+        if (ckpt && ckpt.length > preQA.length) {
+          startQA = ckpt
         }
         // Start interview — seed with checkpoint (or disambiguation pre-answers)
         if (startQA.length > 0) setQaHistory(startQA)
@@ -619,10 +709,10 @@ function ResearchPageContent() {
       try { localStorage.setItem('shopsense_active_search', JSON.stringify({ id: search_id, query, ts: Date.now() })) } catch { /* ignore */ }
       sseCleanupRef.current = connectSSE(search_id, {
         onStageStart(stage) {
+          lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'running')
           if (sid === 'reddit') {
-            // seed placeholder threads
             setRedditThreads(
               Array.from({ length: 9 }, (_, i) => ({
                 id: String(i + 1),
@@ -635,6 +725,7 @@ function ResearchPageContent() {
           }
         },
         onStageDone(stage, count) {
+          lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'complete', count !== undefined ? `${count} found` : undefined)
           if (sid === 'reddit') {
@@ -642,19 +733,30 @@ function ResearchPageContent() {
           }
         },
         onProgress(stage, current, total) {
+          lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'running', total ? `${current}/${total}` : undefined)
           if (sid === 'reddit' || stage === 'reddit_fetch') {
-            setRedditThreads((prev) =>
-              prev.map((t, i) => ({
-                ...t,
-                status: i < current ? 'complete' : i === current ? 'fetching' : 'pending',
-              })),
-            )
+            // O2: debounce grid updates — batch rapid SSE progress events into one render per 150ms
+            redditBatchRef.current = { current, total: total ?? 0 }
+            if (!redditTimerRef.current) {
+              redditTimerRef.current = setTimeout(() => {
+                redditTimerRef.current = null
+                const batch = redditBatchRef.current
+                if (batch) {
+                  setRedditThreads((prev) =>
+                    prev.map((t, i) => ({
+                      ...t,
+                      status: i < batch.current ? 'complete' : i === batch.current ? 'fetching' : 'pending',
+                    })),
+                  )
+                }
+              }, 150)
+            }
           }
         },
         onCacheHit() {
-          // Pipeline returned a cached result — mark all pipeline stages complete immediately
+          lastEventRef.current = Date.now()
           setStages((prev) => prev.map((s) =>
             ['reddit', 'scraping', 'summarizing', 'analyzing', 'scoring'].includes(s.id)
               ? { ...s, status: 'complete' }
@@ -665,13 +767,34 @@ function ResearchPageContent() {
             duration: 4000,
           })
         },
+        onHeartbeat() {
+          lastEventRef.current = Date.now()
+          if (reconnectingRef.current) {
+            reconnectingRef.current = false
+            setReconnecting(false)
+            toast.dismiss('sse-reconnecting')
+          }
+        },
+        onReconnecting(attempt) {
+          reconnectingRef.current = true
+          setReconnecting(true)
+          toast.loading(`Reconnecting to research stream… (attempt ${attempt})`, {
+            id: 'sse-reconnecting',
+            duration: Infinity,
+          })
+        },
         onError(message) {
+          reconnectingRef.current = false
+          setReconnecting(false)
+          toast.dismiss('sse-reconnecting')
           handleError(message)
         },
         onDone(_sid, fromCache, warnings) {
+          reconnectingRef.current = false
+          setReconnecting(false)
+          toast.dismiss('sse-reconnecting')
           setPhase('done')
           try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
-          // Show provider fallback warnings as dismissible amber toasts before navigating
           if (warnings && warnings.length > 0) {
             warnings.forEach((w, i) => {
               setTimeout(() => {
@@ -703,6 +826,10 @@ function ResearchPageContent() {
     setStopping(true)
     try {
       sseCleanupRef.current?.()
+      reconnectingRef.current = false
+      setReconnecting(false)
+      toast.dismiss('sse-reconnecting')
+      if (redditTimerRef.current) { clearTimeout(redditTimerRef.current); redditTimerRef.current = null }
       await cancelSearch(activeSearchId)
       try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
       toast.info('Research stopped.')
@@ -1130,6 +1257,12 @@ function ResearchPageContent() {
               {region && region !== 'global' && (
                 <Badge variant="outline" className="border-white/[0.1] text-[#71717A] capitalize">
                   {region}
+                </Badge>
+              )}
+              {reconnecting && (
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 flex items-center gap-1.5 animate-pulse">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  Reconnecting…
                 </Badge>
               )}
             </div>

@@ -130,7 +130,7 @@ export default function WatchPage() {
               duration: 8000,
             })
           },
-        }, /* reconnect */ true)
+        })
       })
       .catch(() => {
         setError('Could not load this search session. It may have expired.')
