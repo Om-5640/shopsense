@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity, Download, FileText, FileSpreadsheet, Share2, Link, Check } from 'lucide-react'
+import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity, Download, FileText, FileSpreadsheet, Link, Check } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
 import { CommandPalette } from '@/components/layout/command-palette'
