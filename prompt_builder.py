@@ -70,8 +70,8 @@ def estimate_tokens(text: str) -> int:
 # Provider-aware character budgets (tokens * ~4 chars/token).
 # Conservative: assumes worst-case token/char ratio and reserves output capacity.
 _PROVIDER_BUDGETS: dict[str, int] = {
-    "groq":       24_000,    # 8K token context − 2K output reserve = 6K * 4
-    "cerebras":   24_000,
+    "groq":      120_000,    # llama-3.3-70b: 32K token context − 2K output = 30K * 4
+    "cerebras":   24_000,    # llama-3.1-8b:  8K token context − 2K output =  6K * 4
     "gemini":    800_000,    # 1M context, practical cap at ~200K tokens
     "mistral":    96_000,    # 32K context − 8K output = 24K * 4
     "openrouter": 80_000,    # conservative mixed-model default

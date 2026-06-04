@@ -8,11 +8,12 @@ disambiguation prompt with options for the user to pick from.
 Choice is cached per query so repeat runs skip the prompt.
 """
 
-import json
 import re
 from functools import lru_cache
+
 import cache
 from agents import run_agent
+from llm_client import safe_json_loads
 
 
 SYSTEM = """You classify shopping queries into product categories.
@@ -82,27 +83,41 @@ When NOT disambiguating:
 NO markdown, NO commentary, JSON only."""
 
 
-@lru_cache(maxsize=256)
+# ─── Public API ───────────────────────────────────────────────────────────────
+
 def detect_category(query: str) -> dict:
     """
-    Returns {category, confidence, needs_disambiguation, options}.
-    In-process LRU cache (maxsize=256) avoids even the disk read for repeated queries
-    within one server lifetime. The file-based cache provides persistence across restarts.
+    Returns a *copy* of {category, primary_noun, confidence, needs_disambiguation, options}.
+
+    Always returns a fresh copy so callers can safely add keys (e.g. region)
+    without corrupting the shared LRU cache entry (Bug 1 + Bug 2 fix).
+
+    Normalises the query before the LRU lookup so "Keyboard" and "keyboard"
+    resolve to the same cached entry (Bug 3 fix).
     """
-    cache_key = query.lower().strip()
-    rule_based = _rule_based_result(cache_key)
+    return dict(_detect_category_cached(query.lower().strip()))
+
+
+# ─── LRU-cached inner function (keyed on normalised query) ────────────────────
+
+@lru_cache(maxsize=256)
+def _detect_category_cached(norm_query: str) -> dict:
+    """
+    All actual detection logic lives here. The LRU key is the already-normalised
+    query, so case/whitespace variants share the same slot.
+    """
+    rule_based = _rule_based_result(norm_query)
     if rule_based is not None:
-        cache.set("category", cache_key, rule_based)
+        # Rule-based results are deterministic — no need to persist to disk (Bug 5 fix).
         return rule_based
 
-    cached = cache.get("category", cache_key)
+    cached = cache.get("category", norm_query)
     if cached is not None:
         return cached
 
-    prompt = f'Query: "{query}"\n\nClassify this with disambiguation if needed.'
+    prompt = f'Query: "{norm_query}"\n\nClassify this with disambiguation if needed.'
     try:
         raw = run_agent("category_detector", user_prompt=prompt, system=SYSTEM)
-        from llm_client import safe_json_loads
         data = safe_json_loads(raw)
     except Exception as e:
         print(f"[category] detection failed ({e}), using fallback")
@@ -146,15 +161,17 @@ def detect_category(query: str) -> dict:
                     })
 
         if len(clean_options) < 2:
-            # Disambiguation requested but options are bad - treat as unambiguous
+            # Disambiguation requested but options are bad — treat as unambiguous
             result["needs_disambiguation"] = False
             result["options"] = []
         else:
-            result["options"] = clean_options[:5]  # cap at 5
+            result["options"] = clean_options[:4]  # system prompt says 2-4 (Bug 6 fix)
 
-    cache.set("category", cache_key, result)
+    cache.set("category", norm_query, result)
     return result
 
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _sanitize_slug(slug: str) -> str:
     """Normalize a category slug: lowercase, only safe chars."""
@@ -207,6 +224,8 @@ def _rule_based_result(query: str) -> dict | None:
     return None
 
 
+# ─── Validation & path utilities ──────────────────────────────────────────────
+
 def validate_category_slug(category: str) -> str:
     """
     Sanitise a category string before it is used in any file-system path.
@@ -218,7 +237,6 @@ def validate_category_slug(category: str) -> str:
     clean = _sanitize_slug(category)
     if not clean:
         raise ValueError(f"category slug became empty after sanitisation: {category!r}")
-    # Reject any residual traversal pattern (should never occur after _sanitize_slug, but be explicit)
     if ".." in clean or clean.startswith("/"):
         raise ValueError(f"category slug failed path-traversal check: {clean!r}")
     return clean
@@ -230,6 +248,8 @@ def category_to_filename(category: str) -> str:
     return safe.replace("/", "_")
 
 
+# ─── CLI entry point ──────────────────────────────────────────────────────────
+
 def resolve_category_interactively(query: str, forced_category: str | None = None) -> dict:
     """
     Top-level entry. Returns final category info dict.
@@ -238,8 +258,11 @@ def resolve_category_interactively(query: str, forced_category: str | None = Non
     Otherwise calls detect_category and prompts user to pick if disambiguation needed.
     """
     if forced_category:
+        # Bug 4 fix: include primary_noun so callers don't get KeyError
+        slug = _sanitize_slug(forced_category)
         return {
-            "category": _sanitize_slug(forced_category),
+            "category": slug,
+            "primary_noun": slug.split("/")[-1].replace("-", " "),
             "confidence": "high",
             "needs_disambiguation": False,
             "options": [],
@@ -253,7 +276,7 @@ def resolve_category_interactively(query: str, forced_category: str | None = Non
     # Prompt user to choose
     print(f"\n{'─'*72}")
     print("  CATEGORY CHECK")
-    print(f"  Your query could mean different things. Which type did you mean?")
+    print("  Your query could mean different things. Which type did you mean?")
     print(f"{'─'*72}")
 
     options = detection["options"]
@@ -279,18 +302,18 @@ def resolve_category_interactively(query: str, forced_category: str | None = Non
         chosen = options[idx]
         result = {
             "category": chosen["slug"],
+            "primary_noun": chosen["slug"].split("/")[-1].replace("-", " "),
             "confidence": "high",
             "needs_disambiguation": False,
             "options": [],
         }
-        # Cache the user's choice so they don't get re-asked for same query
         cache.set("category", query.lower().strip(), result)
         print(f"[category] using: {chosen['slug']}")
         return result
     else:
-        # User chose "none of these" - keep generic
         result = {
             "category": detection["category"],
+            "primary_noun": detection.get("primary_noun", detection["category"].split("/")[-1].replace("-", " ")),
             "confidence": "low",
             "needs_disambiguation": False,
             "options": [],

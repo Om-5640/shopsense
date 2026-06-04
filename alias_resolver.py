@@ -124,15 +124,17 @@ def _extract_json(raw: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Walk backwards to find a parseable truncation
-    for cut in range(len(cleaned) - 1, max(len(cleaned) - 100, 0), -1):
+    # Walk backwards to find a parseable truncation.
+    # Try multiple closing suffixes — the truncation may be inside an array or string.
+    for cut in range(len(cleaned) - 1, max(len(cleaned) - 200, 0), -1):
         candidate = cleaned[:cut].rstrip().rstrip(",")
-        try:
-            result = json.loads(candidate + "}")
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            continue
+        for suffix in ("}", ']}', '"]}', '"]}'  ):
+            try:
+                result = json.loads(candidate + suffix)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                continue
 
     return {}
 
@@ -164,7 +166,7 @@ def coref_pass(thread: dict, llm_client) -> dict[str, list[str]]:
             f"List every product and all its aliases found in this thread."
         )
 
-        raw = llm_client("sentiment_analyser", user_prompt=prompt, system=COREF_SYSTEM)
+        raw = llm_client("thread_summarizer", user_prompt=prompt, system=COREF_SYSTEM)
         result = _extract_json(raw)
 
         # Validate + sanitize: keys must be non-empty strings, values must be lists of strings

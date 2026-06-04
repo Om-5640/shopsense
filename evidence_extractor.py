@@ -93,13 +93,15 @@ def _parse_json(raw: str) -> dict:
 
 # ── Evidence coercion ──────────────────────────────────────────────────────────
 
-_EMPTY_EVIDENCE: dict = {"pos": 0, "neg": 0, "quotes": []}
+def _empty_evidence() -> dict:
+    """Always returns a fresh dict with its own quotes list (Bug 2 fix — no shared mutable state)."""
+    return {"pos": 0, "neg": 0, "quotes": []}
 
 
 def _coerce_evidence(raw_entry) -> dict:
     """Normalize a raw LLM evidence entry to {pos, neg, quotes}."""
     if not isinstance(raw_entry, dict):
-        return dict(_EMPTY_EVIDENCE)
+        return _empty_evidence()
 
     def _safe_count(v) -> int:
         try:
@@ -138,7 +140,7 @@ def extract_criterion_evidence(
         Missing criteria (no evidence found) get empty evidence — never raises.
     """
     if not research_text or not research_text.strip():
-        return {c["name"]: dict(_EMPTY_EVIDENCE) for c in criteria}
+        return {c["name"]: _empty_evidence() for c in criteria}
 
     criteria_lines = "\n".join(f"{c['name']}: {c['label']}" for c in criteria)
 
@@ -150,14 +152,14 @@ def extract_criterion_evidence(
     )
 
     try:
-        raw = run_agent("evidence_extractor", user_prompt=prompt, system=_EXTRACT_SYSTEM)
+        raw = run_agent("main_analyzer", user_prompt=prompt, system=_EXTRACT_SYSTEM)  # Bug 1 fix
         parsed = _parse_json(raw)
     except Exception as exc:
         _logger.warning("[evidence_extractor] extraction failed for %r: %s", product_name, exc)
-        return {c["name"]: dict(_EMPTY_EVIDENCE) for c in criteria}
+        return {c["name"]: _empty_evidence() for c in criteria}
 
     return {
-        c["name"]: _coerce_evidence(parsed.get(c["name"])) if c["name"] in parsed else dict(_EMPTY_EVIDENCE)
+        c["name"]: _coerce_evidence(parsed.get(c["name"])) if c["name"] in parsed else _empty_evidence()
         for c in criteria
     }
 
@@ -184,7 +186,7 @@ def extract_evidence_batch(
     if not products:
         return []
 
-    empty_all = {c["name"]: dict(_EMPTY_EVIDENCE) for c in criteria}
+    empty_all = {c["name"]: _empty_evidence() for c in criteria}
     criteria_lines = "\n".join(f"{c['name']}: {c['label']}" for c in criteria)
 
     # Distribute character budget proportionally so total stays under ~12K
@@ -204,11 +206,11 @@ def extract_evidence_batch(
     )
 
     try:
-        raw = run_agent("evidence_extractor", user_prompt=prompt, system=_BATCH_EXTRACT_SYSTEM)
+        raw = run_agent("main_analyzer", user_prompt=prompt, system=_BATCH_EXTRACT_SYSTEM)  # Bug 1 fix
         parsed = _parse_json(raw)
     except Exception as exc:
         _logger.warning("[evidence_extractor] batch extraction failed: %s", exc)
-        return [dict(empty_all) for _ in products]
+        return [{c["name"]: _empty_evidence() for c in criteria} for _ in products]
 
     results: list[dict] = []
     for p in products:
@@ -224,11 +226,11 @@ def extract_evidence_batch(
 
         if not isinstance(product_evidence, dict):
             _logger.debug("[evidence_extractor] no evidence in batch response for %r", name)
-            results.append(dict(empty_all))
+            results.append({c["name"]: _empty_evidence() for c in criteria})
             continue
 
         results.append({
-            c["name"]: _coerce_evidence(product_evidence.get(c["name"])) if c["name"] in product_evidence else dict(_EMPTY_EVIDENCE)
+            c["name"]: _coerce_evidence(product_evidence.get(c["name"])) if c["name"] in product_evidence else _empty_evidence()
             for c in criteria
         })
 
@@ -258,7 +260,7 @@ def format_evidence_for_scorer(
         cname = c["name"]
         label = c["label"]
         weight = c.get("weight", 0)
-        ev = evidence.get(cname, _EMPTY_EVIDENCE)
+        ev = evidence.get(cname) or _empty_evidence()
 
         if ev["pos"] == 0 and ev["neg"] == 0 and not ev["quotes"]:
             lines.append(f"  [NO DATA] {cname} [{label} | wt:{weight}]")

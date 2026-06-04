@@ -126,16 +126,13 @@ def _embed_huggingface(text: str) -> Optional[list[float]]:
 
 
 _local_model = None
-_local_model_lock = None
+_local_model_lock = threading.Lock()   # module-level — no lazy init race (Bug 2 fix)
 
 
 def _embed_local(text: str) -> Optional[list[float]]:
     """Use sentence-transformers locally (CPU). Lazy-loads on first call."""
-    global _local_model, _local_model_lock
+    global _local_model
     try:
-        import threading
-        if _local_model_lock is None:
-            _local_model_lock = threading.Lock()
         with _local_model_lock:
             if _local_model is None:
                 from sentence_transformers import SentenceTransformer
@@ -209,7 +206,7 @@ def embed(text: str) -> Optional[list[float]]:
             (_embed_local, "local"),
         ]:
             vec = provider_fn(text)
-            if vec:
+            if vec is not None:   # explicit None check — empty list is a valid (edge-case) result (Bug 5 fix)
                 cache.set(_CACHE_TYPE, ck, vec)
                 break
 
@@ -256,7 +253,9 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
     if not uncached_texts:
         return results
 
-    # Try Gemini batch first (most efficient)
+    # Try Gemini batch first (most efficient).
+    # Process in chunks of 100 (API limit). Range is computed from the original list
+    # and never mutated inside the loop — the serial fallback below handles any misses.
     if GEMINI_API_KEY:
         for chunk_start in range(0, len(uncached_texts), 100):
             chunk = uncached_texts[chunk_start: chunk_start + 100]
@@ -278,18 +277,13 @@ def embed_batch(texts: list[str]) -> list[Optional[list[float]]]:
                     timeout=60,
                 )
                 resp.raise_for_status()
-                for j, emb in enumerate(resp.json().get("embeddings", [])):
+                embeddings = resp.json().get("embeddings", [])   # parse once (Bug 3 fix)
+                for j, emb in enumerate(embeddings):
                     vec = emb.get("values")
-                    if vec:
+                    if vec is not None and j < len(chunk_idx):
                         idx = chunk_idx[j]
                         results[idx] = vec
                         cache.set(_CACHE_TYPE, _key(chunk[j]), vec)
-                # Remove successfully embedded items from uncached lists, keeping both in sync
-                succeeded = {chunk_idx[j] for j, emb in enumerate(resp.json().get("embeddings", [])) if emb.get("values")}
-                surviving = [(idx, txt) for idx, txt in zip(uncached_idx, uncached_texts) if idx not in succeeded]
-                uncached_idx = [p[0] for p in surviving]
-                uncached_texts = [p[1] for p in surviving]
-                continue
             except Exception as exc:
                 _logger.warning("[embeddings] Gemini batch failed: %s", exc)
                 break

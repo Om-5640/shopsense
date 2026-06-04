@@ -121,6 +121,50 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
   }
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const _PRICES_IDX_KEY = 'shopsense_prices_idx'
+
+/** Cache prices in sessionStorage with LRU eviction when quota is exceeded (Bug 4). */
+function _cachePricesSession(key: string, prices: ProductPrice[]): void {
+  const value = JSON.stringify(prices)
+  const _updateIdx = (k: string) => {
+    try {
+      const idx: string[] = JSON.parse(sessionStorage.getItem(_PRICES_IDX_KEY) ?? '[]')
+      sessionStorage.setItem(_PRICES_IDX_KEY, JSON.stringify([k, ...idx.filter(x => x !== k)].slice(0, 20)))
+    } catch { /* ignore */ }
+  }
+  try {
+    sessionStorage.setItem(key, value)
+    _updateIdx(key)
+  } catch {
+    // QuotaExceededError — evict oldest entry and retry once
+    try {
+      const idx: string[] = JSON.parse(sessionStorage.getItem(_PRICES_IDX_KEY) ?? '[]')
+      if (idx.length > 0) {
+        sessionStorage.removeItem(idx[idx.length - 1])
+        sessionStorage.setItem(_PRICES_IDX_KEY, JSON.stringify(idx.slice(0, -1)))
+      }
+      sessionStorage.setItem(key, value)
+      _updateIdx(key)
+    } catch { /* give up silently */ }
+  }
+}
+
+/** Copy text to clipboard with execCommand fallback for HTTP / older browsers (Bug 3). */
+async function _copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return } catch { /* fall through */ }
+  }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  try { document.execCommand('copy') } finally { document.body.removeChild(ta) }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ResultsPage() {
@@ -142,7 +186,18 @@ export default function ResultsPage() {
     useResultsStore()
   const { addSearchHistory } = useAppStore()
   const hasLoadedRef = useRef<string | null>(null)
+  const mountedRef = useRef(true)                                               // Bug 2: stale price-fetch guard
+  const activeCriterionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Bug 1: leak-free timeout
   const [isReweighting, startReweightTransition] = useTransition()
+
+  // Cleanup: mark unmounted + clear pending timers (Bug 1 + Bug 2)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (activeCriterionTimerRef.current) clearTimeout(activeCriterionTimerRef.current)
+    }
+  }, [])
 
   // Load result on mount
   useEffect(() => {
@@ -237,19 +292,23 @@ export default function ResultsPage() {
             return null
           })()
           if (_cachedPrices) {
+            // O2 fix: Map for O(1) lookup instead of O(n²) nested Array.find
+            const priceMap = new Map(_cachedPrices.map((pr) => [pr.product_name.toLowerCase(), pr]))
             useResultsStore.setState((state) => ({
               products: state.products.map((p) => {
-                const pd = _cachedPrices.find((pr) => pr.product_name === p.name)
+                const pd = priceMap.get(p.name.toLowerCase())
                 return pd ? { ...p, price: pd } : p
               }),
             }))
           } else {
             fetchPrices(result.scoredProducts.slice(0, 8).map((p) => p.name), result.region)
               .then(({ prices }) => {
-                try { sessionStorage.setItem(_priceKey, JSON.stringify(prices)) } catch { /* ignore */ }
+                if (!mountedRef.current) return  // Bug 2 fix: skip stale update after unmount
+                _cachePricesSession(_priceKey, prices)   // Bug 4 fix: LRU eviction on quota error
+                const priceMap = new Map(prices.map((pr) => [pr.product_name.toLowerCase(), pr]))
                 useResultsStore.setState((state) => ({
                   products: state.products.map((p) => {
-                    const pd = prices.find((pr) => pr.product_name === p.name)
+                    const pd = priceMap.get(p.name.toLowerCase())
                     return pd ? { ...p, price: pd } : p
                   }),
                 }))
@@ -284,7 +343,9 @@ export default function ResultsPage() {
       startReweightTransition(() => {
         setWeight(criterionId, value)
       })
-      setTimeout(() => setActiveCriterionId(null), 500)
+      // Bug 1 fix: clear previous timeout to avoid stacking; ref prevents leak on unmount
+      if (activeCriterionTimerRef.current) clearTimeout(activeCriterionTimerRef.current)
+      activeCriterionTimerRef.current = setTimeout(() => setActiveCriterionId(null), 500)
     },
     [setWeight, startReweightTransition],
   )
@@ -336,7 +397,7 @@ export default function ResultsPage() {
     } else {
       try {
         const shareUrl = await createShareLink(id)
-        await navigator.clipboard.writeText(shareUrl)
+        await _copyToClipboard(shareUrl)   // Bug 3 fix: fallback for HTTP / older browsers
         setCopyLinkDone(true)
         toast.success('Share link copied to clipboard', {
           description: shareUrl,
@@ -351,10 +412,10 @@ export default function ResultsPage() {
 
   const handleCompare = useCallback(() => {
     if (compareSet.size >= 2) {
-      // Strip commas from LLM-generated product names before joining so a name like
-      // "Sony WF-1000XM5, Premium Edition" doesn't split the ids parameter incorrectly.
+      // O3 fix: encodeURIComponent encodes commas inside names as %2C, so the join
+      // comma is unambiguous — no lossy stripping that could produce collisions.
       const names = [...compareSet]
-        .map((n) => encodeURIComponent(n.replace(/,/g, '')))
+        .map((n) => encodeURIComponent(n))
         .join(',')
       router.push(`/compare?ids=${names}&search=${id}`)
     }

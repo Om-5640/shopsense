@@ -20,6 +20,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agents import run_agent
+from llm_client import _try_repair_json
 
 
 # Adaptive parallelism: start at 5, throttle back to 3 on repeated 429s
@@ -102,8 +103,8 @@ def _build_thread_prompt(thread: dict, query: str) -> str:
     """Build the summarizer prompt for a single thread."""
     lines = [
         f"USER'S SHOPPING QUERY: {query}",
-        f"",
-        f"REDDIT THREAD",
+        "",
+        "REDDIT THREAD",
         f"Subreddit: r/{thread.get('subreddit', '?')}",
         f"Title: {thread.get('title', '')}",
         f"Score: +{thread.get('score', 0)} | Total comments in thread: {thread.get('total_comment_count_in_thread', '?')}",
@@ -148,8 +149,7 @@ def _coerce_str(v) -> str:
     if isinstance(v, str):
         return v
     if isinstance(v, (dict, list)):
-        import json as _json
-        return _json.dumps(v, ensure_ascii=False)[:500]
+        return json.dumps(v, ensure_ascii=False)[:500]
     return str(v)
 
 
@@ -176,7 +176,6 @@ def _summarize_one_thread(thread: dict, query: str) -> dict:
     try:
         prompt = _build_thread_prompt(thread, query)
         raw = run_agent("thread_summarizer", user_prompt=prompt, system=SUMMARIZER_SYSTEM)
-        from llm_client import _try_repair_json
         data = _try_repair_json(raw)
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict, got {type(data).__name__}")
@@ -332,8 +331,9 @@ def summarize_threads_parallel(
     elapsed = time.time() - start
     ordered = [results[i] for i in range(len(threads))]
     successes = len(threads) - failures
+    est_sequential = elapsed / max(workers, 1) * len(threads)
     print(f"[parallel] {successes}/{len(threads)} threads summarized in {elapsed:.1f}s "
-          f"(would have been {elapsed * MAX_PARALLEL_WORKERS:.0f}s sequential)")
+          f"(est. {est_sequential:.0f}s sequential)")
     return ordered
 
 
@@ -362,8 +362,6 @@ def format_summaries_for_main_analyzer(summaries: list[dict], max_threads: int =
 
     sections = []
     for i, s in enumerate(good, 1):
-        if s.get("_failed"):
-            continue
         sub = s.get("subreddit", "?")
         url = s.get("url", "")
         section = [f"\n===== THREAD {i}: r/{sub} ====="]

@@ -56,12 +56,12 @@ def run_pipeline(
         # ── Step 1: Per-thread coreference / alias resolution ─────────────────
         if pre_coref_maps is not None:
             # Fast path: aliases already extracted from thread summaries — zero LLM calls.
-            # Pad with empty dicts when there are more raw threads than summaries
-            # (extra threads are de-duplicates; their products are covered by the seeded
-            # base_registry which is built from the main analyzer's product list).
-            per_thread_corefs = list(pre_coref_maps)
+            # Truncate if more summaries than threads; pad with independent empty dicts
+            # if fewer (extra raw threads are de-duplicates whose products are already
+            # covered by base_registry).
+            per_thread_corefs = list(pre_coref_maps)[:len(threads)]
             while len(per_thread_corefs) < len(threads):
-                per_thread_corefs.append({})
+                per_thread_corefs.append({})   # independent empty dict, not a shared ref
             logger.info(
                 "[mention_pipeline] using %d pre-extracted alias maps from summaries (skipping coref_pass)",
                 len(pre_coref_maps),
@@ -69,7 +69,7 @@ def run_pipeline(
         else:
             # Fallback: run coref_pass LLM calls in parallel (original behaviour)
             logger.info("[mention_pipeline] running coref_pass on %d threads (parallel)", len(threads))
-            per_thread_corefs = [{}] * len(threads)
+            per_thread_corefs = [{} for _ in range(len(threads))]   # independent dicts (Bug 1 fix)
             with ThreadPoolExecutor(max_workers=5) as pool:
                 future_to_idx = {
                     pool.submit(coref_pass, thread, llm_client): i
