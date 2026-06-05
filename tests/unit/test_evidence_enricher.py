@@ -13,6 +13,13 @@ import pytest
 import evidence_enricher as ee
 
 
+@pytest.fixture(autouse=True)
+def _no_network_deep_fetch(monkeypatch):
+    """Deep-read hits the live Jina API — disable it by default so unit tests stay offline.
+    The dedicated test below re-enables it with a mocked reader."""
+    monkeypatch.setattr(ee, "ENABLE_DEEP_FETCH", False)
+
+
 def _scored():
     # Two products; several criteria have data, several are no-data gaps.
     return [
@@ -96,6 +103,36 @@ def test_enrich_end_to_end_fills_and_refinalizes(monkeypatch):
     # the previously-missing display gap now carries the real value + source
     disp = next(s for s in iq["scores"] if s["criterion"] == "display")
     assert disp["score"] == 8.0 and "gsmarena.com" in disp["evidence"]
+
+
+def test_deep_read_appends_full_page(monkeypatch):
+    """With deep fetch on, the top result's full page is read (Jina) and bundled into evidence."""
+    monkeypatch.setattr(ee, "ENABLE_DEEP_FETCH", True)
+    monkeypatch.setattr(ee.google_search, "search",
+                        lambda q, num=6: [{"title": "Spec", "link": "https://gsmarena.com/x", "snippet": "short"}])
+    import review_fetch
+    monkeypatch.setattr(review_fetch, "_fetch_via_jina",
+                        lambda url: "FULL PAGE BODY: display 1300 nits, AnTuTu 720000, IP54")
+    # bust any cached deepread for determinism
+    import cache
+    cache.set("enrich_deepread", "deepread|https://gsmarena.com/x", None)
+    name, text = ee._fetch_product_evidence("iQOO Z9x", "india")
+    assert "FULL PAGE" in text and "1300 nits" in text, "full-page content must be appended"
+
+
+def test_deep_read_falls_back_on_failure(monkeypatch):
+    monkeypatch.setattr(ee, "ENABLE_DEEP_FETCH", True)
+    monkeypatch.setattr(ee.google_search, "search",
+                        lambda q, num=6: [{"title": "Spec", "link": "https://x.com/y", "snippet": "snip"}])
+    import review_fetch
+    def _boom(url):
+        raise RuntimeError("jina down")
+    monkeypatch.setattr(review_fetch, "_fetch_via_jina", _boom)
+    import cache
+    cache.set("enrich_deepread", "deepread|https://x.com/y", None)
+    name, text = ee._fetch_product_evidence("Some Phone", "india")
+    # snippet still present, no crash
+    assert "snip" in text
 
 
 def test_enrich_llm_failure_returns_unchanged(monkeypatch):

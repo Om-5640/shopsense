@@ -118,6 +118,9 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     sentimentRecords: (ap.sentiment_records ?? p.sentiment_records ?? []) as SentimentRecord[],
     // Link Intelligence match score (from best retailer)
     matchScore: p.price?.intelligence?.match_score ?? null,
+    // Evidence reliability (scorer fairness pass + targeted enrichment)
+    dataCoverage: p.data_coverage ?? null,
+    confidence: p.confidence ?? null,
   }
 }
 

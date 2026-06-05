@@ -26,6 +26,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
+import cache
 import google_search
 from agents import run_agent
 
@@ -35,6 +36,11 @@ MAX_GAPS_PER_PRODUCT = 4    # only the highest-weight missing criteria per produ
 MAX_FETCH_PRODUCTS = 6      # hard Serper-call ceiling per search
 _SNIPPETS_PER_PRODUCT = 6   # snippets pulled per product search
 _FETCH_WORKERS = 4
+
+# Deep read: pull the TOP result's full page (via Jina Reader) for richer facts than the
+# ~30-word Serper snippets. Bounded to one read per product, cached by URL, truncated.
+ENABLE_DEEP_FETCH = os.environ.get("ENABLE_DEEP_FETCH", "true").lower() == "true"
+_DEEP_CHARS_PER_PRODUCT = 2800   # cap full-page content so the batched prompt stays lean
 
 ENABLE_TARGETED_FETCH = os.environ.get("ENABLE_TARGETED_FETCH", "true").lower() == "true"
 
@@ -101,22 +107,60 @@ def identify_gaps(scored: list[dict], rubric: dict) -> dict[str, list[dict]]:
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
+def _deep_read(url: str) -> str:
+    """Full-page read via Jina Reader, cached by URL. Returns '' on any failure."""
+    if not url:
+        return ""
+    ck = f"deepread|{url}"
+    hit = cache.get("enrich_deepread", ck)
+    if hit is not None:
+        return hit
+    text = ""
+    try:
+        from review_fetch import _fetch_via_jina
+        content = _fetch_via_jina(url)
+        if content:
+            text = content[:_DEEP_CHARS_PER_PRODUCT]
+    except Exception:
+        text = ""
+    cache.set("enrich_deepread", ck, text)
+    return text
+
+
 def _fetch_product_evidence(product_name: str, region: str) -> tuple[str, str]:
-    """One Serper search for a product → (product_name, bundled snippet text). Cached by google_search."""
+    """
+    One Serper search for a product → (product_name, bundled evidence text).
+    Snippets give breadth; the top result's full page (Jina) adds the depth that 30-word
+    snippets miss (exact specs, tested figures). Both cached. Falls back to snippets-only.
+    """
     region_hint = "" if region in ("", "global") else f" {region}"
     query = f"{product_name} detailed review specifications{region_hint}"
     results = google_search.search(query, num=_SNIPPETS_PER_PRODUCT)
+
     lines = []
+    top_link = ""
     for r in results[:_SNIPPETS_PER_PRODUCT]:
+        link = r.get("link", "")
         domain = ""
         try:
-            domain = urlparse(r.get("link", "")).netloc.replace("www.", "")
+            domain = urlparse(link).netloc.replace("www.", "")
         except Exception:
             pass
         snippet = (r.get("snippet") or "").strip()
         title = (r.get("title") or "").strip()
         if snippet or title:
             lines.append(f"[{domain or 'web'}] {title}: {snippet}")
+        # Pick the first non-blacklisted-looking real result as the deep-read target.
+        if not top_link and link.startswith("http"):
+            top_link = link
+
+    # Deep read of the single best result — the part that lifts coverage past snippet-only.
+    if ENABLE_DEEP_FETCH and top_link:
+        page = _deep_read(top_link)
+        if page:
+            dom = urlparse(top_link).netloc.replace("www.", "") or "web"
+            lines.append(f"\n[FULL PAGE — {dom}]\n{page}")
+
     return product_name, "\n".join(lines)
 
 

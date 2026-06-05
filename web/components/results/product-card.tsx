@@ -80,6 +80,9 @@ interface Product {
   sentimentRecords?: SentimentRecord[]
   // Link Intelligence
   matchScore?: number | null
+  // Evidence reliability (scorer fairness + enrichment)
+  dataCoverage?: number | null      // 0–1: fraction of weighted criteria backed by real evidence
+  confidence?: 'high' | 'medium' | 'low' | string | null
 }
 
 interface ProductCardProps {
@@ -286,6 +289,21 @@ export function ProductCard({
                 <Badge className="bg-violet-500/20 text-violet-300 border-violet-500/30">
                   <Sparkles className="w-3 h-3 mr-1" />
                   HIGH SIGNAL
+                </Badge>
+              )}
+              {product.confidence && product.dataCoverage != null && (
+                <Badge
+                  title={`${Math.round(product.dataCoverage * 100)}% of the weighted criteria are backed by real research evidence; the rest are estimated from comparable products.`}
+                  className={
+                    product.confidence === 'high'
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                      : product.confidence === 'medium'
+                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                      : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30'
+                  }
+                >
+                  <ShieldCheck className="w-3 h-3 mr-1" />
+                  {Math.round(product.dataCoverage * 100)}% data-backed
                 </Badge>
               )}
               {product.purchased && (

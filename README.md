@@ -122,7 +122,7 @@ Query: "best wireless earbuds under ₹3000 for gym"
   │        hard-constraint override: a MUST violation is forced to 1–3 regardless of hype
   │        prompt-injection sanitiser strips instruction-override text from research
   │
-  ├─ [11] TARGETED EVIDENCE ENRICHMENT ──────── Serper (parallel) + 1 batched Gemini extract
+  ├─ [11] TARGETED EVIDENCE ENRICHMENT ──────── Serper + Jina full-page read + 1 batched Gemini
   │        top products' highest-weight NO-DATA criteria → fetch the real fact, with source
   │        ≤6 searches + 1 LLM call · cached 7 days · flag-gated · cannot break the pipeline
   │        real run: top-5 went from mostly [NO DATA] → 6/6 sourced coverage
@@ -137,7 +137,8 @@ Query: "best wireless earbuds under ₹3000 for gym"
   │
   └─ [14] RESULTS UI ────────────────────────── live SSE stream
           ranked products · live sliders → instant re-rank (<5ms, ZERO API calls)
-          compare mode · community-signal badges · diagnostics panel · CSV/PDF/share export
+          per-product "% data-backed" confidence badge · compare mode · community badges
+          diagnostics panel · CSV/PDF/share export
 ```
 
 Every stage streams to the browser over **Server-Sent Events** with auto-reconnect, a 30-min
@@ -212,7 +213,7 @@ A pass focused entirely on failure modes — the unglamorous work that makes a d
 - **Frontend resilience.** SSE **auto-reconnect with exponential backoff**, a 30-minute **stall watchdog**, **multi-tab checkpoint isolation**, **localStorage/sessionStorage quota safety with LRU eviction**, O(n) price merges (was O(n²)), and `next/dynamic` lazy-loading of heavy research components.
 - **Parallelized + validated shopping links.** Per-retailer Serper lookups now run concurrently, and a candidate URL is **validated against the product's distinctive tokens** before it's accepted — so you never get a phone *case* when you searched for the phone.
 - **Semantic query cache.** "Best gym earbuds" and "earbuds for working out" are the same intent. A query embedding is matched (cosine ≥ 0.95) against recent searches with the *same category, region, and rubric fingerprint* — a hit reuses the prior result and skips the entire ~85s research run. Safe by construction: a different rubric never produces a hit, so you never see results scored against someone else's priorities.
-- **Targeted evidence enrichment (gets the real fact, not an estimate).** After scoring, the top products' highest-weight criteria that came back with *no* research evidence trigger a focused web search — one Serper query per product (parallel, cached 7 days), then a *single* batched LLM extraction that returns a score only when a snippet actually supports it, with the **source domain cited**. On a real `"best smartphone under 20000"` run this lifted the top 5 from mostly-`[NO DATA]` to **6/6 real data coverage**. Lean by design (≤6 searches + 1 LLM call), flag-gated, and fully wrapped so it can never break the pipeline.
+- **Targeted evidence enrichment (gets the real fact, not an estimate).** After scoring, the top products' highest-weight criteria that came back with *no* research evidence trigger a focused fetch — one Serper query per product (parallel, cached 7 days) **plus a full-page read of the top result via Jina Reader** for the depth 30-word snippets miss (exact specs, tested figures), then a *single* batched LLM extraction that returns a score only when the source actually supports it, with the **source domain cited**. On a real `"best smartphone under 20000"` run this lifted the top 5 from mostly-`[NO DATA]` to **6/6 real data coverage**. Lean (≤6 searches + 1 LLM call), flag-gated, page reads degrade gracefully when a site blocks them, and the whole stage is wrapped so it can never break the pipeline.
 - **Missing-data fairness (the ranking trust fix).** Whatever evidence enrichment still can't find is imputed to the **peer mean** (the average score of products that *do* have evidence on that criterion) rather than a penalising 4/10 — so the *best-documented* product never out-ranks a genuinely-better one, and a thin-data product can't leapfrog on one lucky data point. Every result carries `data_coverage` (0–1) and a `confidence` band so any consumer can see how well-evidenced a ranking is.
 
 ---

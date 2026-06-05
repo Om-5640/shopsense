@@ -27,6 +27,8 @@ export interface Score {
   score: number
   evidence: string
   weighted_contribution: number
+  has_data?: boolean   // false = imputed from comparable products (no direct evidence found)
+  imputed?: boolean
 }
 
 export interface RetailerPrice {
@@ -122,6 +124,9 @@ export interface ScoredProduct {
   max_possible: number
   percentage: number
   explanation?: string
+  // Evidence reliability (from scorer fairness pass + enrichment)
+  data_coverage?: number          // 0–1: fraction of weighted criteria backed by real evidence
+  confidence?: 'high' | 'medium' | 'low' | string
   // Community data (merged from analysis.products)
   mention_count?: number
   distinct_recommenders?: number
