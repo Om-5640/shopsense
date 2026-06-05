@@ -249,7 +249,7 @@ function ResearchPageContent() {
   const [qaHistory, setQaHistory] = useState<QAEntry[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentQ, setCurrentQ] = useState(0)
-  const [totalQ] = useState(14)  // matches backend MAX_QUESTIONS; interview ends earlier via is_done
+  const [totalQ] = useState(20)  // matches backend MAX_QUESTIONS; interview ends earlier via is_done (full criteria coverage)
   const [waiting, setWaiting] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null)
   const [memCtx, setMemCtx] = useState<MemoryContext | null>(null)

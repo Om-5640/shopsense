@@ -31,16 +31,21 @@ Return ONLY a JSON object:
 }
 
 RULES:
-1. Return 6–10 criteria. Only include what actually differentiates products in this EXACT category.
-2. BE PRODUCT-SPECIFIC — use criterion names that only make sense for this product type:
+1. Return 7–12 criteria. Cover every dimension that meaningfully differentiates products in this EXACT
+   category — including the smaller, easy-to-overlook ones, because each criterion becomes an interview
+   question and a scoring axis. Err toward thoroughness over brevity, but never pad with generic filler.
+2. EVERY criterion must be INTERVIEW-ABLE — phraseable as one natural question a normal buyer can answer
+   about their own needs (e.g. "how important is battery life to you?"). If a criterion can't be turned
+   into a simple user-facing question, it doesn't belong here.
+3. BE PRODUCT-SPECIFIC — use criterion names that only make sense for this product type:
    - "electronics/gaming-mouse" → sensor_tracking_accuracy, ergonomics_grip_fit, click_latency, polling_rate, weight_and_balance, switch_durability, wireless_performance, programmable_buttons
    - "electronics/earbuds" → sound_signature, anc_effectiveness, battery_life, call_quality, fit_and_stability, connection_stability, latency_for_video
    - "electronics/laptop" → cpu_performance, display_quality, battery_endurance, thermal_management, port_selection, keyboard_feel, build_durability
    - "skincare/sunscreen" → spf_protection_reliability, finish_texture, white_cast_level, skin_type_compatibility, water_resistance, ingredient_safety
    - "electronics/keyboard" → switch_feel_and_sound, layout_and_size, wireless_and_connectivity, software_and_customisation, typing_comfort, hot_swap_and_modability
-3. FORBIDDEN generic criterion names (apply to every product, tell buyers nothing specific): "build_quality", "value_for_money", "fit_for_purpose", "user_satisfaction", "overall_quality", "durability" alone, "performance" alone. Use SPECIFIC names instead (e.g. "sensor_tracking_accuracy" not "performance").
-4. ALWAYS include "price_to_value" — the one universal criterion that measures whether the product's performance justifies its price tier. This is the only exception to rule 3.
-5. Include 1 "hidden expert criterion" — something casual buyers overlook but that expert reviews always test (e.g. gaming mouse → "debounce_consistency"; earbuds → "codec_support"; mattress → "edge_support"; sunscreen → "photostability").
+4. FORBIDDEN generic criterion names (apply to every product, tell buyers nothing specific): "build_quality", "value_for_money", "fit_for_purpose", "user_satisfaction", "overall_quality", "durability" alone, "performance" alone. Use SPECIFIC names instead (e.g. "sensor_tracking_accuracy" not "performance").
+5. ALWAYS include "price_to_value" — the one universal criterion that measures whether the product's performance justifies its price tier. This is the only exception to rule 4.
+6. Include 1 "hidden expert criterion" — something casual buyers overlook but that expert reviews always test (e.g. gaming mouse → "debounce_consistency"; earbuds → "codec_support"; mattress → "edge_support"; sunscreen → "photostability").
 
 JSON only. No markdown, no commentary."""
 

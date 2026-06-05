@@ -22,10 +22,13 @@ _logger = logging.getLogger(__name__)
 PROFILES_DIR = Path(__file__).parent / "profiles"
 PROFILES_DIR.mkdir(exist_ok=True)
 
-# Dynamic interview: ask until coverage is good or hard cap reached
-MAX_QUESTIONS = 14          # safety cap, never exceed
+# Dynamic interview: ask until EVERY criterion is covered or the hard cap is reached.
+# We personalise on every rubric criterion, so the interview aims for full coverage —
+# leaving a criterion unasked means it falls back to a generic default weight, which is
+# exactly what we want to avoid. The user can still end early via a stop command.
+MAX_QUESTIONS = 20          # safety cap, never exceed (room to cover a full criteria set)
 MIN_QUESTIONS = 3           # always ask at least this many
-COVERAGE_TARGET = 0.90      # stop when 90% of criteria addressed
+COVERAGE_TARGET = 1.0       # stop only when 100% of criteria addressed (or user stops / cap hit)
 
 
 # ---- Budget / brand detection helpers ----
@@ -132,7 +135,14 @@ Return ONLY JSON:
   "is_done": false
 }
 
-Set is_done=true ONLY when ALL of: budget covered, main use case clear, ≥60% criteria addressed, ≥3 questions asked.
+WHEN TO FINISH (is_done):
+- Set is_done=true ONLY when the UNCOVERED CRITERIA list is EMPTY — i.e. every single criterion has been
+  asked about at least once (budget and main use case included), and at least the minimum questions were asked.
+- While ANY criterion is still uncovered, KEEP GOING: set is_done=false and ask about the most important
+  remaining uncovered criterion. Do NOT end early just because you've asked a few questions — we personalise
+  on every criterion, so each one needs the user's input. The only early exits are a hard question cap or the
+  user explicitly asking to stop (handled elsewhere).
+- Even minor criteria matter: ask the small, easy-to-overlook ones too rather than guessing a default.
 NO markdown, JSON only."""
 
 
@@ -436,18 +446,16 @@ def _build_priority_classifier_context(qa_history: list[dict], max_entries: int 
 
 def _dynamic_coverage_target(n_criteria: int) -> float:
     """
-    Scale COVERAGE_TARGET down for large criteria sets.
-    With 5 criteria: 90% target (4-5 questions) is achievable.
-    With 12+ criteria: 90% would need 11+ questions, hitting MAX_QUESTIONS prematurely.
+    Target full coverage — we personalise on every criterion, so the interview should ask
+    about each one rather than defaulting it. Only very large criteria sets relax slightly so
+    the interview doesn't blow past MAX_QUESTIONS; even then it stays near-complete.
     """
-    if n_criteria <= 5:
-        return COVERAGE_TARGET   # 0.90
-    elif n_criteria <= 8:
-        return 0.75
-    elif n_criteria <= 12:
-        return 0.65
+    if n_criteria <= 12:
+        return COVERAGE_TARGET   # 1.0 — cover everything
+    elif n_criteria <= 16:
+        return 0.90
     else:
-        return 0.60
+        return 0.85
 
 
 PROCESS_MESSAGE_SYSTEM = """You are an adaptive interview assistant classifying user messages during a product research interview.

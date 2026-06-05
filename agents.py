@@ -54,8 +54,8 @@ AGENTS = {
         "description": "Generate buying criteria for a product category",
     },
     "interview_questioner": {
-        "provider": "groq",
-        "fallback_chain": ["cerebras", "gemini", "mistral", _MASTER],
+        "provider": "mistral",   # warmer, more conversational tone for the user-facing interview
+        "fallback_chain": ["groq", "cerebras", "gemini", _MASTER],
         "temperature": 0.7,
         "max_tokens": 1024,
         "json_mode": True,

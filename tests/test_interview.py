@@ -103,21 +103,23 @@ def test_skip_semantics_in_summarize_system():
 # R3: Dynamic coverage target
 # ---------------------------------------------------------------------------
 
-def test_dynamic_coverage_target_small_criteria():
-    """With ≤5 criteria, target should be COVERAGE_TARGET (0.90)."""
+def test_dynamic_coverage_target_typical_criteria():
+    """Typical categories (≤12 criteria) target FULL coverage — we personalise on every criterion."""
     from interview import COVERAGE_TARGET
-    for n in range(1, 6):
+    assert COVERAGE_TARGET == 1.0
+    for n in range(1, 13):
         target = _dynamic_coverage_target(n)
         assert target == COVERAGE_TARGET, (
-            f"Expected {COVERAGE_TARGET} for {n} criteria, got {target}"
+            f"Expected full coverage ({COVERAGE_TARGET}) for {n} criteria, got {target}"
         )
 
 
 def test_dynamic_coverage_target_large_criteria():
-    """With 13+ criteria, target should drop to 0.60 to prevent impossible interviews."""
-    for n in range(13, 16):
+    """Very large criteria sets relax slightly so the interview doesn't blow past the cap,
+    but still stay near-complete (>= 0.85)."""
+    for n in range(13, 20):
         target = _dynamic_coverage_target(n)
-        assert target == 0.60, f"Expected 0.60 for {n} criteria, got {target}"
+        assert target >= 0.85, f"Expected near-full coverage for {n} criteria, got {target}"
 
 
 def test_dynamic_coverage_target_monotone_decreasing():
