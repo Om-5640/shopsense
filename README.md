@@ -59,49 +59,90 @@ The hard parts aren't "call an LLM." They are:
 
 ## End-to-end pipeline
 
+Every numbered stage is a real, separable step with its own failure handling. The annotations
+under each one are the *smart moves* — the edge cases and optimizations that make the output
+trustworthy rather than just plausible.
+
 ```
 Query: "best wireless earbuds under ₹3000 for gym"
   │
-  ├─ [1]  CATEGORY DETECTION ─────────────── Groq Llama 70B + rule layer + LRU cache
-  │        earphones · wireless · budget-india   (disambiguation when ambiguous)
+  ├─ [0]  SEMANTIC CACHE CHECK ──────────────── embeddings + cosine ≥ 0.95
+  │        reuse a recent near-identical search (same category/region/rubric) → skip everything
+  │        miss → continue. exact md5 cache also checked (query|category|weights|Q&A)
   │
-  ├─ [2]  CRITERIA GENERATION ────────────── Gemini (cached per category)
-  │        6–10 category-specific buying criteria
+  ├─ [1]  CATEGORY DETECTION ────────────────── Groq Llama 70B + rule layer + LRU cache
+  │        "earbuds" → electronics/earbuds · region from currency (₹ → india)
+  │        ambiguity guard: "watch" → disambiguation prompt (analog/smart/fitness)
+  │        path-traversal-safe slug sanitisation before any filesystem use
   │
-  ├─ [3]  ADAPTIVE INTERVIEW ─────────────── Mistral Small
-  │        asks about every rubric criterion (full coverage) · memory injection
-  │        → typed UserIntent {hard_constraints, budget, preferences, exclusions}
+  ├─ [2]  CRITERIA GENERATION ───────────────── Gemini (cached per category)
+  │        7–12 product-SPECIFIC criteria (sound_signature, anc_effectiveness, fit_stability…)
+  │        forbids generic names ("build_quality"); forces price_to_value + 1 hidden-expert axis
+  │        every criterion must be interview-able · retry if <6 returned · hard fallback set
   │
-  ├─ [4]  RUBRIC GENERATION ──────────────── Gemini + gap-fill
-  │        weight 0–10 per criterion · normalized to a 0–1 scale
+  ├─ [3]  ADAPTIVE INTERVIEW ────────────────── Mistral Small (warm, conversational)
+  │        budget first → use case → EVERY remaining criterion (full coverage, even minor ones)
+  │        memory injection: skips questions answered in past searches
+  │        message classifier: ANSWER / QUESTION / MIXED / SKIP / COMMAND / UNCLEAR
+  │        → typed UserIntent {hard_constraints, budget, preferences, exclusions, uncertainties}
   │
-  ├─ [5]  PARALLEL RESEARCH ──────────────── ThreadPoolExecutor
-  │        ├─ REDDIT  15 threads · multi-variant search · Jaccard dedup
-  │        └─ REVIEWS 6–8 sites · Gemini grounding · Jina fallback · authority tiers
+  ├─ [4]  RUBRIC GENERATION ─────────────────── Gemini + gap-fill
+  │        weight 0–10 per criterion, tied to what the user actually said
+  │        hard constraints → 9–10 · exclusions → 1–2 · normalized to a 0–1 scale
+  │        gap-fill: infers weights for any criterion still uncovered from research signal
+  │        manual-weight restore: user's slider edits survive regeneration
   │
-  ├─ [6]  PARALLEL SUMMARIZATION ─────────── Provider pool (4× throughput)
-  │        1 sub-agent per thread · 150K raw chars → 30K structured (80% compression)
+  ├─ [5]  PARALLEL RESEARCH ─────────────────── ThreadPoolExecutor
+  │        ├─ REDDIT  ~15 threads · 5 query variants (region/budget/use-case/“vs”)
+  │        │          comment-tree flatten (3 levels) · Jaccard dedup (>60% title overlap)
+  │        └─ REVIEWS 6–8 sites · Gemini grounding (live Google) + YouTube transcripts
+  │                   Jina Reader fallback for JS/403 pages · numeric authority scoring
+  │                   time-bounded domain blacklist (status-code-aware, auto-rehabilitating)
   │
-  ├─ [7]  MENTION COUNTING ───────────────── Pure Python, NO LLM
-  │        alias discovery → Aho-Corasick automaton → span dedup → distinct recommenders
+  ├─ [6]  PARALLEL SUMMARIZATION ────────────── Provider pool (Groq/Gemini/Mistral, 4× throughput)
+  │        1 focused sub-agent per thread · 150K raw chars → 30K structured (80% compression)
+  │        adaptive throttle on 429 · per-thread failure isolated (1 bad thread ≠ failed run)
   │
-  ├─ [8]  CROSS-SUBREDDIT VALIDATION ─────── Gemini
-  │        consistent / split / single_source  per product
+  ├─ [7]  MENTION COUNTING ──────────────────── Pure Python, NO LLM (deterministic)
+  │        alias discovery (XM5 = Sony WF-1000XM5) → Aho-Corasick automaton, single O(n) pass
+  │        span dedup: "Buds Air 7 Pro" suppresses nearby "Buds Air 7"
+  │        distinct recommenders counted per comment (1 user × 10 posts ≠ 10 votes)
   │
-  ├─ [9]  MAIN ANALYSIS ──────────────────── Gemini 2.5 Flash (1M context)
-  │        summaries + authority-weighted reviews → ranked product list
+  ├─ [8]  CROSS-SUBREDDIT VALIDATION ────────── Gemini
+  │        compares sentiment across communities → consistent / split / single_source
+  │        only fires when 2+ subreddits AND 3+ mentions (no LLM on low-signal data)
   │
-  ├─ [10] SCORING (hybrid) ───────────────── Groq, batched
-  │        top-10 full LLM (0–10/criterion + evidence) · tail heuristic · constraint override
+  ├─ [9]  MAIN ANALYSIS ─────────────────────── Gemini 2.5 Flash (1M context)
+  │        aggregates structured summaries + authority-weighted reviews → ranked product list
+  │        separates materials (category types) from buyable products · budget enforcement
+  │        output normalised/repaired (markdown-stripped, deduped, schema-coerced)
   │
-  ├─ [11] ENRICHMENT ─────────────────────── parallel
-  │        real-time prices · pgvector memory lookup · "why this fits you"
+  ├─ [10] SCORING (hybrid) ──────────────────── Groq, batched 3/call
+  │        top candidates full LLM (0–10 per criterion + evidence quote) · tail heuristic
+  │        hard-constraint override: a MUST violation is forced to 1–3 regardless of hype
+  │        prompt-injection sanitiser strips instruction-override text from research
   │
-  └─ [12] RESULTS UI ─────────────────────── live SSE stream
-          live sliders → instant re-rank (<5ms, zero API calls) · compare · diagnostics
+  ├─ [11] TARGETED EVIDENCE ENRICHMENT ──────── Serper (parallel) + 1 batched Gemini extract
+  │        top products' highest-weight NO-DATA criteria → fetch the real fact, with source
+  │        ≤6 searches + 1 LLM call · cached 7 days · flag-gated · cannot break the pipeline
+  │        real run: top-5 went from mostly [NO DATA] → 6/6 sourced coverage
+  │
+  ├─ [12] MISSING-DATA FAIRNESS ─────────────── Pure Python (peer-mean imputation)
+  │        whatever's still unfindable → peer mean, not a penalising 4/10
+  │        so "best-documented" never beats "actually best" · attaches data_coverage + confidence
+  │
+  ├─ [13] FINAL ENRICHMENT ──────────────────── parallel
+  │        real-time prices (Amazon/Flipkart via Serper) · validated buy-links (token-matched)
+  │        pgvector memory lookup (k=5, cosine 0.7) · "why this fits you" per product
+  │
+  └─ [14] RESULTS UI ────────────────────────── live SSE stream
+          ranked products · live sliders → instant re-rank (<5ms, ZERO API calls)
+          compare mode · community-signal badges · diagnostics panel · CSV/PDF/share export
 ```
 
-Every stage streams to the browser over **Server-Sent Events** with auto-reconnect, a stall watchdog, and a cache-hit fast path.
+Every stage streams to the browser over **Server-Sent Events** with auto-reconnect, a 30-min
+stall watchdog, and a cache-hit fast path. Stages 7, 12 and the live re-rank run **without any
+LLM call** — deterministic by design, so the parts that decide the ranking are auditable.
 
 ---
 
@@ -337,17 +378,18 @@ shopsense/
 ├── llm_clients.py           5-provider facade, circuit breaker, in-flight dedup
 ├── interview.py             Adaptive interview, coverage termination, UserIntent
 ├── rubric.py · criteria.py  Personalized weighted scorecard + gap-fill
-├── scorer.py                3-mode scoring: llm / hybrid / fast
+├── scorer.py                3-mode scoring + peer-mean missing-data fairness + confidence
+├── evidence_enricher.py     targeted fetch: fills top-product NO-DATA gaps with sourced facts
 ├── thread_summarizer.py     Parallel sub-agent summarization
 ├── mention_counter.py       Aho-Corasick automaton + span dedup
 ├── alias_resolver.py        Per-thread alias discovery
 ├── cross_validate.py        Cross-subreddit bias detection
 ├── memory.py · embeddings.py  pgvector memory + provider-aware multi-fallback embeddings
-├── reddit_fetch.py · review_fetch.py   multi-variant research + grounding
+├── reddit_fetch.py · review_fetch.py   multi-variant research + grounding + YouTube transcripts
 ├── source_filter.py         numeric authority scores, category-aware, source types
 ├── domain_blacklist.py      time-bounded, status-code-aware auto-blacklist
 ├── shopping_links.py · price_fetcher.py   validated links + real-time prices
-└── tests/                   372 tests: unit · integration · e2e · golden-file · LLM-shape
+└── tests/                   392 tests: unit · integration · e2e · golden-file · LLM-shape
 ```
 
 ---
