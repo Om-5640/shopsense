@@ -368,6 +368,85 @@ def _compute_percentage(weighted_total: float, max_possible: float) -> float:
     return float(pct.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
+# ── Missing-data fairness ────────────────────────────────────────────────────
+
+# Evidence strings that mean "we found no real data for this criterion".
+_NO_DATA_MARKERS = (
+    "[no data]", "no data", "insufficient data", "no direct data", "no evidence",
+    "llm unavailable", "not mentioned", "unclear from research", "treat with caution",
+    "default score",
+)
+
+
+def _is_no_data(evidence: str) -> bool:
+    """True when a criterion's evidence indicates no real research backing."""
+    e = (evidence or "").strip().lower()
+    return (not e) or any(m in e for m in _NO_DATA_MARKERS)
+
+
+def _finalize_scoring(scored: list[dict], rubric: dict) -> list[dict]:
+    """
+    RELIABILITY FIX — the most important step for trustworthy ranking.
+
+    Problem it solves: previously a criterion with no research evidence was scored 4/10 while
+    still counting 10×weight toward max_possible. That capped the criterion at 40%, so the
+    product that simply had MORE data found about it out-ranked a genuinely-better product we
+    happened to find less data on. The "most documented" won, not the "best".
+
+    Fix: for every no-data criterion, impute the PEER MEAN — the average score of the products
+    that DO have real evidence on that same criterion (true neutral 5.0 only if no peer has data
+    either). This is statistically sound ("absent specific evidence, assume this product is
+    typical for its class on this dimension"):
+      - it never penalises a product for thin data, AND
+      - it never lets a thin-data product leapfrog by riding one lucky data point, because its
+        unknown criteria are pulled to the class average rather than excluded.
+
+    Also attaches `data_coverage` (0–1, fraction of weighted criteria with real evidence) and a
+    `confidence` band so any consumer can see how well-evidenced each ranking is. Returns the
+    list sorted by the recomputed weighted_total.
+    """
+    if not scored:
+        return scored
+
+    # 1. Peer mean per criterion, from products that have real evidence on it.
+    real_by_crit: dict[str, list[float]] = {}
+    for p in scored:
+        for s in p.get("scores", []):
+            if s.get("has_data"):
+                real_by_crit.setdefault(s["criterion"], []).append(float(s["score"]))
+    peer_mean = {c: sum(v) / len(v) for c, v in real_by_crit.items() if v}
+
+    total_weight = sum(float(c.get("weight", 0)) for c in rubric.get("weighted_criteria", [])) or 1.0
+
+    # 2. Recompute each product with imputed no-data criteria.
+    for p in scored:
+        wt = 0.0
+        mp = 0.0
+        covered_w = 0.0
+        for s in p.get("scores", []):
+            w = float(s.get("weight", 0))
+            mp += 10 * w
+            if s.get("has_data"):
+                eff = float(s["score"])
+                covered_w += w
+            else:
+                eff = peer_mean.get(s["criterion"], 5.0)
+                s["score"] = round(eff, 1)
+                s["imputed"] = True
+                if _is_no_data(s.get("evidence", "")):
+                    s["evidence"] = "[NO DATA] — estimated from comparable products"
+            wt += eff * w
+            s["weighted_contribution"] = round(eff * w, 1)
+        cov = covered_w / total_weight
+        p["weighted_total"] = round(wt, 1)
+        p["max_possible"] = round(mp, 1)
+        p["percentage"] = _compute_percentage(wt, mp)
+        p["data_coverage"] = round(cov, 2)
+        p["confidence"] = "high" if cov >= 0.7 else "medium" if cov >= 0.4 else "low"
+
+    return sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
+
+
 def _score_batch(
     products: list[dict],
     rubric: dict,
@@ -492,7 +571,13 @@ _COMMUNITY_FIELDS = (
 
 
 def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
-    """Build final scored product dict from raw LLM scores. Shared by batch and single."""
+    """Build final scored product dict from raw LLM scores. Shared by batch and single.
+
+    Each criterion is tagged has_data=False when no real evidence backs it (missing from the
+    LLM output, or evidence is a no-data marker). The 4.0 here is only a placeholder — the
+    fairness pass in _finalize_scoring() replaces no-data criteria with the peer mean so a
+    product is never out-ranked merely because we found less data on it (see RELIABILITY fix).
+    """
     by_name = {s.get("criterion"): s for s in raw_scores if isinstance(s, dict)}
     final_scores = []
     weighted_total = 0.0
@@ -500,12 +585,14 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
 
     for c in rubric["weighted_criteria"]:
         s = by_name.get(c["name"])
-        if s and isinstance(s.get("score"), (int, float)):
+        if s and isinstance(s.get("score"), (int, float)) and not _is_no_data(s.get("evidence", "")):
             score = max(0, min(10, float(s["score"])))
             evidence = s.get("evidence", "")
+            has_data = True
         else:
-            score = 4.0
-            evidence = "insufficient data — treat with caution"
+            score = 4.0  # placeholder — imputed to peer mean in _finalize_scoring()
+            evidence = "[NO DATA]"
+            has_data = False
 
         weight = c["weight"]
         weighted_total += score * weight
@@ -517,6 +604,7 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
             "weight": weight,
             "score": score,
             "evidence": evidence,
+            "has_data": has_data,
             "weighted_contribution": round(score * weight, 1),
         })
 
@@ -559,7 +647,7 @@ def score_all_products(
         if progress_callback:
             for i, p in enumerate(products, 1):
                 progress_callback(i, n, p.get("name", "?"))
-        return sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
+        return _finalize_scoring(scored, rubric)
 
     # ---- hybrid mode: LLM for actual top 10, fast for rest ----
     if SCORING_MODE == "hybrid":
@@ -582,11 +670,12 @@ def score_all_products(
         if progress_callback:
             for i, p in enumerate(fast_keep, len(llm_products) + 1):
                 progress_callback(i, n, p.get("name", "?"))
-        return sorted(llm_scored + fast_keep, key=lambda x: x["weighted_total"], reverse=True)
+        return _finalize_scoring(llm_scored + fast_keep, rubric)
 
     # ---- llm mode (default): full parallel batch LLM scoring ----
     print(f"[scorer] LLM mode: parallel batch scoring {n} products, batch={PRODUCTS_PER_BATCH}, workers={MAX_SCORING_WORKERS}")
-    return _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n, user_intent, cancelled_check)
+    scored = _run_parallel_batch_scoring(products, rubric, full_research_text, progress_callback, n, user_intent, cancelled_check)
+    return _finalize_scoring(scored, rubric)
 
 
 def _run_parallel_batch_scoring(
