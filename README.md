@@ -2,7 +2,7 @@
 
 # ShopSense
 
-### A multi-agent AI research pipeline that does 3 hours of human product research in ~85 seconds — and grades its own intelligence on a 157-scenario benchmark.
+### A multi-agent AI research pipeline that does 3 hours of human product research in ~85 seconds — and continuously scores its intelligence through a self-grading 9-metric Intelligence Index backed by 200+ benchmark cases and real-pipeline fixtures.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
