@@ -20,7 +20,7 @@
 
 > Not a chatbot. Not a listing aggregator. ShopSense is a **research pipeline** that reads 15 Reddit threads and a handful of expert reviews, counts what real people actually recommend (with a deterministic automaton, not an LLM guess), checks whether communities *disagree*, scores everything against a rubric it built **for you** in an interview, and streams the whole thing to your browser live — then lets you re-weight your priorities and watch the ranking re-sort in under 5 milliseconds with zero additional API calls.
 
-It is also one of the few projects of its kind that **measures its own decision quality** — not just with synthetic checks, but against **recorded real model output**. A 157-scenario, 4-category benchmark plus replayed real-pipeline fixtures scores the system **97.3 / 100** and gates every commit in CI.
+It is also one of the few projects of its kind that **measures its own decision quality** — not just with synthetic checks, but against **recorded real model output**. 200+ benchmark cases feeding a self-grading 9-metric Intelligence Index. A comprehensive benchmark suite plus replayed real-pipeline fixtures scores the system **97.3 / 100** and gates every commit in CI.
 
 ---
 
