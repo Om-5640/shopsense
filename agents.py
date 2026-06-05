@@ -160,6 +160,14 @@ AGENTS = {
         "json_mode": True,
         "description": "Pre-extract per-criterion evidence counts and quotes from filtered research (10-30x token reduction to scorer)",
     },
+    "evidence_enricher": {
+        "provider": "gemini",   # accuracy + larger context for batched snippet extraction
+        "fallback_chain": ["groq", "cerebras", "mistral", _MASTER],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "json_mode": True,
+        "description": "Extract real per-criterion facts from targeted web snippets to fill high-impact data gaps",
+    },
 }
 
 

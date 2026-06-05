@@ -1158,6 +1158,24 @@ def _execute_pipeline(
         "elapsed_s": _stage_timings["scoring"],
     })
 
+    # ---- Stage 5.4: Targeted evidence enrichment (fill high-impact data gaps) ----
+    # For the top products' highest-weight criteria that came back with no research evidence,
+    # fetch the real fact via a targeted web search instead of leaving it peer-mean imputed.
+    # Fully wrapped + flag-gated — any failure leaves `scored` exactly as it was.
+    try:
+        from evidence_enricher import enrich_scores, ENABLE_TARGETED_FETCH
+        if ENABLE_TARGETED_FETCH:
+            session.emit("stage_start", {"stage": "enrichment", "label": "Filling data gaps"})
+            _t_enrich = time.time()
+            scored = enrich_scores(
+                scored, rubric, region,
+                cancelled_check=lambda: session._cancelled,
+            )
+            _stage_timings["enrichment"] = round(time.time() - _t_enrich, 1)
+            session.emit("stage_done", {"stage": "enrichment", "elapsed_s": _stage_timings["enrichment"]})
+    except Exception as _enrich_err:
+        session.emit_log(f"[enrichment] stage non-fatal: {_enrich_err}")
+
     # ---- Stage 5.5: Write personalized explanations ----
     # Top 5: rich LLM explanations run in parallel. Remaining: deterministic score-based fallback.
     session.emit("stage_start", {"stage": "explanations", "label": "Writing Explanations"})

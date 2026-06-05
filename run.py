@@ -159,6 +159,15 @@ def main():
     scored = score_all_products(products, rubric, research_text)
     print(f"[6/6] Scoring complete\n")
 
+    # ---- Step 6.5: targeted evidence enrichment (fill high-impact data gaps) ----
+    try:
+        from evidence_enricher import enrich_scores, ENABLE_TARGETED_FETCH
+        if ENABLE_TARGETED_FETCH:
+            print("[6/6] Filling high-impact data gaps via targeted search...")
+            scored = enrich_scores(scored, rubric, region)
+    except Exception as _e:
+        print(f"[enrich] non-fatal: {_e}")
+
     # Show overall summary first — coerce dict→string defensively
     print(f"{'─'*72}")
     print("COMMUNITY CONSENSUS")
