@@ -68,8 +68,8 @@ Query: "best wireless earbuds under ₹3000 for gym"
   ├─ [2]  CRITERIA GENERATION ────────────── Gemini (cached per category)
   │        6–10 category-specific buying criteria
   │
-  ├─ [3]  ADAPTIVE INTERVIEW ─────────────── Groq Llama 70B
-  │        4–8 questions · coverage-aware termination · memory injection
+  ├─ [3]  ADAPTIVE INTERVIEW ─────────────── Mistral Small
+  │        asks about every rubric criterion (full coverage) · memory injection
   │        → typed UserIntent {hard_constraints, budget, preferences, exclusions}
   │
   ├─ [4]  RUBRIC GENERATION ──────────────── Gemini + gap-fill
@@ -184,7 +184,7 @@ Each agent is tuned to its task — its own provider, temperature, and prompt st
 |---|---|---|---|
 | `category_detector` | Groq Llama 70B | 0.1 | Query classification + region detection |
 | `criteria_generator` | Gemini 2.5 Flash | 0.3 | 6–10 buying criteria per category |
-| `interview_questioner` | Groq Llama 70B | 0.7 | Conversational, coverage-aware interview questions |
+| `interview_questioner` | Mistral Small | 0.7 | Conversational questions covering every rubric criterion |
 | `interview_classifier` | Groq Llama 70B | 0.1 | Classify message: ANSWER/QUESTION/MIXED/SKIP/COMMAND/UNCLEAR |
 | `preference_summarizer` | Groq Llama 70B | 0.3 | Extract structured UserIntent from Q&A |
 | `rubric_generator` | Gemini 2.5 Flash | 0.2 | Weighted scorecard from criteria + profile |
