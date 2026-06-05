@@ -15,7 +15,8 @@ import re
 import time
 import requests
 from urllib.parse import urlparse
-from bs4 import BeautifulSoup
+# bs4 is imported lazily inside _extract_content() so this module stays importable
+# (e.g. for _fetch_via_jina, which needs no HTML parsing) even when bs4 is absent.
 from dotenv import load_dotenv
 
 import cache
@@ -383,6 +384,7 @@ def fetch_review_page(url: str) -> dict | None:
 
 
 def _extract_content(html: str, url: str) -> dict | None:
+    from bs4 import BeautifulSoup  # lazy: only needed when actually parsing HTML
     soup = BeautifulSoup(html, "html.parser")
 
     # Phase 2: extract publish date from HTML metadata BEFORE stripping tags

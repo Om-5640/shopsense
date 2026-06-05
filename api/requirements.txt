@@ -4,6 +4,7 @@ sse-starlette>=2.1
 pydantic>=2.0
 python-dotenv>=1.0
 requests>=2.32
+beautifulsoup4>=4.12     # review-page HTML scraping (review_fetch._extract_content)
 slowapi>=0.1.9
 
 # v7: Deep Reddit via PRAW
