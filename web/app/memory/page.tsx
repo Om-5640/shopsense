@@ -42,6 +42,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
 import { listMemorySignals, deleteMemorySignal, listProductMemories, wipeAllMemory } from '@/lib/api'
 import type { UserSignal, ProductMemory } from '@/lib/types'
+import { useSession, signIn } from 'next-auth/react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ function groupByCategory<T extends { category?: string }>(items: T[]): Map<strin
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function MemoryPage() {
+  const { status: authStatus } = useSession()
   const [commandOpen, setCommandOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [preferences, setPreferences] = useState<UserSignal[]>([])
@@ -148,6 +150,32 @@ export default function MemoryPage() {
     .filter((s) => (s.category === 'any' || !s.category) && s.strength === 'strong')
     .slice(0, 4)
     .map((s) => s.text)
+
+  // Prompt unauthenticated users to sign in (middleware also redirects, but
+  // this gives a graceful in-page fallback for any edge cases).
+  if (authStatus === 'unauthenticated') {
+    return (
+      <div className="min-h-screen flex flex-col bg-[#08080A]">
+        <AnimatedBackground />
+        <Header onOpenCommandPalette={() => setCommandOpen(true)} />
+        <main className="flex-1 relative z-10 flex items-center justify-center px-4">
+          <div className="bg-[#0F0F12] border border-white/[0.08] rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+            <Brain className="w-10 h-10 text-violet-400 mx-auto mb-4" />
+            <h2 className="text-lg font-semibold text-[#FAFAFA] mb-2">Sign in to view your memory</h2>
+            <p className="text-sm text-[#71717A] mb-6">
+              Memory is saved per account so you can access it on any device.
+            </p>
+            <Button
+              onClick={() => signIn('google', { callbackUrl: '/memory' })}
+              className="w-full bg-white hover:bg-white/90 text-[#0F0F12] font-medium h-10 rounded-lg"
+            >
+              Sign in with Google
+            </Button>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#08080A]">

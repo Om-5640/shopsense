@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios'
+import { getSession } from 'next-auth/react'
 import type {
   Rubric,
   SearchResult,
@@ -41,11 +42,37 @@ export function getOrCreateSessionId(): string {
 
 const client = axios.create({ baseURL: BASE })
 
-// Attach session ID on every request (runs client-side only)
-client.interceptors.request.use((config) => {
+// Attach session ID and optional auth token on every request (client-side only)
+client.interceptors.request.use(async (config) => {
   config.headers['X-Session-ID'] = getOrCreateSessionId()
+  if (typeof window !== 'undefined') {
+    const session = await getSession()
+    if (session?.accessToken) {
+      config.headers['Authorization'] = `Bearer ${session.accessToken}`
+    }
+  }
   return config
 })
+
+// Handle rate limiting and expired sessions globally
+client.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (typeof window !== 'undefined') {
+      const status = err?.response?.status
+      if (status === 429) {
+        import('sonner').then(({ toast }) => {
+          toast.error('Too many requests — please wait a moment and try again.')
+        })
+      } else if (status === 401) {
+        // Redirect to login; preserve current path for post-auth return
+        const next = encodeURIComponent(window.location.pathname + window.location.search)
+        window.location.href = `/login?next=${next}`
+      }
+    }
+    return Promise.reject(err)
+  }
+)
 
 // ── Detection ────────────────────────────────────────────────────────────────
 

@@ -44,6 +44,19 @@ _logger = logging.getLogger(__name__)
 
 import cache
 
+# DB-tier cache helpers — imported lazily so embeddings.py works even without api/ on sys.path
+try:
+    from api.db import get_cached_embedding as _db_get_embedding
+    from api.db import set_cached_embedding as _db_set_embedding
+    _HAS_DB_CACHE = True
+except ImportError:
+    try:
+        from db import get_cached_embedding as _db_get_embedding
+        from db import set_cached_embedding as _db_set_embedding
+        _HAS_DB_CACHE = True
+    except ImportError:
+        _HAS_DB_CACHE = False
+
 load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -254,10 +267,20 @@ def embed(text: str) -> Optional[list[float]]:
 
     ck = _key(text)
 
-    # Fast path — cache hit (reads provider metadata into registry)
+    # Tier 1: in-memory file cache (reads provider metadata into registry)
     cached_vec, _ = _read_cache(ck)
     if cached_vec is not None:
         return cached_vec
+
+    # Tier 2: DB cache (survives server restarts)
+    if _HAS_DB_CACHE:
+        try:
+            db_vec = _db_get_embedding(ck)
+            if db_vec is not None:
+                _write_cache(ck, db_vec, "db_hit")
+                return db_vec
+        except Exception as exc:
+            _logger.debug("[embeddings] DB cache read failed (non-fatal): %s", exc)
 
     # Lazy cleanup of stale in-flight results (Bug 2 fix — no Timer threads)
     _cleanup_inflight_stale()
@@ -293,6 +316,12 @@ def embed(text: str) -> Optional[list[float]]:
             if vec is not None:
                 provider = provider_name
                 _write_cache(ck, vec, provider)
+                # Persist to DB tier so the vector survives restarts
+                if _HAS_DB_CACHE:
+                    try:
+                        _db_set_embedding(ck, text, provider, vec)
+                    except Exception as exc:
+                        _logger.debug("[embeddings] DB cache write failed (non-fatal): %s", exc)
                 break
 
         if vec is None:

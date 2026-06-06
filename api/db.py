@@ -205,6 +205,19 @@ CREATE TABLE IF NOT EXISTS _SchemaVersion (
     appliedAt TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS EmbeddingCache (
+    hash        TEXT PRIMARY KEY,
+    text        TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    embedding   TEXT NOT NULL,
+    dims        INTEGER NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at  TIMESTAMP DEFAULT (datetime('now', '+1 year'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ec_expires ON EmbeddingCache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_ec_created ON EmbeddingCache(created_at);
+
 CREATE INDEX IF NOT EXISTS productmemory_canonical_idx
 ON ProductMemory (userId, canonicalName);
 
@@ -287,6 +300,19 @@ CREATE TABLE IF NOT EXISTS "ShareToken" (
 );
 
 CREATE INDEX IF NOT EXISTS sharetoken_search_idx ON "ShareToken" (search_id);
+
+CREATE TABLE IF NOT EXISTS "EmbeddingCache" (
+    hash        TEXT PRIMARY KEY,
+    text        TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    embedding   TEXT NOT NULL,
+    dims        INTEGER NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '1 year')
+);
+
+CREATE INDEX IF NOT EXISTS idx_ec_expires ON "EmbeddingCache"(expires_at);
+CREATE INDEX IF NOT EXISTS idx_ec_created ON "EmbeddingCache"(created_at);
 """
 
 
@@ -1069,3 +1095,138 @@ def resolve_share_token(token: str) -> Optional[str]:
         except Exception:
             pass
     return row.get("search_id")
+
+
+# ---------------------------------------------------------------------------
+# EmbeddingCache CRUD
+# ---------------------------------------------------------------------------
+
+def get_cached_embedding(hash_key: str) -> Optional[list]:
+    """Return cached embedding vector if present and not expired, else None."""
+    if _use_postgres():
+        with _pg_transaction() as cur:
+            cur.execute(
+                'SELECT embedding FROM "EmbeddingCache" WHERE hash = %s AND expires_at > now()',
+                (hash_key,),
+            )
+            row = _pg_fetchone_as_dict(cur)
+    else:
+        conn = _sqlite_connect()
+        row = conn.execute(
+            "SELECT embedding FROM EmbeddingCache WHERE hash = ? AND expires_at > datetime('now')",
+            (hash_key,),
+        ).fetchone()
+        row = _sqlite_row_to_dict(row) if row else None
+
+    if not row:
+        return None
+    raw = row.get("embedding")
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+    return raw
+
+
+def set_cached_embedding(hash_key: str, text: str, provider: str, vec: list) -> None:
+    """Persist an embedding vector with TTL. Silently skips on error (non-critical cache)."""
+    vec_json = json.dumps(vec)
+    dims = len(vec)
+    safe_text = text[:500]
+
+    try:
+        if _use_postgres():
+            with _pg_transaction() as cur:
+                cur.execute(
+                    """INSERT INTO "EmbeddingCache" (hash, text, provider, embedding, dims)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (hash) DO NOTHING""",
+                    (hash_key, safe_text, provider, vec_json, dims),
+                )
+        else:
+            conn = _sqlite_connect()
+            conn.execute(
+                "INSERT OR IGNORE INTO EmbeddingCache (hash, text, provider, embedding, dims) VALUES (?,?,?,?,?)",
+                (hash_key, safe_text, provider, vec_json, dims),
+            )
+            conn.commit()
+    except Exception as exc:
+        _logger.debug("[db] EmbeddingCache write failed (non-fatal): %s", exc)
+
+    _maybe_evict_embedding_cache()
+
+
+def _maybe_evict_embedding_cache() -> None:
+    """LRU eviction: if table exceeds 1M rows, delete oldest 10% to cap growth."""
+    try:
+        if _use_postgres():
+            with _pg_transaction() as cur:
+                cur.execute('SELECT COUNT(*) FROM "EmbeddingCache"')
+                row = cur.fetchone()
+                cnt = row[0] if row else 0
+                if cnt > 1_000_000:
+                    cur.execute(
+                        """DELETE FROM "EmbeddingCache" WHERE hash IN (
+                               SELECT hash FROM "EmbeddingCache" ORDER BY created_at ASC LIMIT 100000
+                           )"""
+                    )
+        else:
+            conn = _sqlite_connect()
+            row = conn.execute("SELECT COUNT(*) FROM EmbeddingCache").fetchone()
+            cnt = row[0] if row else 0
+            if cnt > 1_000_000:
+                conn.execute(
+                    "DELETE FROM EmbeddingCache WHERE hash IN "
+                    "(SELECT hash FROM EmbeddingCache ORDER BY created_at ASC LIMIT 100000)"
+                )
+                conn.commit()
+    except Exception as exc:
+        _logger.debug("[db] EmbeddingCache eviction failed (non-fatal): %s", exc)
+
+
+def purge_expired_embeddings() -> int:
+    """Delete expired embedding cache rows. Returns count deleted."""
+    try:
+        if _use_postgres():
+            with _pg_transaction() as cur:
+                cur.execute('DELETE FROM "EmbeddingCache" WHERE expires_at < now()')
+                return cur.rowcount or 0
+        else:
+            conn = _sqlite_connect()
+            cur = conn.execute("DELETE FROM EmbeddingCache WHERE expires_at < datetime('now')")
+            conn.commit()
+            return cur.rowcount or 0
+    except Exception as exc:
+        _logger.warning("[db] EmbeddingCache purge failed: %s", exc)
+        return 0
+
+
+def reassign_user_data(from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """
+    Migrate all data from one user ID to another (used by adopt-legacy flow).
+    Returns count of rows moved per table.
+    """
+    tables = ["UserSignal", "ProductMemory"]
+    counts: dict[str, int] = {}
+    try:
+        if _use_postgres():
+            with _pg_transaction() as cur:
+                for table in tables:
+                    cur.execute(
+                        f'UPDATE "{table}" SET user_id = %s WHERE user_id = %s',
+                        (to_user_id, from_user_id),
+                    )
+                    counts[table] = cur.rowcount or 0
+        else:
+            conn = _sqlite_connect()
+            for table in tables:
+                cur = conn.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id = ?",
+                    (to_user_id, from_user_id),
+                )
+                counts[table] = cur.rowcount or 0
+            conn.commit()
+    except Exception as exc:
+        _logger.warning("[db] reassign_user_data failed: %s", exc)
+    return counts

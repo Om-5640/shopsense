@@ -2,9 +2,10 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Command, Sun, Moon, Activity } from 'lucide-react'
+import { Command, Sun, Moon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { UserMenu } from '@/components/auth/user-menu'
 import { useState, useEffect } from 'react'
 
 const navItems = [
@@ -89,6 +90,9 @@ export function Header({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
             </div>
             <span className="hidden lg:inline">All systems operational</span>
           </div>
+
+          {/* User account */}
+          <UserMenu />
         </div>
       </div>
     </header>

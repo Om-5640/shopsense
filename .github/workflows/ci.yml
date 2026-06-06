@@ -43,6 +43,22 @@ jobs:
           pip install ruff --quiet
           ruff check . --select E,F,W --ignore E501 || true
 
+      - name: Install alembic
+        run: pip install alembic>=1.13
+
+      - name: Validate migrations
+        run: |
+          cd api
+          alembic upgrade head
+          python migrate_legacy_users.py
+          alembic downgrade -1
+          alembic upgrade head
+        env:
+          GEMINI_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          SERPER_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
+
       - name: Check API server imports
         run: |
           cd api

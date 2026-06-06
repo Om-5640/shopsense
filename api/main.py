@@ -43,11 +43,17 @@ from typing import AsyncGenerator, Any, Optional
 from contextlib import asynccontextmanager
 import logging as _logging
 
+try:
+    import jwt as _jwt
+    _HAS_PYJWT = True
+except ImportError:
+    _HAS_PYJWT = False
+
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -70,6 +76,7 @@ _logger = _logging.getLogger(__name__)
 from db import init_db, create_search, update_search, get_search, list_searches
 from db import get_profile, save_profile_db
 from db import create_share_token, resolve_share_token
+from db import reassign_user_data
 from pipeline_runner import create_session, find_inflight_session, start_pipeline, get_session, cancel_session, cleanup_old_sessions
 
 # ---------------------------------------------------------------------------
@@ -161,6 +168,19 @@ async def _session_cleanup_loop() -> None:
             _logger.warning("[session_cleanup] cleanup error: %s", exc)
 
 
+async def _embedding_cache_cleanup_loop() -> None:
+    """Purge expired EmbeddingCache rows once per day."""
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            from db import purge_expired_embeddings
+            deleted = await asyncio.to_thread(purge_expired_embeddings)
+            if deleted:
+                _logger.info("[embedding_cache_cleanup] purged %d expired rows", deleted)
+        except Exception as exc:
+            _logger.warning("[embedding_cache_cleanup] purge failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _logging.basicConfig(
@@ -192,12 +212,18 @@ async def lifespan(app: FastAPI):
         except Exception as _exc:
             _logger.debug("[startup] preload skipped for %s: %s", _mod, _exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
+    embedding_cleanup_task = asyncio.create_task(_embedding_cache_cleanup_loop())
     try:
         yield
     finally:
         cleanup_task.cancel()
+        embedding_cleanup_task.cancel()
         try:
             await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await embedding_cleanup_task
         except asyncio.CancelledError:
             pass
 
@@ -206,11 +232,28 @@ async def lifespan(app: FastAPI):
 # Rate limiter + app
 # ---------------------------------------------------------------------------
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+def _rate_limit_key(request: Request) -> str:
+    """
+    Auth users get per-user rate limits (independent buckets per account).
+    Guests get per-IP limits (existing behaviour preserved).
+    """
+    auth_user = _verify_auth_token(request)
+    if auth_user:
+        return auth_user
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=["200/minute"])
 
 app = FastAPI(title="Shopping Research Agent v7", version="7.0.0", lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again shortly."},
+        headers={"Retry-After": "60"},
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -267,6 +310,63 @@ def _get_session_user_id(request: Request) -> str:
     if sid and len(sid) <= 64 and sid.replace("-", "").replace("_", "").isalnum():
         return sid
     return "default"
+
+
+# ---------------------------------------------------------------------------
+# JWT authentication (NextAuth v5 / Auth.js)
+# ---------------------------------------------------------------------------
+
+_NEXTAUTH_SECRET = os.environ.get("NEXTAUTH_SECRET", "").strip()
+
+
+def _verify_auth_token(request: Request) -> Optional[str]:
+    """
+    Validates a NextAuth JWT from the Authorization: Bearer header.
+    Returns 'auth_{sub}' on success, None for guest requests.
+
+    Graceful degradation: if NEXTAUTH_SECRET is not configured, logs a warning
+    and falls through to guest mode instead of crashing (Option A from the plan).
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[7:]
+    if not _NEXTAUTH_SECRET:
+        _logger.warning("[auth] NEXTAUTH_SECRET not set — treating request as guest")
+        return None
+    if not _HAS_PYJWT:
+        _logger.warning("[auth] PyJWT not installed — treating request as guest")
+        return None
+    try:
+        payload = _jwt.decode(token, _NEXTAUTH_SECRET, algorithms=["HS256"])
+        sub = payload.get("sub")
+        if not sub:
+            raise HTTPException(status_code=401, detail="Token missing sub claim")
+        return f"auth_{sub}"
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired — please log in again")
+    except _jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+
+
+def _get_user_id(request: Request) -> str:
+    """
+    Returns the effective user identifier for any request:
+    - Authenticated: 'auth_{google_sub}' (from JWT)
+    - Guest: session ID from X-Session-ID header (existing behaviour unchanged)
+    """
+    auth_user = _verify_auth_token(request)
+    if auth_user:
+        return auth_user
+    return _get_session_user_id(request)
+
+
+def _require_auth(request: Request) -> str:
+    """FastAPI Depends() guard for endpoints that require a signed-in user."""
+    uid = _get_user_id(request)
+    if not uid.startswith("auth_"):
+        raise HTTPException(status_code=401, detail="Please log in to access this resource")
+    return uid
 
 
 def _profile_key(user_id: str, category: str) -> str:
@@ -589,7 +689,7 @@ def list_all_searches(
 
 @app.get("/api/profile/{category:path}")
 def get_profile_endpoint(request: Request, category: str) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     data = get_profile(_profile_key(user_id, category))
     if not data and user_id != "default":
         # Fallback: legacy unscoped profile (backwards compatibility)
@@ -601,7 +701,7 @@ def get_profile_endpoint(request: Request, category: str) -> dict:
 
 @app.post("/api/profile/{category:path}")
 def save_profile_endpoint(request: Request, category: str, req: SaveProfileRequest) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     key = _profile_key(user_id, category)
     with _get_profile_write_lock(key):
         save_profile_db(key, req.profile)
@@ -630,7 +730,7 @@ def fetch_prices_endpoint(req: PricesRequest) -> dict:
 @app.get("/api/memory/context")
 def get_memory_context(request: Request, q: str = Query(""), category: str = Query("")) -> dict:
     """Return relevant remembered signals for a query. Used to pre-fill interview context."""
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         signals = find_relevant_signals(
             q or category,
@@ -652,7 +752,7 @@ def get_memory_context(request: Request, q: str = Query(""), category: str = Que
 
 @app.get("/api/memory/signals")
 def list_memory_signals(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         signals = list_user_signals(limit=limit, user_id=user_id)
         return {"signals": signals, "count": len(signals)}
@@ -663,7 +763,7 @@ def list_memory_signals(request: Request, limit: int = Query(100, ge=1, le=500))
 @app.delete("/api/memory/signals/{signal_id}")
 @limiter.limit("30/minute")
 def forget_signal(request: Request, signal_id: str) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         deleted = delete_signal(signal_id, user_id=user_id)
         return {"deleted": deleted}
@@ -673,7 +773,7 @@ def forget_signal(request: Request, signal_id: str) -> dict:
 
 @app.get("/api/memory/products")
 def list_memory_products(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         products = list_product_memories(limit=limit, user_id=user_id)
         return {"products": products, "count": len(products)}
@@ -687,7 +787,7 @@ def update_product_status(request: Request, product_name: str, req: ProductStatu
     valid = {"considered", "rejected", "purchased", "returned"}
     if req.status not in valid:
         raise HTTPException(400, f"status must be one of: {valid}")
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         save_product_memory(
             product_name,
@@ -705,7 +805,7 @@ def update_product_status(request: Request, product_name: str, req: ProductStatu
 @app.delete("/api/memory/products/{product_name:path}")
 @limiter.limit("30/minute")
 def forget_product_memory(request: Request, product_name: str) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         deleted = delete_product_memory(product_name, user_id=user_id)
         return {"deleted": deleted, "product": product_name}
@@ -717,7 +817,7 @@ def forget_product_memory(request: Request, product_name: str) -> dict:
 @limiter.limit("20/minute")
 def record_purchase(request: Request, req: BoughtRequest) -> dict:
     """Record that the user bought a product. Optionally extracts a preference signal from feedback."""
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         save_product_memory(
             req.product_name,
@@ -744,12 +844,34 @@ def record_purchase(request: Request, req: BoughtRequest) -> dict:
 
 @app.delete("/api/memory/all")
 def wipe_all_memory(request: Request, _auth: None = Depends(_check_api_key)) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     try:
         result = clear_all_memory(user_id=user_id)
         return {"cleared": True, **result}
     except Exception as exc:
         raise HTTPException(500, f"Wipe failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Auth: legacy-data adoption (guest → authenticated account merge)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/adopt-legacy")
+@limiter.limit("10/hour")
+def adopt_legacy_data(
+    request: Request,
+    legacy_session_id: str = Query(..., min_length=4, max_length=64),
+    user_id: str = Depends(_require_auth),
+) -> dict:
+    """
+    Merge data from a guest session into the authenticated user's account.
+    Called once after first login so prior searches and signals carry over.
+    Rate-limited to 10/hour to prevent abuse.
+    """
+    if not legacy_session_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(400, "Invalid legacy session ID format")
+    counts = reassign_user_data(from_user_id=legacy_session_id, to_user_id=user_id)
+    return {"merged": True, "from": legacy_session_id, "to": user_id, "rows": counts}
 
 
 # ---------------------------------------------------------------------------

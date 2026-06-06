@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from 'sonner'
+import { SessionProvider } from 'next-auth/react'
 import './globals.css'
 
 const inter = Inter({ 
@@ -61,8 +62,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} bg-[#08080A]`}>
       <body className="font-sans antialiased min-h-screen bg-[#08080A] text-[#FAFAFA]">
-        {children}
-        <Toaster 
+        <SessionProvider>
+          {children}
+        </SessionProvider>
+        <Toaster
           position="bottom-right"
           toastOptions={{
             style: {
@@ -74,6 +77,7 @@ export default function RootLayout({
         />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
+
     </html>
   )
 }
