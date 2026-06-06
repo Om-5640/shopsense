@@ -8,11 +8,11 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Tests](https://img.shields.io/badge/tests-386%20passing-2ea44f)](#engineering-rigor)
+[![Tests](https://img.shields.io/badge/tests-431%20passing-2ea44f)](#engineering-rigor)
 [![Intelligence Index](https://img.shields.io/badge/Intelligence%20Index-97.3%2F100%20(A%2B)-7C3AED)](#the-self-grading-eval-platform)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**12 specialized agents · 5 LLM providers with circuit-breaker failover · deterministic mention counting · cross-community bias detection · vector memory · live zero-API re-ranking — all on free tiers.**
+**12 specialized agents · 5 LLM providers with circuit-breaker failover · deterministic mention counting · cross-community bias detection · vector memory · Google OAuth persistent identity · live zero-API re-ranking — all on free tiers.**
 
 </div>
 
@@ -200,7 +200,7 @@ Models change. Providers swap formats. The defense is a suite that feeds **delib
 → if a provider starts returning a new shape tomorrow, CI fails loudly instead of corrupting a ranking
 ```
 
-Combined with golden tests for the scorer and normalizer, recorded-pipeline replay (extraction recall, evidence grounding, no-hallucination checks), and the semantic-cache policy suite, the project ships **386 tests** covering unit logic, DB round-trips, the API surface, pipeline orchestration, real-output replay, and these LLM-shape boundaries.
+Combined with golden tests for the scorer and normalizer, recorded-pipeline replay (extraction recall, evidence grounding, no-hallucination checks), and the semantic-cache policy suite, the project ships **431 tests** covering unit logic, DB round-trips, the API surface, pipeline orchestration, real-output replay, and these LLM-shape boundaries.
 
 ### Reliability hardening
 
@@ -215,6 +215,10 @@ A pass focused entirely on failure modes — the unglamorous work that makes a d
 - **Semantic query cache.** "Best gym earbuds" and "earbuds for working out" are the same intent. A query embedding is matched (cosine ≥ 0.95) against recent searches with the *same category, region, and rubric fingerprint* — a hit reuses the prior result and skips the entire ~85s research run. Safe by construction: a different rubric never produces a hit, so you never see results scored against someone else's priorities.
 - **Targeted evidence enrichment (gets the real fact, not an estimate).** After scoring, the top products' highest-weight criteria that came back with *no* research evidence trigger a focused fetch — one Serper query per product (parallel, cached 7 days) **plus a full-page read of the top result via Jina Reader** for the depth 30-word snippets miss (exact specs, tested figures), then a *single* batched LLM extraction that returns a score only when the source actually supports it, with the **source domain cited**. On a real `"best smartphone under 20000"` run this lifted the top 5 from mostly-`[NO DATA]` to **6/6 real data coverage**. Lean (≤6 searches + 1 LLM call), flag-gated, page reads degrade gracefully when a site blocks them, and the whole stage is wrapped so it can never break the pipeline.
 - **Missing-data fairness (the ranking trust fix).** Whatever evidence enrichment still can't find is imputed to the **peer mean** (the average score of products that *do* have evidence on that criterion) rather than a penalising 4/10 — so the *best-documented* product never out-ranks a genuinely-better one, and a thin-data product can't leapfrog on one lucky data point. Every result carries `data_coverage` (0–1) and a `confidence` band so any consumer can see how well-evidenced a ranking is.
+- **Versioned database migrations.** Schema changes are tracked through **three Alembic migrations**: a baseline that creates all original tables with `CREATE TABLE IF NOT EXISTS` (idempotent on any existing database), a second that adds `user_id` columns to `Search` and `Profile` with `server_default='__legacy__'` so no existing row is touched, and a third that creates the `EmbeddingCache` table with a 1-year TTL column and an expiry index. On startup, `env.py` probes Postgres with a 3-second timeout and silently falls back to SQLite if it is unreachable — so a misconfigured `POSTGRES_URL` produces a warning, not a crash.
+- **2-tier embedding cache.** Computing a `text-embedding-004` vector for every unique query adds latency and burns free-tier quota. A **2-tier cache** hits an in-memory dict first (sub-microsecond, process-lifetime), then an `EmbeddingCache` DB table (1-year TTL, LRU eviction at 1 million rows). Both tiers are tagged with the provider name, so a Gemini (3072-dim) vector can never be compared against a cached Cohere (384-dim) vector in a silent dimension mismatch. A 24-hour background coroutine purges expired rows to keep the table bounded without manual intervention.
+- **Per-user rate limiting.** `slowapi` already enforced per-IP buckets (10/min on search, 200/min globally). The key function now promotes **authenticated users to per-`user_id` buckets** while keeping guests on per-IP — so a shared egress IP (office, campus Wi-Fi) no longer penalises unrelated users. Auth and guest traffic are always counted independently.
+- **Google OAuth with zero-downtime guest session adoption.** `NextAuth v5` (Google OAuth, JWT strategy, 30-day sessions) gates the `/memory/*` routes — search, interview, and the full pipeline remain fully public. When a user logs in for the first time an `AdoptLegacy` component fires once silently in the browser: it calls `POST /api/auth/adopt-legacy` with the old `ss_*` guest session ID, and the backend re-assigns all `UserSignal`, `ProductMemory`, `Search`, and `Profile` rows to the new `auth_*` account. Preferences and history built as a guest surface immediately under the authenticated identity, on every device, with no user action required.
 
 ---
 
@@ -293,7 +297,7 @@ Durable signals ("has sensitive ears", "commutes 2h daily", "never buys open-bac
 
 **Backend** — Python 3.11+ · FastAPI · Uvicorn · PostgreSQL 16 + pgvector (prod) / SQLite (dev) · Server-Sent Events · `ThreadPoolExecutor` (no async overhead) · `pyahocorasick` · BeautifulSoup + Jina Reader fallback · slowapi rate limiting.
 
-**Frontend** — Next.js 16 (App Router) · TypeScript strict · Tailwind CSS v4 · shadcn/ui (75 components) · Framer Motion · Zustand + SWR · `cmdk` ⌘K palette · `recharts`.
+**Frontend** — Next.js 16 (App Router) · TypeScript strict · Tailwind CSS v4 · shadcn/ui (75 components) · Framer Motion · Zustand + SWR · `cmdk` ⌘K palette · `recharts` · NextAuth v5 (Google OAuth, JWT, 30-day sessions).
 
 **LLM providers (all free tier)** — Groq · Cerebras · Google Gemini · Mistral · OpenRouter.
 
@@ -309,6 +313,18 @@ Durable signals ("has sensitive ears", "commutes 2h daily", "never buys open-bac
 git clone https://github.com/Om-5640/shopsense.git
 cd shopsense
 cp .env.example .env        # add GEMINI_API_KEY / GROQ_API_KEY / SERPER_API_KEY / OPENROUTER_API_KEY
+```
+
+Authentication is optional for local use — search and interview work without any auth credentials. To enable Google OAuth and persistent cross-device memory:
+
+```bash
+# generate a signing secret
+openssl rand -base64 32   # → paste as NEXTAUTH_SECRET in web/.env.local
+
+# add Google OAuth credentials (Google Cloud Console → APIs & Services → Credentials)
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+NEXTAUTH_URL=http://localhost:3000
 ```
 
 **API**
@@ -357,11 +373,16 @@ python -m evals.online.record  # capture fresh real-pipeline fixtures (2 live qu
 ```
 shopsense/
 ├── api/
-│   ├── main.py              REST + SSE endpoints, rate limiting, sessions
-│   ├── db.py                Dual-backend ORM (SQLite / Postgres + pgvector), self-healing schema
+│   ├── main.py              REST + SSE endpoints, per-user/per-IP rate limiting, JWT auth, sessions
+│   ├── db.py                Dual-backend ORM (SQLite / Postgres + pgvector), 2-tier embedding cache, self-healing schema
+│   ├── alembic/             3 versioned migrations: baseline → user_id columns → EmbeddingCache table
 │   └── pipeline_runner.py   Orchestration, SSE event queue, stage timing, cache fast-path
 │
 ├── web/                     Next.js 16 · 75 components · live re-ranking · SSE auto-reconnect
+│   ├── auth.ts              NextAuth v5 config (Google OAuth, JWT callbacks, 30-day sessions)
+│   ├── middleware.ts         Protects /memory/* routes in Next.js edge middleware
+│   ├── app/login/           Google sign-in page
+│   └── components/auth/     UserMenu avatar dropdown · AdoptLegacy (silent guest-to-auth migration)
 │
 ├── evals/                   ◀ the self-grading platform
 │   ├── data/pools/*.json            data-driven category benchmarks (zero hardcoding in code)
@@ -390,7 +411,7 @@ shopsense/
 ├── source_filter.py         numeric authority scores, category-aware, source types
 ├── domain_blacklist.py      time-bounded, status-code-aware auto-blacklist
 ├── shopping_links.py · price_fetcher.py   validated links + real-time prices
-└── tests/                   392 tests: unit · integration · e2e · golden-file · LLM-shape
+└── tests/                   431 tests: unit · integration · e2e · golden-file · LLM-shape · embeddings
 ```
 
 ---
@@ -412,6 +433,14 @@ shopsense/
 **Why hybrid scoring instead of always-LLM?** Users care about the top results, not whether #18 scored 4.2 or 4.4. LLM rigor where it matters, fast heuristics where it doesn't — 45s instead of 120s.
 
 **Why ThreadPoolExecutor, not async?** Simpler, debuggable, sufficient for an I/O-bound profile. Rate limiting belongs at the provider layer, not the concurrency layer.
+
+**Why Google OAuth only (no password / magic link)?** Eliminating password storage and email deliverability removes two entire attack surfaces and two external dependencies for an MVP. OAuth lets the identity provider handle credential security while the app focuses on its actual hard problem. Adding additional providers later is a one-line change in `auth.ts`.
+
+**Why `__legacy__` as the server default for `user_id`, not `NULL` or `guest`?** `NULL` would break queries that filter by `user_id` without an `IS NULL` guard. `guest` implies a generic shared identity. `__legacy__` is self-documenting: it marks rows that existed before auth was introduced and that a user can *claim* via the adopt-legacy flow — distinct from any real session ID, and easy to filter in migrations and reporting scripts.
+
+**Why a 2-tier embedding cache (memory + DB) instead of Redis?** The memory tier is sub-microsecond and zero-dependency. The DB tier survives restarts and shares the same SQLite/Postgres instance the rest of the schema already uses — no second infrastructure component to deploy, monitor, or pay for. At the expected query volume (hundreds/day, not millions) this is sufficient; Redis would be the right upgrade only if embedding throughput became the bottleneck.
+
+**Why Alembic migrations instead of schema auto-detection?** Auto-detection (checking columns at startup and adding them) is fragile across environments and hides the actual schema history. Explicit versioned migrations give a clear audit trail, make CI validation straightforward (upgrade → downgrade → upgrade roundtrip), and allow `server_default` values that are impossible to express in a silent `ALTER TABLE` check.
 
 ---
 
