@@ -476,8 +476,30 @@ def _create_pg_vector_index() -> None:
         _pg_release(conn)
 
 
+def _probe_postgres() -> bool:
+    """Return True only if POSTGRES_URL is set AND the server is reachable within 3s."""
+    if not POSTGRES_URL:
+        return False
+    try:
+        import psycopg2
+        conn = psycopg2.connect(POSTGRES_URL, connect_timeout=3)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def init_db() -> None:
     """Create all tables and indexes if they don't exist, then apply pending migrations."""
+    global POSTGRES_URL
+
+    if _use_postgres():
+        if not _probe_postgres():
+            _logger.warning(
+                "[db] POSTGRES_URL is set but Postgres is unreachable — falling back to SQLite."
+            )
+            POSTGRES_URL = ""  # disable Postgres for this process lifetime
+
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(_PG_SCHEMA)
@@ -485,9 +507,17 @@ def init_db() -> None:
         _create_pg_vector_index()
     else:
         conn = _sqlite_connect()
-        conn.executescript(_SQLITE_SCHEMA)
+        # Bootstrap _SchemaVersion first so run_migrations() can read/write it,
+        # then apply structural migrations (e.g. ADD COLUMN canonicalName) before
+        # running the full schema — which includes indexes that depend on those columns.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _SchemaVersion "
+            "(version INTEGER PRIMARY KEY, appliedAt TEXT NOT NULL)"
+        )
         conn.commit()
         run_migrations()
+        conn.executescript(_SQLITE_SCHEMA)
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
