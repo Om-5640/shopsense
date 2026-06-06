@@ -35,13 +35,25 @@ HEADERS = {
     "Referer": "https://www.reddit.com/",
 }
 
-# Pullpush — community Reddit data API, no credentials required
+# Pullpush — community Reddit data API (last-resort, often down)
 _PULLPUSH = "https://api.pullpush.io/reddit"
-_PULLPUSH_HEADERS = {"User-Agent": "ShopSense/1.0"}
+_PULLPUSH_HEADERS = {"User-Agent": "ShopResearch/1.0"}
 
-# Arctic Shift — more complete Reddit archive, better coverage for 2024+ posts
+# Arctic Shift — community Reddit archive, fallback #2
 _ARCTIC = "https://arctic-shift.photon-reddit.com/api"
-_ARCTIC_HEADERS = {"User-Agent": "ShopSense/1.0", "Accept": "application/json"}
+_ARCTIC_HEADERS = {"User-Agent": "ShopResearch/1.0", "Accept": "application/json"}
+
+# Reddit OAuth (app-only, no PRAW, no user login) — primary when credentials set
+# Register a free "script" app at reddit.com/prefs/apps to get CLIENT_ID + SECRET.
+# Uses client_credentials grant — no user account required, 60 req/min quota.
+_REDDIT_CLIENT_ID     = os.environ.get("REDDIT_CLIENT_ID", "")
+_REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
+_REDDIT_USER_AGENT    = os.environ.get("REDDIT_USER_AGENT", "ShopResearch/1.0")
+_OAUTH_BASE           = "https://oauth.reddit.com"
+
+# Token cache (thread-safe): { "token": str, "expires_at": float }
+_oauth_token_lock = _threading.Lock()
+_oauth_token_cache: dict = {}
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 from models import GEMINI_MODEL, gemini_url
@@ -557,8 +569,141 @@ def _extract_post_id(permalink: str) -> "str | None":
     return m.group(1) if m else None
 
 
+def _reddit_oauth_credentials_set() -> bool:
+    return bool(_REDDIT_CLIENT_ID and _REDDIT_CLIENT_SECRET)
+
+
+def _get_oauth_token() -> str | None:
+    """Return a valid app-only OAuth Bearer token, refreshing when near-expiry.
+
+    Uses client_credentials grant — no user login required.
+    Token is cached in-process and shared across threads.
+    """
+    with _oauth_token_lock:
+        entry = _oauth_token_cache
+        if entry.get("token") and time.time() < entry.get("expires_at", 0) - 60:
+            return entry["token"]
+
+        import base64
+        creds = base64.b64encode(
+            f"{_REDDIT_CLIENT_ID}:{_REDDIT_CLIENT_SECRET}".encode()
+        ).decode()
+        try:
+            resp = requests.post(
+                "https://www.reddit.com/api/v1/access_token",
+                headers={
+                    "Authorization": f"Basic {creds}",
+                    "User-Agent": _REDDIT_USER_AGENT,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            token = data.get("access_token")
+            expires_in = data.get("expires_in", 3600)
+            if token:
+                _oauth_token_cache["token"] = token
+                _oauth_token_cache["expires_at"] = time.time() + expires_in
+                return token
+        except Exception as e:
+            print(f"[reddit-oauth] token fetch failed: {e}")
+        return None
+
+
+def _reddit_oauth_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
+    """Primary fetcher — Reddit's official OAuth API, no PRAW library.
+
+    Uses app-only client_credentials (no user login). Requires REDDIT_CLIENT_ID
+    and REDDIT_CLIENT_SECRET in .env (free 2-min setup at reddit.com/prefs/apps).
+
+    Quota: 60 req/min (6× better than unauthenticated).
+    Speed: <1s per thread vs 10-15s for Arctic Shift.
+    """
+    token = _get_oauth_token()
+    if not token:
+        return None
+
+    post_id = _extract_post_id(permalink)
+    if not post_id:
+        return None
+
+    # Extract subreddit from permalink  e.g. /r/Earbuds/comments/...
+    sub_match = re.search(r"/r/([^/]+)/", permalink)
+    subreddit = sub_match.group(1) if sub_match else "all"
+
+    oauth_hdrs = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": _REDDIT_USER_AGENT,
+        "Accept": "application/json",
+    }
+
+    try:
+        # Pass 1: top-sorted comments
+        url = f"{_OAUTH_BASE}/r/{subreddit}/comments/{post_id}.json?sort=top&limit={max_comments}&raw_json=1"
+        resp = requests.get(url, headers=oauth_hdrs, timeout=12)
+        if resp.status_code == 429:
+            print("[reddit-oauth] rate limited")
+            return None
+        if resp.status_code == 401:
+            # Token may have been revoked; clear cache so next call re-fetches
+            with _oauth_token_lock:
+                _oauth_token_cache.clear()
+            print("[reddit-oauth] 401 — token invalidated, will retry next call")
+            return None
+        resp.raise_for_status()
+        raw = resp.json()
+        post_data = raw[0]["data"]["children"][0]["data"]
+        top_raw   = raw[1]["data"]["children"]
+
+        top_comments = _flatten_comment_tree(top_raw)
+
+        # Pass 2: controversial sort (merges in complaints/buried disagreements)
+        url2 = f"{_OAUTH_BASE}/r/{subreddit}/comments/{post_id}.json?sort=controversial&limit={max_comments}&raw_json=1"
+        resp2 = requests.get(url2, headers=oauth_hdrs, timeout=12)
+        controversial_raw = []
+        if resp2.status_code == 200:
+            controversial_raw = resp2.json()[1]["data"]["children"]
+        controversial_comments = _flatten_comment_tree(controversial_raw)
+
+        # Merge: top first, then controversial-only additions
+        seen_ids: set = set()
+        merged = []
+        for c in top_comments:
+            cid = c.get("id", "")
+            if cid:
+                seen_ids.add(cid)
+            merged.append(c)
+
+        controversial_only = []
+        for c in controversial_comments:
+            cid = c.get("id", "")
+            if cid and cid not in seen_ids:
+                seen_ids.add(cid)
+                c["from_controversial"] = True
+                controversial_only.append(c)
+        controversial_only.sort(key=lambda c: c["score"], reverse=True)
+        merged.extend(controversial_only)
+        merged = merged[:max_comments]
+
+        return {
+            "title":  post_data.get("title", ""),
+            "subreddit": post_data.get("subreddit", ""),
+            "body":   (post_data.get("selftext") or "")[:3000],
+            "score":  post_data.get("score", 0),
+            "url":    permalink,
+            "comments": merged,
+            "total_comment_count_in_thread": post_data.get("num_comments", 0),
+            "controversial_comments_added":  len(controversial_only),
+        }
+    except Exception as e:
+        print(f"[reddit-oauth] failed for {permalink}: {e}")
+        return None
+
+
 def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
-    """Fetch thread via Pullpush.io — no Reddit credentials needed, bypasses Cloudflare."""
+    """Fetch thread via Pullpush.io — last-resort community archive (often unavailable)."""
     post_id = _extract_post_id(permalink)
     if not post_id:
         return None
@@ -700,97 +845,29 @@ def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_T
     if cached is not None:
         return cached
 
-    # ---- Primary: Pullpush (no credentials, bypasses Reddit Cloudflare) ----
-    result = _pullpush_fetch_thread(permalink, max_comments)
-    if result is not None:
-        cache.set("reddit_thread", permalink, result)
-        return result
+    # ---- Primary: Reddit OAuth (official API, no PRAW, <1s, 60 req/min) ----
+    # Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in .env.
+    # Free 2-min setup: reddit.com/prefs/apps → "script" app, any redirect URL.
+    if _reddit_oauth_credentials_set():
+        result = _reddit_oauth_fetch_thread(permalink, max_comments)
+        if result is not None:
+            cache.set("reddit_thread", permalink, result)
+            return result
 
-    # ---- Secondary: Arctic Shift (better coverage for 2024+ posts) ----
+    # ---- Fallback #2: Arctic Shift (community archive, no credentials, ~10-15s) ----
     result = _arctic_fetch_thread(permalink, max_comments)
     if result is not None:
         cache.set("reddit_thread", permalink, result)
         return result
 
-    # ---- Last resort: direct Reddit JSON endpoint (no retries on 403 — Cloudflare won't relent) ----
-    json_url = permalink.rstrip("/") + f"/.json?sort=top&limit={max_comments}"
-    last_err = None
-    post_data = None
-    for attempt in range(3):
-        try:
-            resp = requests.get(json_url, headers=HEADERS, timeout=15)
-            if resp.status_code == 403:
-                print(f"   [reddit] JSON 403 (Cloudflare block) — skipping retries")
-                last_err = requests.HTTPError(f"403 Blocked for url: {json_url}")
-                break
-            if resp.status_code == 429:
-                raise requests.HTTPError("429 Rate Limited")
-            resp.raise_for_status()
-            raw = resp.json()
-            post_data = raw[0]["data"]["children"][0]["data"]
-            top_raw = raw[1]["data"]["children"]
-            break
-        except Exception as e:
-            last_err = e
-            if attempt < 2:
-                wait = 5 * (attempt + 1)
-                print(f"   retry in {wait}s ({e})")
-                time.sleep(wait)
+    # ---- Fallback #3: Pullpush (last resort, often unavailable) ----
+    result = _pullpush_fetch_thread(permalink, max_comments)
+    if result is not None:
+        cache.set("reddit_thread", permalink, result)
+        return result
 
-    if post_data is None:
-        print(f"[reddit] giving up on {permalink}: {last_err}")
-        return None
-
-    # Pass 1: flatten top-sorted comments
-    top_comments = _flatten_comment_tree(top_raw)
-
-    # Pass 2: fetch controversial sort, flatten, merge by ID
-    # Small delay to avoid rate limiting
-    time.sleep(0.5)
-    controversial_raw = _fetch_raw_comments(permalink, "controversial", max_comments)
-    controversial_comments = _flatten_comment_tree(controversial_raw)
-
-    # Merge: top-sort comments first (preserve order), then add any
-    # controversial-only comments not already seen (by Reddit comment ID)
-    seen_ids = set()
-    merged = []
-
-    for c in top_comments:
-        cid = c.get("id", "")
-        if cid:
-            seen_ids.add(cid)
-        merged.append(c)
-
-    controversial_only = []
-    for c in controversial_comments:
-        cid = c.get("id", "")
-        # Skip if already in top sort OR if no ID (can't dedup safely)
-        if cid and cid not in seen_ids:
-            seen_ids.add(cid)
-            # Tag so analyzer knows this came from controversial sort
-            c["from_controversial"] = True
-            controversial_only.append(c)
-
-    # Sort controversial-only additions by score before appending
-    controversial_only.sort(key=lambda c: c["score"], reverse=True)
-    merged.extend(controversial_only)
-
-    # Final cap
-    merged = merged[:max_comments]
-
-    result = {
-        "title": post_data.get("title", ""),
-        "subreddit": post_data.get("subreddit", ""),
-        "body": (post_data.get("selftext") or "")[:3000],
-        "score": post_data.get("score", 0),
-        "url": permalink,
-        "comments": merged,
-        "total_comment_count_in_thread": post_data.get("num_comments", 0),
-        "controversial_comments_added": len(controversial_only),
-    }
-
-    cache.set("reddit_thread", permalink, result)
-    return result
+    print(f"[reddit] all sources failed for {permalink}")
+    return None
 
 
 def _praw_credentials_set() -> bool:
@@ -811,7 +888,8 @@ def fetch_all_threads(
     """
     End-to-end fetch.
     If USE_PRAW=true and Reddit credentials are set, uses the PRAW deep fetcher
-    (200+ comments/thread). Otherwise falls back to the JSON endpoint approach.
+    (200+ comments/thread). Otherwise uses the OAuth-direct path (primary when
+    REDDIT_CLIENT_ID + SECRET are set) → Arctic Shift → Pullpush fallback chain.
     `profile` is forwarded to _query_variations for intent-aware semantic variants.
     `cancel_fn`: optional zero-arg callable that returns True when the caller wants
     to abort.  Checked between completed futures — stops launching new fetches
@@ -824,6 +902,11 @@ def fetch_all_threads(
     region = detect_region(query)
     if region:
         print(f"[reddit] detected region: {region}")
+
+    if _reddit_oauth_credentials_set():
+        print(f"[reddit] mode: OAuth-direct (official API, no PRAW)")
+    else:
+        print(f"[reddit] mode: Arctic Shift fallback (set REDDIT_CLIENT_ID+SECRET for 10x speed)")
 
     print(f"[reddit] discovering URLs for: {query}")
     urls = find_reddit_urls(query, limit=limit, profile=profile)
