@@ -42,9 +42,14 @@ _PULLPUSH_HEADERS = {"User-Agent": "ShopResearch/1.0"}
 # Arctic Shift — community Reddit archive, fallback #2
 _ARCTIC = "https://arctic-shift.photon-reddit.com/api"
 _ARCTIC_HEADERS = {"User-Agent": "ShopResearch/1.0", "Accept": "application/json"}
-# Persistent session reuses TCP connections across calls (~1s saved per thread)
+# Persistent session with a large connection pool.
+# fetch_all_threads uses max_workers=8; each _arctic_fetch_thread fires 2 parallel requests
+# (post + comments) → peak 16 concurrent connections.  Default pool_maxsize=10 would
+# block some workers waiting for a free socket; 20 slots ensures all proceed immediately.
 _arctic_session = requests.Session()
 _arctic_session.headers.update(_ARCTIC_HEADERS)
+from requests.adapters import HTTPAdapter as _HTTPAdapter
+_arctic_session.mount("https://", _HTTPAdapter(pool_connections=20, pool_maxsize=20))
 
 # Reddit OAuth (app-only, no PRAW, no user login) — primary when credentials set
 # Register a free "script" app at reddit.com/prefs/apps to get CLIENT_ID + SECRET.

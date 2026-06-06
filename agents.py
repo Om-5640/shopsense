@@ -95,10 +95,14 @@ AGENTS = {
     },
     "thread_summarizer": {
         "provider": "pool",
-        "provider_pool": ["groq", "gemini", "mistral"],
-        "fallback_chain": ["groq", "gemini", "mistral", _MASTER],
+        # Pool = groq / cerebras / mistral — NOT Gemini.
+        # Gemini (15 RPM free) is reserved exclusively for main_analyzer which needs
+        # its large context window.  Groq + Cerebras have separate quotas (each 30 RPM)
+        # so together they support 60 summarizer calls/min with zero Gemini contention.
+        "provider_pool": ["groq", "cerebras", "mistral"],
+        "fallback_chain": ["groq", "cerebras", "mistral", _MASTER],
         "temperature": 0.2,
-        "max_tokens": 3072,  # increased: aliases field adds ~300-500 tokens of output
+        "max_tokens": 3072,
         "json_mode": True,
         "description": "Summarize ONE Reddit thread into structured form, including product aliases (parallel)",
     },

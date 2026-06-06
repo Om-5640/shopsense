@@ -44,8 +44,9 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_TIMEOUT = 90
 
 # Provider pool for high-volume parallel tasks (thread summarization).
-# Order them by speed: fastest first.
-PARALLEL_PROVIDER_POOL = ["groq", "cerebras", "gemini", "mistral"]
+# Gemini deliberately EXCLUDED — its 15 RPM free limit is reserved for main_analyzer.
+# Groq + Cerebras have separate quotas (each ~30 RPM) → 60 RPM combined.
+PARALLEL_PROVIDER_POOL = ["groq", "cerebras", "mistral"]
 
 # Master fallback - tried last in every agent's fallback chain when all else fails.
 MASTER_FALLBACK = "openrouter"

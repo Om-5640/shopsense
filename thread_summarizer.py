@@ -23,12 +23,14 @@ from agents import run_agent
 from llm_client import _try_repair_json
 
 
-# Adaptive parallelism: start at 5, throttle back to 3 on repeated 429s
-MAX_PARALLEL_WORKERS = 5
+# 3 workers = one concurrent call per provider (groq / cerebras / mistral).
+# This prevents burst 429s: with round-robin across 3 providers and only 3 workers,
+# no provider ever gets 2 simultaneous requests in the same batch.
+MAX_PARALLEL_WORKERS = 3
 _MIN_WORKERS = 2
-# No baseline stagger needed: ThreadPoolExecutor bounds concurrency to MAX_PARALLEL_WORKERS,
-# so we never burst all threads simultaneously regardless. Stagger only activates after a 429.
-SUBMISSION_STAGGER_DELAY = 0.0
+# 0.35s baseline stagger between submissions spreads the first wave across ~1s,
+# preventing all 3 workers from firing at exactly the same millisecond.
+SUBMISSION_STAGGER_DELAY = 0.35
 
 # Adaptive throttle state — shared across parallel workers
 _throttle_lock = threading.Lock()
@@ -36,8 +38,10 @@ _throttle_until: float = 0.0          # epoch time when throttle lifts
 _throttle_active: bool = False
 
 
-def _set_throttled(duration_s: float = 30.0) -> None:
-    """Signal that rate limits were hit — increase stagger for next submissions."""
+def _set_throttled(duration_s: float = 65.0) -> None:
+    """Signal that rate limits were hit — increase stagger for next submissions.
+    65s covers a full 60s rate-limit window with 5s safety margin.
+    """
     global _throttle_until, _throttle_active
     with _throttle_lock:
         _throttle_until = time.time() + duration_s
@@ -48,7 +52,7 @@ def _get_stagger() -> float:
     """Return stagger delay to use between submissions."""
     with _throttle_lock:
         if _throttle_active and time.time() < _throttle_until:
-            return 2.5  # throttled: slow down
+            return 4.0  # throttled: space calls 4s apart (safe for all provider rate windows)
         return SUBMISSION_STAGGER_DELAY
 
 # Max chars of thread content per summarizer call (fits Groq 8K token limit).
@@ -182,7 +186,7 @@ def _summarize_one_thread(thread: dict, query: str) -> dict:
     except Exception as e:
         err_str = str(e).lower()
         if "429" in err_str or "rate" in err_str or "circuit" in err_str:
-            _set_throttled(30.0)
+            _set_throttled()  # default 65s — covers 60s rate-limit window + 5s margin
         return {
             "url": url,
             "subreddit": subreddit,

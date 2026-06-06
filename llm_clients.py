@@ -223,7 +223,12 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
     if _cb.is_blocked(provider):
         raise RuntimeError(f"[circuit:{provider}] temporarily blocked, skipping")
 
-    _BACKOFFS = [2, 5]
+    # Two separate backoff tables:
+    # - 429 (rate limit): longer waits — rate-limit windows are typically 60s, so 5s/20s
+    #   gives meaningful breathing room without holding the caller for a full minute.
+    # - Other errors (connection, timeout, 5xx): short fast-retry, then hand off to next provider.
+    _BACKOFFS_RATELIMIT = [5, 20]
+    _BACKOFFS_DEFAULT = [2, 5]
     last_err = None
 
     for attempt in range(max_attempts):
@@ -237,7 +242,7 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
                     retry_after = float(resp.headers.get("retry-after", ""))
                 except (ValueError, TypeError):
                     pass
-                wait = retry_after if retry_after else (_BACKOFFS[min(attempt, 1)] + random.uniform(0, 1))
+                wait = retry_after if retry_after else (_BACKOFFS_RATELIMIT[min(attempt, 1)] + random.uniform(0, 2))
                 last_err = requests.HTTPError(f"429 Too Many Requests", response=resp)
                 # Retry-After > 5 min means quota exhaustion, not a transient burst limit.
                 # Block the provider for the full requested duration (capped at 1h) and fail fast.
@@ -274,7 +279,7 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
         except requests.HTTPError as e:
             last_err = e
             if attempt < max_attempts - 1:
-                wait = _BACKOFFS[min(attempt, 1)] + random.uniform(0, 1)
+                wait = _BACKOFFS_DEFAULT[min(attempt, 1)] + random.uniform(0, 1)
                 print(f"  [{provider}] HTTP error attempt {attempt + 1}, retrying in {wait:.1f}s...")
                 time.sleep(wait)
 
@@ -282,7 +287,7 @@ def _smart_post_with_retry(url, headers, body, provider: str, timeout: int = 180
             last_err = e
             _cb.record_failure(provider)
             if attempt < max_attempts - 1:
-                wait = _BACKOFFS[min(attempt, 1)] + random.uniform(0, 1)
+                wait = _BACKOFFS_DEFAULT[min(attempt, 1)] + random.uniform(0, 1)
                 print(f"  [{provider}] attempt {attempt + 1} failed ({type(e).__name__}), retrying in {wait:.1f}s...")
                 time.sleep(wait)
 
