@@ -3,9 +3,10 @@
 import { Suspense, useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Trophy, ThumbsUp, ThumbsDown, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Trophy, ThumbsUp, ThumbsDown, ExternalLink, GitCompare, Home, BarChart3 } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
+import { Footer } from '@/components/layout/footer'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -163,23 +164,113 @@ function ComparePageContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#08080A]">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex flex-col bg-[#08080A]">
+        <AnimatedBackground />
+        <Header />
+        <main className="flex-1 relative z-10 flex items-center justify-center">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex flex-col items-center gap-4"
+          >
+            <div className="relative">
+              <div className="w-12 h-12 rounded-full border-2 border-violet-500/30" />
+              <div className="absolute inset-0 w-12 h-12 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+            </div>
+            <p className="text-sm text-[#71717A]">Loading comparison…</p>
+          </motion.div>
+        </main>
+        <Footer />
       </div>
     )
   }
 
   if (error || products.length < 2) {
+    const msg = error ?? 'Not enough products to compare.'
+    const isNoSelection = names.length < 2
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#08080A]">
-        <div className="text-center">
-          <p className="text-rose-400 mb-4 text-sm">
-            {error ?? 'Not enough products to compare.'}
-          </p>
-          <Button variant="ghost" onClick={() => router.back()}>
-            ← Back to results
-          </Button>
-        </div>
+      <div className="min-h-screen flex flex-col bg-[#08080A]">
+        <AnimatedBackground />
+        <Header />
+        <main className="flex-1 relative z-10 flex items-center justify-center px-4">
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            className="w-full max-w-md"
+          >
+            {/* Card */}
+            <div className="rounded-2xl bg-white/[0.02] border border-white/[0.08] p-10 text-center shadow-[0_24px_64px_rgba(0,0,0,0.4)]">
+
+              {/* Icon */}
+              <div className="mx-auto mb-6 w-16 h-16 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                <GitCompare className="w-7 h-7 text-violet-400" />
+              </div>
+
+              {/* Title */}
+              <h2 className="text-xl font-semibold text-[#FAFAFA] mb-3">
+                {isNoSelection ? 'No products selected' : 'Comparison unavailable'}
+              </h2>
+
+              {/* Message */}
+              <p className="text-sm text-[#71717A] leading-relaxed mb-2">
+                {isNoSelection
+                  ? 'You need to select at least 2 products from a results page before comparing.'
+                  : msg}
+              </p>
+
+              {/* How-to hint */}
+              {isNoSelection && (
+                <div className="mt-5 mb-7 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] text-left">
+                  <p className="text-xs text-[#52525B] uppercase tracking-widest mb-3 font-medium">How to compare</p>
+                  <div className="space-y-2.5">
+                    {[
+                      { n: '1', text: 'Run a search and open the results page' },
+                      { n: '2', text: 'Tick the checkbox on 2 or more product cards' },
+                      { n: '3', text: 'Click "Compare selected" to open this page' },
+                    ].map((step) => (
+                      <div key={step.n} className="flex items-start gap-3">
+                        <span className="w-5 h-5 rounded-full bg-violet-500/15 text-violet-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                          {step.n}
+                        </span>
+                        <p className="text-xs text-[#A1A1AA] leading-relaxed">{step.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* CTAs */}
+              <div className={`flex gap-3 ${isNoSelection ? '' : 'mt-7'}`}>
+                <Button
+                  variant="ghost"
+                  onClick={() => router.back()}
+                  className="flex-1 h-10 border border-white/[0.08] text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-white/[0.04]"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Go back
+                </Button>
+                <Button
+                  onClick={() => router.push('/')}
+                  className="flex-1 h-10 bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-500/25"
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  New search
+                </Button>
+              </div>
+
+              {/* Secondary link */}
+              <button
+                onClick={() => router.push('/history')}
+                className="mt-4 flex items-center justify-center gap-1.5 w-full text-xs text-[#52525B] hover:text-[#A1A1AA] transition-colors"
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                View past research sessions
+              </button>
+            </div>
+          </motion.div>
+        </main>
+        <Footer />
       </div>
     )
   }
@@ -355,6 +446,7 @@ function ComparePageContent() {
           </div>
         </div>
       </main>
+      <Footer />
     </div>
   )
 }
@@ -363,8 +455,19 @@ export default function ComparePage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[#08080A]">
-          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+        <div className="min-h-screen flex flex-col bg-[#08080A]">
+          <AnimatedBackground />
+          <Header />
+          <main className="flex-1 relative z-10 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative">
+                <div className="w-12 h-12 rounded-full border-2 border-violet-500/30" />
+                <div className="absolute inset-0 w-12 h-12 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+              </div>
+              <p className="text-sm text-[#71717A]">Loading comparison…</p>
+            </div>
+          </main>
+          <Footer />
         </div>
       }
     >

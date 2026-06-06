@@ -10,6 +10,7 @@ import { CommandPalette } from '@/components/layout/command-palette'
 import { HeroSearch } from '@/components/home/hero-search'
 import { ChipRow } from '@/components/home/chip-row'
 import { FeatureCards } from '@/components/home/feature-cards'
+import { LearnMoreSection } from '@/components/home/learn-more-section'
 import { StatsStrip } from '@/components/home/stats-strip'
 import { RecentSearches } from '@/components/home/recent-searches'
 
@@ -94,7 +95,10 @@ export default function HomePage() {
         
         {/* Feature Cards */}
         <FeatureCards />
-        
+
+        {/* Learn More deep-dive */}
+        <LearnMoreSection />
+
         {/* Stats Strip */}
         <StatsStrip />
         

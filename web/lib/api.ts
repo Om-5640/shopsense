@@ -54,7 +54,7 @@ client.interceptors.request.use(async (config) => {
   return config
 })
 
-// Handle rate limiting and expired sessions globally
+// Handle rate limiting globally
 client.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -64,14 +64,11 @@ client.interceptors.response.use(
         import('sonner').then(({ toast }) => {
           toast.error('Too many requests — please wait a moment and try again.')
         })
-      } else if (status === 401) {
-        // Sign out cleanly so authStatus → unauthenticated and pages render
-        // their own sign-in card. Hard window.location redirect was causing
-        // infinite loops when memory API returned 401 on every reload.
-        import('next-auth/react').then(({ signOut }) => {
-          signOut({ callbackUrl: '/login' })
-        })
       }
+      // Note: 401 is intentionally NOT handled here. Auto-signOut on any backend
+      // 401 caused an infinite login loop: backend token mismatch → 401 → signOut
+      // → memory page shows "sign in" → user signs in → same 401 → signOut → loop.
+      // Pages that require auth show their own in-page sign-in prompt via useSession().
     }
     return Promise.reject(err)
   }

@@ -209,49 +209,136 @@ html.light ::-webkit-scrollbar-thumb:hover {
   }
 }
 
+/* ── Keyframe animations ─────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px);  }
+  50%       { transform: translateY(-6px); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.12; }
+  50%       { opacity: 0.28; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes aurora-shift {
+  0%   { background-position: 0% 50%;   }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%;   }
+}
+
+@keyframes grid-scroll {
+  from { background-position-y: 0px;  }
+  to   { background-position-y: 64px; }
+}
+
 /* Premium glassmorphism utilities */
 @layer utilities {
   .glass {
     @apply backdrop-blur-xl bg-white/[0.02] border border-white/[0.06];
   }
-  
+
   .glass-strong {
     @apply backdrop-blur-xl bg-white/[0.04] border border-white/[0.10];
   }
-  
+
   .gradient-text {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-violet-400 to-white;
   }
-  
+
   .gradient-text-accent {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-purple-400 to-violet-300;
   }
-  
+
+  /* Numbers with violet→white sweep */
+  .gradient-number {
+    background: linear-gradient(135deg, #A78BFA 0%, #C4B5FD 40%, #FAFAFA 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
   .shadow-premium {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.3);
   }
-  
+
   .shadow-glow {
-    box-shadow: 0 0 20px rgba(167, 139, 250, 0.3), 0 0 40px rgba(167, 139, 250, 0.1);
+    box-shadow: 0 0 20px rgba(167,139,250,0.3), 0 0 40px rgba(167,139,250,0.1);
   }
-  
+
   .shadow-glow-sm {
-    box-shadow: 0 0 10px rgba(167, 139, 250, 0.2);
+    box-shadow: 0 0 10px rgba(167,139,250,0.2);
   }
-  
+
+  .shadow-glow-emerald {
+    box-shadow: 0 0 16px rgba(52,211,153,0.25);
+  }
+
+  /* Shimmer scan overlay */
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
+    background-size: 200% 100%;
+    animation: shimmer 2.5s infinite;
+  }
+
+  .animate-float {
+    animation: float 4s ease-in-out infinite;
+  }
+
+  .animate-glow-pulse {
+    animation: glow-pulse 3s ease-in-out infinite;
+  }
+
+  .animate-fade-up {
+    animation: fade-up 0.5s ease-out both;
+  }
+
+  .animate-grid-scroll {
+    animation: grid-scroll 2.5s linear infinite;
+  }
+
+  /* Gradient border on hover — wrapper must be `relative` with `overflow-hidden` */
+  .card-hover-border {
+    position: relative;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  .card-hover-border::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(167,139,250,0.35) 0%, transparent 50%, rgba(167,139,250,0.15) 100%);
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .card-hover-border:hover::after {
+    opacity: 1;
+  }
+
   /* Score gradients */
   .score-high {
     @apply bg-gradient-to-r from-emerald-500 to-teal-400;
   }
-  
+
   .score-medium {
     @apply bg-gradient-to-r from-amber-500 to-orange-400;
   }
-  
+
   .score-low {
     @apply bg-gradient-to-r from-rose-500 to-red-400;
   }
-  
+
   /* Noise texture overlay */
   .noise-overlay::before {
     content: '';

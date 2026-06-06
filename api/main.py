@@ -341,12 +341,19 @@ def _verify_auth_token(request: Request) -> Optional[str]:
         payload = _jwt.decode(token, _NEXTAUTH_SECRET, algorithms=["HS256"])
         sub = payload.get("sub")
         if not sub:
-            raise HTTPException(status_code=401, detail="Token missing sub claim")
+            _logger.debug("[auth] token missing sub — treating as guest")
+            return None
         return f"auth_{sub}"
     except _jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Session expired — please log in again")
+        # Expired token → guest fallback; the frontend session will expire too
+        # and the page will show its own sign-in prompt via useSession().
+        _logger.debug("[auth] token expired — treating as guest")
+        return None
     except _jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+        # Invalid/malformed token (e.g. old Google id_token format) → guest fallback
+        # instead of a hard 401 that triggers frontend signOut loops.
+        _logger.debug("[auth] invalid token (%s) — treating as guest", exc)
+        return None
 
 
 def _get_user_id(request: Request) -> str:
