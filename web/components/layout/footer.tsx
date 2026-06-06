@@ -1,47 +1,64 @@
 import Link from 'next/link'
-import { Github, FileText, Twitter } from 'lucide-react'
+import { Github } from 'lucide-react'
 
 export function Footer() {
+  const year = new Date().getFullYear()
+
   return (
-    <footer className="border-t border-white/[0.06] py-8">
-      <div className="max-w-6xl mx-auto px-4">
+    <footer className="relative border-t border-white/[0.05] mt-auto">
+      <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          {/* Version */}
-          <span className="text-xs font-mono text-[#71717A]">v8.0</span>
-          
+
+          {/* Brand */}
+          <div className="flex items-center gap-2.5">
+            <div className="relative w-6 h-6 flex-shrink-0">
+              <div className="absolute inset-0 rounded-full border border-violet-400/60" />
+              <div className="absolute inset-[3px] rounded-full border border-violet-400/40" />
+              <div className="absolute inset-[6px] rounded-full bg-violet-400/70" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-[#A1A1AA]">ShopResearch</span>
+              <span className="text-[#3F3F46] text-xs">—</span>
+              <span className="text-xs text-[#3F3F46]">AI-powered product research</span>
+            </div>
+          </div>
+
           {/* Links */}
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-1">
             <Link
-              href="https://github.com"
+              href="https://github.com/Om-5640/shopsense"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-[#71717A] hover:text-[#FAFAFA] transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
             >
-              <Github className="w-4 h-4" />
-              <span className="hidden sm:inline">GitHub</span>
+              <Github className="w-3.5 h-3.5" />
+              Source
             </Link>
             <Link
-              href="/docs"
-              className="flex items-center gap-2 text-sm text-[#71717A] hover:text-[#FAFAFA] transition-colors"
+              href="/history"
+              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
             >
-              <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">Docs</span>
+              History
             </Link>
             <Link
-              href="https://twitter.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-[#71717A] hover:text-[#FAFAFA] transition-colors"
+              href="/memory"
+              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
             >
-              <Twitter className="w-4 h-4" />
-              <span className="hidden sm:inline">Twitter</span>
+              Memory
+            </Link>
+            <Link
+              href="/settings"
+              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
+            >
+              Settings
             </Link>
           </div>
-          
-          {/* Credit */}
-          <span className="text-xs text-[#71717A]">
-            Built with AI
+
+          {/* Copyright */}
+          <span className="text-xs text-[#3F3F46] font-mono tabular-nums">
+            © {year}
           </span>
+
         </div>
       </div>
     </footer>

@@ -15,5 +15,7 @@ export default auth((req) => {
 })
 
 export const config = {
-  matcher: ['/memory/:path*'],
+  // Only hard-block routes that must never be reachable by guests.
+  // /memory handles its own unauthenticated UI — no redirect needed.
+  matcher: [],
 }

@@ -121,18 +121,91 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ── Light mode overrides ─────────────────────────────────────────── */
+html.light {
+  --background: #F2F2F6;
+  --background-surface: #FFFFFF;
+  --background-hover: #E8E8EF;
+  --foreground: #09090B;
+  --foreground-secondary: #3F3F46;
+  --foreground-muted: #52525B;
+  --card: #FFFFFF;
+  --card-foreground: #09090B;
+  --popover: #FFFFFF;
+  --popover-foreground: #09090B;
+  --border: rgba(0, 0, 0, 0.10);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --input: rgba(0, 0, 0, 0.04);
+  --muted: #E4E4E9;
+  --muted-foreground: #52525B;
+  color-scheme: light;
+}
+
+/* Remap hardcoded dark page backgrounds */
+html.light .bg-\[\#08080A\]  { background-color: #F2F2F6 !important; }
+html.light .bg-\[\#0F0F12\]  { background-color: #FFFFFF !important; }
+html.light .bg-\[\#0D0D10\]  { background-color: #FFFFFF !important; }
+
+/* Remap hardcoded text colors */
+html.light .text-\[\#FAFAFA\]  { color: #09090B !important; }
+html.light .text-\[\#A1A1AA\]  { color: #3F3F46 !important; }
+html.light .text-\[\#71717A\]  { color: #52525B !important; }
+html.light .text-\[\#52525B\]  { color: #71717A !important; }
+html.light .text-\[\#4B4B55\]  { color: #71717A !important; }
+html.light .text-\[\#3F3F46\]  { color: #A1A1AA !important; }
+html.light .text-\[\#E2E2E2\]  { color: #18181B !important; }
+
+/* Remap transparent borders */
+html.light .border-white\/\[0\.04\]  { border-color: rgba(0,0,0,0.05) !important; }
+html.light .border-white\/\[0\.05\]  { border-color: rgba(0,0,0,0.06) !important; }
+html.light .border-white\/\[0\.06\]  { border-color: rgba(0,0,0,0.07) !important; }
+html.light .border-white\/\[0\.07\]  { border-color: rgba(0,0,0,0.08) !important; }
+html.light .border-white\/\[0\.08\]  { border-color: rgba(0,0,0,0.09) !important; }
+html.light .border-white\/\[0\.10\]  { border-color: rgba(0,0,0,0.11) !important; }
+html.light .border-white\/\[0\.12\]  { border-color: rgba(0,0,0,0.13) !important; }
+html.light .border-white\/10        { border-color: rgba(0,0,0,0.10) !important; }
+
+/* Remap transparent fill backgrounds */
+html.light .bg-white\/\[0\.02\]  { background-color: rgba(0,0,0,0.02) !important; }
+html.light .bg-white\/\[0\.025\] { background-color: rgba(0,0,0,0.025) !important; }
+html.light .bg-white\/\[0\.03\]  { background-color: rgba(0,0,0,0.03) !important; }
+html.light .bg-white\/\[0\.04\]  { background-color: rgba(0,0,0,0.03) !important; }
+html.light .bg-white\/\[0\.05\]  { background-color: rgba(0,0,0,0.04) !important; }
+html.light .bg-white\/\[0\.06\]  { background-color: rgba(0,0,0,0.05) !important; }
+html.light .bg-white\/\[0\.07\]  { background-color: rgba(0,0,0,0.06) !important; }
+html.light .bg-white\/\[0\.08\]  { background-color: rgba(0,0,0,0.06) !important; }
+
+/* Header backdrop */
+html.light .backdrop-blur-xl.bg-black\/40 {
+  background-color: rgba(242,242,246,0.85) !important;
+}
+
+/* Scrollbar in light mode */
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.25);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  
+
   html {
-    @apply bg-background;
+    background-color: var(--background);
     color-scheme: dark;
   }
-  
+
+  html.light {
+    color-scheme: light;
+  }
+
   body {
-    @apply bg-background text-foreground antialiased;
+    background-color: var(--background);
+    color: var(--foreground);
+    @apply antialiased;
   }
 }
 

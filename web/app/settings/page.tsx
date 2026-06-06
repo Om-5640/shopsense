@@ -80,6 +80,17 @@ export default function SettingsPage() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [region, setRegion] = useState('us')
   const [providers, setProviders] = useState<ProviderStatus[]>([])
+
+  // Load persisted region on mount
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('shopsense_region') : null
+    if (saved) setRegion(saved)
+  }, [])
+
+  const handleRegionChange = (val: string) => {
+    setRegion(val)
+    localStorage.setItem('shopsense_region', val)
+  }
   const [providersLoading, setProvidersLoading] = useState(true)
   const { data: session, status: authStatus } = useSession()
   const { clearHistory } = useAppStore()
@@ -264,7 +275,7 @@ export default function SettingsPage() {
                 <Label htmlFor="region" className="text-sm text-[#A1A1AA] font-normal mb-2 block">
                   Default region
                 </Label>
-                <Select value={region} onValueChange={setRegion}>
+                <Select value={region} onValueChange={handleRegionChange}>
                   <SelectTrigger
                     id="region"
                     className="w-full sm:w-[220px] bg-white/[0.03] border-white/[0.07] text-[#FAFAFA] rounded-xl h-10"
