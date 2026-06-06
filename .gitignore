@@ -82,3 +82,11 @@ htmlcov/
 
 # ── Docker volumes ───────────────────────────────────────────────────────────────
 pgdata/
+
+# ── Local-only docs (kept on disk, not for public repo) ──────────────────────────
+ARCHITECTURE.md
+SYSTEM_OVERVIEW.md
+CHANGELOG.md
+ROADMAP.md
+DEPLOYMENT.md
+evals/data/history/runs.jsonl
