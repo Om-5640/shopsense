@@ -73,6 +73,53 @@ MIN_COMMENT_SCORE = 1       # skip downvoted or zero-score comments
 MAX_COMMENTS_PER_THREAD = 100
 MAX_REPLY_DEPTH = 3         # how deep to recurse into reply trees
 
+# ---- spam / affiliate bot detection ----
+
+# Known URL-shortener and affiliate-tracker domains seen in Reddit bot comments.
+_SPAM_LINK_DOMAINS = frozenset({
+    "bit.ly", "tinyurl.com", "goo.gl", "ow.ly", "buff.ly", "rb.gy",
+    "linktr.ee", "t.co", "amzn.to", "amzn.eu", "amzn.in",
+    "go.skimresources.com", "dpbolvw.net", "jdoqocy.com", "kqzyfj.com",
+    "tkqlhce.com", "anrdoezrs.net",
+})
+
+# Trusted link hosts that are fine even in short comments
+_TRUSTED_LINK_HOSTS = frozenset({
+    "reddit.com", "i.redd.it", "imgur.com", "youtube.com", "youtu.be",
+    "rtings.com", "amazon.com", "amazon.co.uk", "amazon.in",
+    "bestbuy.com", "flipkart.com", "newegg.com",
+})
+
+_URL_RE = re.compile(r"https?://(?:www\.)?([a-zA-Z0-9.\-]+)", re.IGNORECASE)
+
+
+def _is_spam_comment(body: str) -> bool:
+    """
+    Return True if the comment looks like a bot/affiliate referral.
+    Catches:
+      - Links to github.io personal promo pages (e.g. "try the Targy → targy.github.io")
+      - Known URL shorteners / affiliate trackers
+      - Very short comments (< 100 chars) containing any non-trusted external link
+    """
+    hosts = _URL_RE.findall(body)
+    if not hosts:
+        return False
+    for host in hosts:
+        host = host.lower()
+        # Personal promo pages masquerading as product sites
+        if host.endswith(".github.io") or host == "github.io":
+            return True
+        # Confirmed spam domains
+        if host in _SPAM_LINK_DOMAINS:
+            return True
+    # Short comment with an external link that isn't a known authority → drive-by referral
+    if len(body.strip()) < 100:
+        for host in hosts:
+            host = host.lower()
+            if not any(host == t or host.endswith("." + t) for t in _TRUSTED_LINK_HOSTS):
+                return True
+    return False
+
 
 # ---- region awareness ----
 
@@ -531,8 +578,10 @@ def _flatten_comment_tree(comments_raw: list, depth: int = 0) -> list[dict]:
         comment_id = cd.get("id", "")  # Reddit's unique comment ID
 
         if body and body not in ("[deleted]", "[removed]"):
-            # Quality filter: skip junk
-            if len(body.strip()) >= MIN_COMMENT_CHARS and score >= MIN_COMMENT_SCORE:
+            # Quality filter: skip junk and spam/affiliate bot comments
+            if (len(body.strip()) >= MIN_COMMENT_CHARS
+                    and score >= MIN_COMMENT_SCORE
+                    and not _is_spam_comment(body)):
                 out.append({
                     "id": comment_id,
                     "body": body[:1500],
@@ -746,6 +795,8 @@ def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
             score = c.get("score", 0) or 0
             if score < MIN_COMMENT_SCORE:
                 continue
+            if _is_spam_comment(body):
+                continue
             cid = c.get("id", "")
             if cid in seen_ids:
                 continue
@@ -823,6 +874,8 @@ def _arctic_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
                 continue
             score = c.get("score", 0) or c.get("ups", 0) or 0
             if score < MIN_COMMENT_SCORE:
+                continue
+            if _is_spam_comment(body):
                 continue
             cid = c.get("id", "")
             if cid in seen_ids:

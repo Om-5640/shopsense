@@ -276,6 +276,28 @@ def summarize_threads_parallel(
     if not threads:
         return []
 
+    # Filter threads with too few real comments — they produce nearly-empty summaries
+    # and waste one full LLM call that could go to a richer thread.
+    MIN_USEFUL_COMMENTS = 2
+    orig_count = len(threads)
+    useful = [t for t in threads if len(t.get("comments", [])) >= MIN_USEFUL_COMMENTS]
+    skipped_trivial = orig_count - len(useful)
+    if skipped_trivial:
+        print(f"[parallel] skipping {skipped_trivial} thread(s) with < {MIN_USEFUL_COMMENTS} fetched comments")
+    threads = useful
+
+    if not threads:
+        return []
+
+    # Sort highest-signal first: threads with more comments and higher post scores
+    # get scheduled first.  When throttle kicks in and some submissions are staggered,
+    # the most valuable threads are already in-flight.
+    threads = sorted(
+        threads,
+        key=lambda t: len(t.get("comments", [])) * 2 + t.get("score", 0) / 100,
+        reverse=True,
+    )
+
     # Adaptive worker count: check if throttle is already active from a prior run
     with _throttle_lock:
         throttled_now = _throttle_active and time.time() < _throttle_until

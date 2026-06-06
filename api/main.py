@@ -49,7 +49,7 @@ try:
 except ImportError:
     _HAS_PYJWT = False
 
-from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -417,7 +417,7 @@ class SearchRequest(BaseModel):
     query: str
     category: str
     region: str = "global"
-    profile: dict
+    profile: dict = {}   # optional — omitting it is the same as passing {}
     rubric: dict
     options: dict = {}
     qa_history: list[dict] = []  # v7: passed to signal extractor after pipeline
@@ -643,10 +643,15 @@ def _drain_with_timeout(session, timeout: float = 30.0):
 
 
 @app.get("/api/search/{search_id}")
-def get_search_result(search_id: str) -> dict:
+def get_search_result(search_id: str, response: Response) -> dict:
     row = get_search(search_id)
     if not row:
         raise HTTPException(404, "Search not found")
+    # Completed searches are immutable — let browsers cache for 60s and
+    # serve stale for 5 min while revalidating in the background.
+    # This prevents 3+ browser tabs from hammering the endpoint on the same result.
+    if row.get("status") == "done":
+        response.headers["Cache-Control"] = "max-age=60, stale-while-revalidate=300"
     return row
 
 
@@ -993,9 +998,29 @@ def health() -> dict:
         _logger.debug("[health] memory check failed: %s", exc)
         memory_ok = False
 
+    scoring_mode = "unknown"
+    scoring_mode_note = ""
+    try:
+        from scorer import SCORING_MODE as _sm
+        scoring_mode = _sm
+        if _sm == "llm":
+            scoring_mode_note = (
+                "LLM mode: full LLM scoring for all products. "
+                "Set SCORING_MODE=fast to reduce API usage."
+            )
+        elif _sm == "hybrid":
+            scoring_mode_note = (
+                "Hybrid mode: LLM scoring for top-10 products, heuristic for rest. "
+                "Set SCORING_MODE=fast to skip LLM scoring entirely (recommended for free-tier keys)."
+            )
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "db": "ok" if db_ok else "error",
         "memory": "ok" if memory_ok else "unavailable",
         "providers": get_provider_status(),
+        "scoring_mode": scoring_mode,
+        **({"scoring_mode_note": scoring_mode_note} if scoring_mode_note else {}),
     }

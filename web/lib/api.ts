@@ -225,7 +225,7 @@ export async function getHealth() {
 
 const _PROVIDER_LABELS: Record<string, { name: string; model: string }> = {
   groq: { name: 'Groq', model: 'llama-3.3-70b-versatile' },
-  gemini: { name: 'Google Gemini', model: 'gemini-2.0-flash' },
+  gemini: { name: 'Google Gemini', model: 'gemini-2.5-flash' },
   mistral: { name: 'Mistral', model: 'mistral-small-latest' },
   cerebras: { name: 'Cerebras', model: 'llama-3.3-70b' },
   openrouter: { name: 'OpenRouter', model: 'mixed' },

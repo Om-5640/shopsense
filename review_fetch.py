@@ -116,6 +116,22 @@ _JINA_HEADERS = {
     "X-Timeout": "15",
 }
 
+# Sites that always fail direct HTTP (anti-bot JS rendering, paywall headers).
+# We skip the raw HTTP attempt entirely and go straight to Jina, saving ~15s per URL.
+_KNOWN_JS_HEAVY = frozenset({
+    "pcmag.com", "techradar.com", "cnet.com", "tomsguide.com",
+    "tomshardware.com", "digitaltrends.com", "zdnet.com",
+    "wired.com", "theverge.com", "engadget.com",
+    "9to5mac.com", "9to5google.com", "macrumors.com",
+})
+
+# Data-rich sites that require a longer Jina server-side render timeout.
+# rtings.com pages are very large (spec tables, charts); 15s is consistently insufficient.
+_JINA_LONG_TIMEOUT_DOMAINS = frozenset({
+    "rtings.com", "notebookcheck.net", "gsmarena.com",
+    "dxomark.com", "phonearena.com",
+})
+
 
 # ---- find review URLs ----
 
@@ -271,12 +287,25 @@ def _normalize_url(url: str) -> str:
 # ---- scrape page content ----
 
 def _fetch_via_jina(url: str) -> str | None:
-    """Fetch page via Jina Reader — handles JS-heavy sites and some 403 blocks."""
+    """Fetch page via Jina Reader — handles JS-heavy sites and some 403 blocks.
+
+    Adaptive timeout: data-rich domains (rtings.com, gsmarena.com…) get 35s client
+    timeout and tell Jina's server to wait up to 28s; all others use 25s / 15s.
+    """
+    domain = urlparse(url).netloc.lower().replace("www.", "")
+    if domain in _JINA_LONG_TIMEOUT_DOMAINS:
+        client_timeout = 40
+        server_timeout = "30"   # X-Timeout sent to Jina
+    else:
+        client_timeout = 25
+        server_timeout = "15"
+
+    headers = {**_JINA_HEADERS, "X-Timeout": server_timeout}
     try:
         resp = requests.get(
             f"{_JINA_BASE}/{url}",
-            headers=_JINA_HEADERS,
-            timeout=25,
+            headers=headers,
+            timeout=client_timeout,
         )
         if resp.status_code == 200:
             text = resp.text.strip()
@@ -300,22 +329,28 @@ def fetch_review_page(url: str) -> dict | None:
     if cached is not None:
         return cached
 
-    raw_html_ok = True
-    try:
-        resp = requests.get(url, headers=_scraper_headers(), timeout=15)
-        if resp.status_code == 403 or resp.status_code == 401:
-            print(f"[scrape] {resp.status_code} for {url}, trying Jina Reader...")
+    # Skip direct HTTP for known JS-heavy / anti-bot domains — saves ~15s wasted attempt.
+    # These sites require server-side JS rendering that Jina provides.
+    raw_html_ok = domain not in _KNOWN_JS_HEAVY
+    if not raw_html_ok:
+        print(f"[scrape] {domain}: known JS-heavy, skipping direct HTTP → Jina only")
+    html = ""
+    if raw_html_ok:
+        try:
+            resp = requests.get(url, headers=_scraper_headers(), timeout=15)
+            if resp.status_code == 403 or resp.status_code == 401:
+                print(f"[scrape] {resp.status_code} for {url}, trying Jina Reader...")
+                raw_html_ok = False
+            elif resp.status_code >= 400:
+                print(f"[scrape] {resp.status_code} for {url}")
+                _db.record_failure(domain, status_code=resp.status_code)
+                return None
+            else:
+                resp.encoding = resp.apparent_encoding or "utf-8"
+                html = resp.text
+        except Exception as e:
+            print(f"[scrape] failed {url}: {e}")
             raw_html_ok = False
-        elif resp.status_code >= 400:
-            print(f"[scrape] {resp.status_code} for {url}")
-            _db.record_failure(domain, status_code=resp.status_code)
-            return None
-        else:
-            resp.encoding = resp.apparent_encoding or "utf-8"
-            html = resp.text
-    except Exception as e:
-        print(f"[scrape] failed {url}: {e}")
-        raw_html_ok = False
 
     result = None
     if raw_html_ok:
