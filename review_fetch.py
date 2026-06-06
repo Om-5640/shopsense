@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 import cache
 import domain_blacklist as _db
+from reddit_fetch import detect_region
 
 # Phase 1–9 enhancement modules — all optional; failures are non-fatal.
 try:

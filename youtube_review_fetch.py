@@ -217,8 +217,10 @@ def _is_trusted(channel: str) -> bool:
 def _get_transcript_snippet(video_id: str) -> Optional[str]:
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        entries = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
-        text = " ".join(e["text"] for e in entries)
+        # v1.x API: instantiate first, then call fetch() (get_transcript() removed in v1.2.4)
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=["en", "en-US", "en-GB"])
+        entries = list(transcript)
+        text = " ".join(e["text"] if isinstance(e, dict) else e.text for e in entries)
         # Remove [Music], [Applause], noise
         text = re.sub(r"\[.*?\]", " ", text)
         text = re.sub(r"\s+", " ", text).strip()

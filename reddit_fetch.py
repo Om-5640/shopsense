@@ -42,6 +42,9 @@ _PULLPUSH_HEADERS = {"User-Agent": "ShopResearch/1.0"}
 # Arctic Shift — community Reddit archive, fallback #2
 _ARCTIC = "https://arctic-shift.photon-reddit.com/api"
 _ARCTIC_HEADERS = {"User-Agent": "ShopResearch/1.0", "Accept": "application/json"}
+# Persistent session reuses TCP connections across calls (~1s saved per thread)
+_arctic_session = requests.Session()
+_arctic_session.headers.update(_ARCTIC_HEADERS)
 
 # Reddit OAuth (app-only, no PRAW, no user login) — primary when credentials set
 # Register a free "script" app at reddit.com/prefs/apps to get CLIENT_ID + SECRET.
@@ -767,15 +770,33 @@ def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
 
 
 def _arctic_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
-    """Fetch thread via Arctic Shift — better coverage for recent posts (2024+)."""
+    """Fetch thread via Arctic Shift — primary no-credentials source.
+
+    Parallel-fetches post metadata and comments simultaneously to halve latency.
+    Uses a persistent session for TCP connection reuse across calls.
+    """
     post_id = _extract_post_id(permalink)
     if not post_id:
         return None
     try:
-        resp = requests.get(
-            f"{_ARCTIC}/posts/ids?ids={post_id}",
-            headers=_ARCTIC_HEADERS, timeout=10,
-        )
+        # Parallel fetch: post data and comments at the same time (~8s vs ~15s sequential)
+        def _get_post():
+            return _arctic_session.get(
+                f"{_ARCTIC}/posts/ids?ids={post_id}", timeout=12,
+            )
+
+        def _get_comments():
+            return _arctic_session.get(
+                f"{_ARCTIC}/comments/search?link_id=t3_{post_id}&limit={max_comments}",
+                timeout=15,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            post_future     = pool.submit(_get_post)
+            comments_future = pool.submit(_get_comments)
+            resp  = post_future.result()
+            resp2 = comments_future.result()
+
         resp.raise_for_status()
         posts = resp.json().get("data", []) or []
         if not posts:
@@ -783,10 +804,6 @@ def _arctic_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
             return None
         post = posts[0]
 
-        resp2 = requests.get(
-            f"{_ARCTIC}/comments/search?link_id=t3_{post_id}&limit={max_comments}",
-            headers=_ARCTIC_HEADERS, timeout=15,
-        )
         resp2.raise_for_status()
         raw_comments = resp2.json().get("data", []) or []
         raw_comments.sort(key=lambda c: (c.get("score") or 0), reverse=True)
@@ -845,16 +862,16 @@ def fetch_thread_comments(permalink: str, max_comments: int = MAX_COMMENTS_PER_T
     if cached is not None:
         return cached
 
-    # ---- Primary: Reddit OAuth (official API, no PRAW, <1s, 60 req/min) ----
-    # Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in .env.
-    # Free 2-min setup: reddit.com/prefs/apps → "script" app, any redirect URL.
+    # ---- Primary (with credentials): Reddit OAuth (<1s, 60 req/min) ----
+    # Reddit now requires a form approval process for new API apps.
+    # Set REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET once approved.
     if _reddit_oauth_credentials_set():
         result = _reddit_oauth_fetch_thread(permalink, max_comments)
         if result is not None:
             cache.set("reddit_thread", permalink, result)
             return result
 
-    # ---- Fallback #2: Arctic Shift (community archive, no credentials, ~10-15s) ----
+    # ---- Primary (no credentials): Arctic Shift (parallel fetch, ~8s) ----
     result = _arctic_fetch_thread(permalink, max_comments)
     if result is not None:
         cache.set("reddit_thread", permalink, result)

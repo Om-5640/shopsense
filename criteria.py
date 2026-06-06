@@ -66,14 +66,20 @@ def _parse_and_clean_criteria(raw: str) -> list[dict]:
     for c in criteria:
         if not isinstance(c, dict):
             continue
-        if not c.get("name") or not c.get("label"):
+        name = (c.get("name") or "").strip()
+        label = (c.get("label") or "").strip()
+        desc = (c.get("description") or "").strip()
+        high = (c.get("high_score_means") or "").strip()
+        low = (c.get("low_score_means") or "").strip()
+        # Require all five fields — incomplete criteria produce bad rubrics and questions
+        if not name or not label or not desc or not high or not low:
             continue
         clean.append({
-            "name": c["name"],
-            "label": c["label"],
-            "description": c.get("description", ""),
-            "high_score_means": c.get("high_score_means", ""),
-            "low_score_means": c.get("low_score_means", ""),
+            "name": name,
+            "label": label,
+            "description": desc,
+            "high_score_means": high,
+            "low_score_means": low,
         })
     return clean
 
