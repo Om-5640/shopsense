@@ -109,7 +109,12 @@ export default function MemoryPage() {
     }
   }, [])
 
-  useEffect(() => { reload() }, [reload])
+  // Wait until auth is resolved before hitting the API.
+  // Firing while status==='loading' causes failed requests and repeated error toasts.
+  useEffect(() => {
+    if (authStatus === 'authenticated') reload()
+    if (authStatus === 'unauthenticated') setLoading(false)
+  }, [authStatus, reload])
 
   async function handleRemoveSignal(id: string) {
     try {
@@ -151,8 +156,20 @@ export default function MemoryPage() {
     .slice(0, 4)
     .map((s) => s.text)
 
-  // Prompt unauthenticated users to sign in (middleware also redirects, but
-  // this gives a graceful in-page fallback for any edge cases).
+  // While NextAuth is resolving the session, show a neutral spinner.
+  if (authStatus === 'loading') {
+    return (
+      <div className="min-h-screen flex flex-col bg-[#08080A]">
+        <AnimatedBackground />
+        <Header onOpenCommandPalette={() => setCommandOpen(true)} />
+        <main className="flex-1 relative z-10 flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+        </main>
+      </div>
+    )
+  }
+
+  // Show in-page sign-in card for guests (no redirect, graceful fallback).
   if (authStatus === 'unauthenticated') {
     return (
       <div className="min-h-screen flex flex-col bg-[#08080A]">

@@ -51,7 +51,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="font-sans antialiased min-h-screen">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          <SessionProvider>
+          <SessionProvider refetchOnWindowFocus={false} refetchInterval={0}>
             <AdoptLegacy />
             {children}
           </SessionProvider>
