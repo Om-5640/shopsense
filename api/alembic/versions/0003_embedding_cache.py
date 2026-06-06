@@ -22,7 +22,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("""
+    dialect = op.get_bind().dialect.name
+    if dialect == "postgresql":
+        expires_default = "NOW() + INTERVAL '1 year'"
+    else:
+        expires_default = "datetime('now', '+1 year')"
+
+    op.execute(f"""
         CREATE TABLE IF NOT EXISTS EmbeddingCache (
             hash        TEXT PRIMARY KEY,
             text        TEXT NOT NULL,
@@ -30,7 +36,7 @@ def upgrade() -> None:
             embedding   TEXT NOT NULL,
             dims        INTEGER NOT NULL,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at  TIMESTAMP DEFAULT (datetime('now', '+1 year'))
+            expires_at  TIMESTAMP DEFAULT ({expires_default})
         )
     """)
     op.execute(
