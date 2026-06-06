@@ -34,24 +34,6 @@ export function Footer() {
               <Github className="w-3.5 h-3.5" />
               Source
             </Link>
-            <Link
-              href="/history"
-              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
-            >
-              History
-            </Link>
-            <Link
-              href="/memory"
-              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
-            >
-              Memory
-            </Link>
-            <Link
-              href="/settings"
-              className="px-3 py-1.5 rounded-lg text-xs text-[#52525B] hover:text-[#A1A1AA] hover:bg-white/[0.04] transition-all duration-200"
-            >
-              Settings
-            </Link>
           </div>
 
           {/* Copyright */}

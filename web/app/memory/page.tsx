@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Brain,
@@ -85,7 +85,8 @@ function groupByCategory<T extends { category?: string }>(items: T[]): Map<strin
 export default function MemoryPage() {
   const { status: authStatus } = useSession()
   const [commandOpen, setCommandOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const fetchedRef = useRef(false)
   const [preferences, setPreferences] = useState<UserSignal[]>([])
   const [avoided, setAvoided] = useState<UserSignal[]>([])
   const [products, setProducts] = useState<ProductMemory[]>([])
@@ -109,11 +110,14 @@ export default function MemoryPage() {
     }
   }, [])
 
-  // Wait until auth is resolved before hitting the API.
-  // Firing while status==='loading' causes failed requests and repeated error toasts.
+  // Wait until auth resolves, then fetch exactly once.
+  // useRef guard prevents double-fire from React StrictMode + authStatus cycling.
   useEffect(() => {
-    if (authStatus === 'authenticated') reload()
-    if (authStatus === 'unauthenticated') setLoading(false)
+    if (authStatus === 'loading') return
+    if (authStatus === 'unauthenticated') return
+    if (fetchedRef.current) return
+    fetchedRef.current = true
+    reload()
   }, [authStatus, reload])
 
   async function handleRemoveSignal(id: string) {

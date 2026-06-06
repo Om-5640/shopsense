@@ -78,18 +78,18 @@ function SectionHeader({
 
 export default function SettingsPage() {
   const [commandOpen, setCommandOpen] = useState(false)
-  const [region, setRegion] = useState('us')
+  const [region, setRegion] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('shopsense_region') ?? 'us'
+    }
+    return 'us'
+  })
   const [providers, setProviders] = useState<ProviderStatus[]>([])
-
-  // Load persisted region on mount
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('shopsense_region') : null
-    if (saved) setRegion(saved)
-  }, [])
 
   const handleRegionChange = (val: string) => {
     setRegion(val)
     localStorage.setItem('shopsense_region', val)
+    toast.success('Region saved')
   }
   const [providersLoading, setProvidersLoading] = useState(true)
   const { data: session, status: authStatus } = useSession()

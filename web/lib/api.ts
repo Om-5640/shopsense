@@ -65,9 +65,12 @@ client.interceptors.response.use(
           toast.error('Too many requests — please wait a moment and try again.')
         })
       } else if (status === 401) {
-        // Redirect to login; preserve current path for post-auth return
-        const next = encodeURIComponent(window.location.pathname + window.location.search)
-        window.location.href = `/login?next=${next}`
+        // Sign out cleanly so authStatus → unauthenticated and pages render
+        // their own sign-in card. Hard window.location redirect was causing
+        // infinite loops when memory API returned 401 on every reload.
+        import('next-auth/react').then(({ signOut }) => {
+          signOut({ callbackUrl: '/login' })
+        })
       }
     }
     return Promise.reject(err)
