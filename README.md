@@ -2,14 +2,14 @@
 
 # ShopSense
 
-### A multi-agent AI research pipeline that does 3 hours of human product research in ~85 seconds — and continuously scores its intelligence through a self-grading 9-metric Intelligence Index backed by 200+ benchmark cases and real-pipeline fixtures.
+### A multi-agent AI research pipeline that does 3 hours of human product research in ~85 seconds — and continuously scores its intelligence through a self-grading 15-metric Intelligence Index backed by 950+ benchmark cases and real-pipeline fixtures.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Tests](https://img.shields.io/badge/tests-431%20passing-2ea44f)](#engineering-rigor)
-[![Intelligence Index](https://img.shields.io/badge/Intelligence%20Index-97.3%2F100%20(A%2B)-7C3AED)](#the-self-grading-eval-platform)
+[![Tests](https://img.shields.io/badge/tests-988%20passing-2ea44f)](#engineering-rigor)
+[![Intelligence Index](https://img.shields.io/badge/Intelligence%20Index-97.6%2F100%20(A%2B)-7C3AED)](#the-self-grading-eval-platform)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **12 specialized agents · 5 LLM providers with circuit-breaker failover · deterministic mention counting · cross-community bias detection · vector memory · Google OAuth persistent identity · live zero-API re-ranking — all on free tiers.**
@@ -20,7 +20,7 @@
 
 > Not a chatbot. Not a listing aggregator. ShopSense is a **research pipeline** that reads 15 Reddit threads and a handful of expert reviews, counts what real people actually recommend (with a deterministic automaton, not an LLM guess), checks whether communities *disagree*, scores everything against a rubric it built **for you** in an interview, and streams the whole thing to your browser live — then lets you re-weight your priorities and watch the ranking re-sort in under 5 milliseconds with zero additional API calls.
 
-It is also one of the few projects of its kind that **measures its own decision quality** — not just with synthetic checks, but against **recorded real model output**. 200+ benchmark cases feeding a self-grading 9-metric Intelligence Index. A comprehensive benchmark suite plus replayed real-pipeline fixtures scores the system **97.3 / 100** and gates every commit in CI.
+It is also one of the few projects of its kind that **measures its own decision quality** — not just with synthetic checks, but against **recorded real model output**. 950+ benchmark cases feeding a self-grading 15-metric Intelligence Index. A comprehensive benchmark suite plus replayed real-pipeline fixtures scores the system **97.6 / 100** and gates every commit in CI.
 
 ---
 
@@ -53,7 +53,7 @@ The hard parts aren't "call an LLM." They are:
 | **Community disagreement** | Average the sentiment | **Cross-subreddit bias detection** — flags when r/audiophile and r/budgetaudiophile evaluate against different reference points. |
 | **Free-tier rate limits** | Hit one provider until it 429s | **5-provider circuit-breaker failover** + a round-robin pool giving 4× effective throughput. |
 | **Provider returns garbage JSON** | Crash, or silently corrupt | **Repair → validate → canonicalize** at every parse boundary, covered by **golden-file shape tests**. |
-| **"Is the system actually good?"** | Vibes | A **157-scenario benchmark** with an Intelligence Index, wired into CI. |
+| **"Is the system actually good?"** | Vibes | A **172-scenario benchmark**, 15-metric **Intelligence Index**, and 950+ benchmark cases wired into CI. |
 
 ---
 
@@ -153,19 +153,25 @@ This is the section that separates ShopSense from a weekend LLM wrapper. The har
 
 ### The self-grading eval platform
 
-ShopSense ships a **pure-Python evaluation harness** (`evals/`) that scores the recommendation engine across **157 scenarios in 4 categories** (earbuds, laptops, headphones, monitors) and **21 expert-annotated judgments** — **zero API calls, ~0.1 seconds**. The **Intelligence Index is 97.3 / 100 (A+)**, a weighted composite of 9 metrics:
+ShopSense ships a **pure-Python evaluation harness** (`evals/`) that scores the recommendation engine across **172 scenarios in 4 categories** (earbuds, laptops, headphones, monitors), **27 expert-annotated judgments**, **692 fault-injection cases**, and 6 additional benchmark suites covering score calibration, conflict detection, popularity-bias resistance, partial-credit alignment, and data integrity — **950+ benchmark cases total, zero API calls, ~0.4 seconds**. The **Intelligence Index is 97.6 / 100 (A+)**, a weighted composite of 15 metrics:
 
 | Metric | What it proves | Score |
 |---|---|---|
 | `recommendation_quality` | The right product wins for each scenario | **100.0** |
 | `counterfactual_sensitivity` | Changing one weight changes the winner as expected | **100.0** |
 | `ranking_quality` | Rankings are internally consistent (no contradictions) | **100.0** |
-| `robustness` | 15 prompt-injection / shill / token-flood attacks can't corrupt rankings | **100.0** |
 | `retrieval_quality` | Real research carries praise, complaints, and community signal | **100.0** |
 | `explanation_integrity` | Real evidence is grounded, not "no data found" placeholders | **100.0** |
+| `stage_isolation` | Every pipeline stage handles upstream failures without crashing (692 fault cases) | **100.0** |
+| `score_calibration` | Score distributions are honest — full range in use, no bunching at the ceiling | **100.0** |
+| `conflict_detection` | Cross-community disagreements are correctly flagged vs. consistent signals | **100.0** |
+| `mention_popularity_bias` | Rankings are driven by rubric match, not raw mention volume | **100.0** |
+| `fixture_staleness` | Benchmark data is time-stamped, schema-versioned, and content-hash-verified | **100.0** |
 | `semantic_consistency` | Paraphrased queries don't flip the #1 pick | **96.0** |
 | `personalization_strength` | Different personas genuinely get different winners | **92.5** |
-| `human_alignment` | Engine agrees with a cross-category expert panel | **76.9** |
+| `human_alignment` | Engine agrees with 27 cross-category expert judgments | **82.0** |
+| `nugget_alignment` | Engine agrees with experts at the individual product-claim level (partial credit) | **82.4** |
+| `robustness` | 15 prompt-injection / shill / token-flood attacks can't corrupt rankings | **100.0** |
 
 > **The part that makes this real, not a vanity score:** `retrieval_quality` and `explanation_integrity` can only be judged against *actual model output*. Rather than fake them from synthetic data, ShopSense replays **recorded real-pipeline fixtures** — committed captures of real Reddit → real LLM analysis → real scored products — so these two metrics produce genuine scores in CI **deterministically and for free**. A separate `python -m evals.online.record` job (capped at 2 live queries for free-tier limits) refreshes those fixtures from the real pipeline. The Index therefore measures *both* scoring math **and** live AI output quality — and if a model update starts dropping products or emitting ungrounded evidence, CI fails loudly.
 
@@ -200,7 +206,7 @@ Models change. Providers swap formats. The defense is a suite that feeds **delib
 → if a provider starts returning a new shape tomorrow, CI fails loudly instead of corrupting a ranking
 ```
 
-Combined with golden tests for the scorer and normalizer, recorded-pipeline replay (extraction recall, evidence grounding, no-hallucination checks), and the semantic-cache policy suite, the project ships **431 tests** covering unit logic, DB round-trips, the API surface, pipeline orchestration, real-output replay, and these LLM-shape boundaries.
+Combined with golden tests for the scorer and normalizer, recorded-pipeline replay (extraction recall, evidence grounding, no-hallucination checks), and the semantic-cache policy suite, the project ships **988 tests** covering unit logic, DB round-trips, the API surface, pipeline orchestration, real-output replay, and these LLM-shape boundaries.
 
 ### Reliability hardening
 
@@ -387,8 +393,8 @@ shopsense/
 ├── evals/                   ◀ the self-grading platform
 │   ├── data/pools/*.json            data-driven category benchmarks (zero hardcoding in code)
 │   ├── data/fixtures/recorded/*.json recorded real-pipeline output, replayed free in CI
-│   ├── benchmarks/          pool_loader · validate_pools · recorded · adversarial/semantic sets
-│   ├── metrics/             9 metrics; online-only metrics fed by recorded fixtures
+│   ├── benchmarks/          pool_loader · validate_pools · recorded · fault injection · conflict · bias · nugget · staleness
+│   ├── metrics/             15 metrics; online-only metrics fed by recorded fixtures
 │   ├── online/record.py     capture real fixtures from 2 live queries (rate-limit aware)
 │   ├── engine.py            pure-Python scoring mirror (no production imports)
 │   ├── index.py             Intelligence Index composite
@@ -411,14 +417,14 @@ shopsense/
 ├── source_filter.py         numeric authority scores, category-aware, source types
 ├── domain_blacklist.py      time-bounded, status-code-aware auto-blacklist
 ├── shopping_links.py · price_fetcher.py   validated links + real-time prices
-└── tests/                   431 tests: unit · integration · e2e · golden-file · LLM-shape · embeddings
+└── tests/                   988 tests: unit · integration · e2e · golden-file · LLM-shape · embeddings · evals
 ```
 
 ---
 
 ## Design decisions worth knowing
 
-**Why an eval harness at all?** Because "it felt good in the demo" is not a quality bar. A 157-scenario benchmark with a CI gate turns *recommendation quality* into a number that can regress a PR — the same way a test suite turns *correctness* into one.
+**Why an eval harness at all?** Because "it felt good in the demo" is not a quality bar. A 172-scenario benchmark with a CI gate turns *recommendation quality* into a number that can regress a PR — the same way a test suite turns *correctness* into one. 15 metrics and 950+ benchmark cases mean a single dimension like "correct winner" can't hide degradation in scoring honesty, bias resistance, or fault tolerance.
 
 **Why data-driven JSON pools instead of Python fixtures?** So the framework generalizes to any category without code changes, and so the benchmark can't quietly encode product-specific assumptions in the engine. A validator proves each scenario's labeled winner matches the deterministic math.
 
