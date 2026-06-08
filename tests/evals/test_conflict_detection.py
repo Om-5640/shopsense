@@ -524,8 +524,9 @@ class TestConfigIntegration:
         total = round(sum(INDEX_WEIGHTS.values()), 10)
         assert total == 1.0, f"INDEX_WEIGHTS sum to {total}, expected 1.0"
 
-    def test_conflict_detection_weight_is_two_percent(self):
-        assert INDEX_WEIGHTS["conflict_detection"] == 0.02
+    def test_conflict_detection_weight_is_one_percent(self):
+        # Reduced from 0.02 to 0.01 to make room for mention_popularity_bias
+        assert INDEX_WEIGHTS["conflict_detection"] == 0.01
 
     def test_in_pass_thresholds(self):
         assert "conflict_detection" in PASS_THRESHOLDS

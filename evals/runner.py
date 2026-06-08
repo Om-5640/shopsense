@@ -17,6 +17,7 @@ from evals.benchmarks import (
 from evals.benchmarks.fault_injection import all_fault_scenarios
 from evals.benchmarks.score_calibration import all_calibration_suites
 from evals.benchmarks.conflict_detection import all_conflict_scenarios
+from evals.benchmarks.mention_popularity_bias import all_bias_scenarios
 from evals.metrics import (
     RecommendationQualityMetric,
     SemanticConsistencyMetric,
@@ -31,6 +32,7 @@ from evals.metrics import (
     StageIsolationMetric,
     ScoreCalibrationMetric,
     ConflictDetectionMetric,
+    MentionPopularityBiasMetric,
 )
 from evals.metrics.base import MetricResult
 from evals.index import compute_index, compute_index_breakdown
@@ -81,6 +83,7 @@ class EvalRunner:
         self.fault_scenarios = all_fault_scenarios()
         self.calibration_suites = all_calibration_suites()
         self.conflict_scenarios = all_conflict_scenarios()
+        self.bias_scenarios = all_bias_scenarios()
 
     def run(self) -> EvalRunResult:
         start = time.perf_counter()
@@ -141,6 +144,12 @@ class EvalRunner:
         print("  [Phase 13] Conflict Detection...")
         result = ConflictDetectionMetric().evaluate(self.conflict_scenarios)
         metric_results["conflict_detection"] = result
+        _print_metric_summary(result)
+
+        # Phase 14: Mention Popularity Bias
+        print("  [Phase 14] Mention Popularity Bias...")
+        result = MentionPopularityBiasMetric().evaluate(self.bias_scenarios)
+        metric_results["mention_popularity_bias"] = result
         _print_metric_summary(result)
 
         if self.mode == "full":
