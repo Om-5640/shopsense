@@ -8,6 +8,7 @@ from .explanation_integrity import ExplanationIntegrityMetric
 from .robustness import RobustnessMetric
 from .human_alignment import HumanAlignmentMetric
 from .stage_isolation import StageIsolationMetric
+from .score_calibration import ScoreCalibrationMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -21,4 +22,5 @@ __all__ = [
     "RobustnessMetric",
     "HumanAlignmentMetric",
     "StageIsolationMetric",
+    "ScoreCalibrationMetric",
 ]
