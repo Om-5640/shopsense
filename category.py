@@ -167,6 +167,11 @@ def _detect_category_cached(norm_query: str) -> dict:
         else:
             result["options"] = clean_options[:4]  # system prompt says 2-4 (Bug 6 fix)
 
+    # Fix 16: surface low-confidence categories so frontend can prompt user before
+    # the interview starts, not during it. Confidence "low" means the system couldn't
+    # reliably determine the product type — a wrong category wastes the whole interview.
+    result["needs_clarification"] = result["needs_disambiguation"] or result["confidence"] == "low"
+
     cache.set("category", norm_query, result)
     return result
 
@@ -184,6 +189,7 @@ def _fallback_result() -> dict:
         "primary_noun": "item",
         "confidence": "low",
         "needs_disambiguation": False,
+        "needs_clarification": True,   # Fix 16: low confidence → always clarify
         "options": [],
     }
 
@@ -197,6 +203,7 @@ def _rule_based_result(query: str) -> dict | None:
                 "primary_noun": "mechanical keyboard",
                 "confidence": "high",
                 "needs_disambiguation": False,
+                "needs_clarification": False,
                 "options": [],
             }
 
@@ -205,6 +212,7 @@ def _rule_based_result(query: str) -> dict | None:
             "primary_noun": "keyboard",
             "confidence": "medium",
             "needs_disambiguation": True,
+            "needs_clarification": True,   # Fix 16
             "options": [
                 {
                     "slug": "electronics/keyboard-mechanical",

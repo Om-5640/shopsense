@@ -384,6 +384,11 @@ def normalize_analysis(raw: dict | None) -> dict:
     products  = products[:MAX_PRODUCTS]
     materials = materials[:MAX_MATERIALS]
 
+    # Fix 17: source_coverage — count of distinct sources that mentioned this product.
+    # Single-source products carry lower evidence authority than multi-source ones.
+    for p in products:
+        p["source_coverage"] = len(set(p.get("sources") or []))
+
     return {"summary": summary, "materials": materials, "products": products}
 
 

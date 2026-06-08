@@ -408,6 +408,72 @@ def _is_no_data(evidence: str) -> bool:
     return (not e) or any(m in e for m in _NO_DATA_MARKERS)
 
 
+def _add_relative_ranks(sorted_scored: list[dict]) -> None:
+    """
+    Fix 13: attach inter-product relative rankings so users can see how each product
+    compares to the field — not just its absolute score.
+
+    For each scoring criterion, labels each product's score as one of:
+      "Best"         — highest scorer on this criterion (or within 0.3 pts)
+      "Above avg"    — top third of the field
+      "Average"      — middle third
+      "Below avg"    — bottom third
+      "Weakest"      — lowest scorer on this criterion
+
+    Also attaches:
+      overall_rank (int 1-N) — overall finish position by weighted_total
+      gap_to_leader (float)  — score gap to the #1 product on weighted_total
+    """
+    n = len(sorted_scored)
+    if n == 0:
+        return
+
+    # Overall rank (list is already sorted by weighted_total desc)
+    leader_total = sorted_scored[0].get("weighted_total", 0.0)
+    for i, p in enumerate(sorted_scored):
+        p["overall_rank"] = i + 1
+        p["gap_to_leader"] = round(leader_total - float(p.get("weighted_total", 0.0)), 1)
+
+    # Per-criterion relative labels
+    criteria_names = {s["criterion"] for p in sorted_scored for s in p.get("scores", [])}
+    for crit in criteria_names:
+        crit_scores: list[tuple[float, dict]] = []
+        for p in sorted_scored:
+            for s in p.get("scores", []):
+                if s.get("criterion") == crit:
+                    crit_scores.append((float(s.get("score", 0.0)), s))
+                    break
+
+        if not crit_scores:
+            continue
+
+        crit_scores.sort(key=lambda x: x[0], reverse=True)
+        best_score = crit_scores[0][0]
+        worst_score = crit_scores[-1][0]
+        score_range = max(0.01, best_score - worst_score)
+
+        for rank_idx, (score, score_entry) in enumerate(crit_scores):
+            if n == 1:
+                label = "Only option"
+            elif n == 2:
+                label = "Best" if rank_idx == 0 else "Weakest"
+            else:
+                # Position within range: 1.0 = best, 0.0 = worst
+                pos = (score - worst_score) / score_range
+                if score >= best_score - 0.3:
+                    label = "Best"
+                elif pos >= 0.67:
+                    label = "Above avg"
+                elif pos >= 0.33:
+                    label = "Average"
+                elif rank_idx == len(crit_scores) - 1:
+                    label = "Weakest"
+                else:
+                    label = "Below avg"
+
+            score_entry["relative_rank"] = label
+
+
 def _finalize_scoring(scored: list[dict], rubric: dict) -> list[dict]:
     """
     RELIABILITY FIX — the most important step for trustworthy ranking.
@@ -466,9 +532,21 @@ def _finalize_scoring(scored: list[dict], rubric: dict) -> list[dict]:
         p["max_possible"] = round(mp, 1)
         p["percentage"] = _compute_percentage(wt, mp)
         p["data_coverage"] = round(cov, 2)
-        p["confidence"] = "high" if cov >= 0.7 else "medium" if cov >= 0.4 else "low"
+        conf = "high" if cov >= 0.7 else "medium" if cov >= 0.4 else "low"
+        # Fix 17: single-source products get a one-tier confidence penalty regardless of
+        # data_coverage — one LLM mention cannot be treated the same as 5 Reddit threads.
+        sc = p.get("source_coverage")
+        if isinstance(sc, int) and sc == 1:
+            if conf == "high":
+                conf = "medium"
+            elif conf == "medium":
+                conf = "low"
+        p["confidence"] = conf
 
-    return sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
+    ranked = sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
+    # Fix 13: attach inter-product relative rankings AFTER sort so rank positions are stable.
+    _add_relative_ranks(ranked)
+    return ranked
 
 
 def _score_batch(
@@ -591,7 +669,8 @@ _COMMUNITY_FIELDS = (
     "praise", "complaints", "representative_quote", "sources",
     "sentiment_score", "dominant_sentiment", "sentiment_records",
     "cross_subreddit_signal",
-    "recency_weighted_mentions",  # Fix 7
+    "recency_weighted_mentions",   # Fix 7
+    "source_coverage",             # Fix 17
 )
 
 

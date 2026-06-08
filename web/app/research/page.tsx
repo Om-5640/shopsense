@@ -101,6 +101,7 @@ const SSE_TO_SIDEBAR: Record<string, string> = {
 type Phase =
   | 'detecting'
   | 'disambiguation'
+  | 'clarification'
   | 'region'
   | 'profile_choice'
   | 'interview'
@@ -194,6 +195,7 @@ function stageStatus(phase: Phase, stageId: string): StageStatus {
   const phaseToStage: Record<Phase, string> = {
     detecting:      'detecting',
     disambiguation: 'detecting',
+    clarification:  'detecting',
     region:         'detecting',
     profile_choice: 'interview',
     interview:      'interview',
@@ -239,6 +241,7 @@ function ResearchPageContent() {
     region: string
     needs_disambiguation: boolean
     needs_region_clarification: boolean
+    needs_clarification?: boolean
   } | null>(null)
   const [category, setCategory] = useState('')
   const [primaryNoun, setPrimaryNoun] = useState('')
@@ -891,6 +894,11 @@ function ResearchPageContent() {
         setDetection(d)
         if (d.needs_disambiguation) {
           setPhase('disambiguation')
+        } else if (d.needs_clarification && !d.needs_disambiguation) {
+          // Fix 16: low-confidence category — confirm product type before interview
+          setCategory(d.category)
+          setPrimaryNoun(d.primary_noun ?? '')
+          setPhase('clarification')
         } else {
           // If user explicitly picked a region in the search bar, honour it and
           // skip the clarification phase entirely.
@@ -1013,6 +1021,53 @@ function ResearchPageContent() {
                 <div className="text-xs text-[#52525B] font-mono mt-0.5">{opt.slug}</div>
               </button>
             ))}
+          </div>
+        </motion.div>
+      )
+    }
+
+    if (phase === 'clarification' && detection) {
+      const noun = detection.primary_noun || detection.category.split('/').pop()?.replace(/-/g, ' ') || 'product'
+      const explicitRegion = urlRegion && urlRegion !== 'global' ? urlRegion : null
+      const detectedRegion = detection.region !== 'global' ? detection.region : null
+      return (
+        <motion.div
+          key="clarification"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-8"
+        >
+          <h3 className="text-lg font-semibold text-[#FAFAFA] mb-2">
+            Searching for <span className="text-violet-300">{noun}</span>?
+          </h3>
+          <p className="text-[#71717A] mb-6 text-sm">
+            I detected this as <span className="text-[#A1A1AA] font-mono">{detection.category}</span> — confirm to continue, or refine below.
+          </p>
+          <div className="space-y-3">
+            <button
+              onClick={async () => {
+                const reg = explicitRegion ?? detectedRegion ?? (detection.needs_region_clarification ? null : 'india')
+                if (!reg) {
+                  setPhase('region')
+                } else {
+                  setRegion(reg)
+                  await loadCriteriaAndStart(detection.category, reg, detection.primary_noun ?? '')
+                }
+              }}
+              className="w-full text-left px-4 py-3.5 rounded-xl border border-violet-500/30 hover:bg-violet-500/5 transition-all"
+            >
+              <div className="font-medium text-[#FAFAFA]">Yes, search for {noun}</div>
+              <div className="text-xs text-[#52525B] font-mono mt-0.5">{detection.category}</div>
+            </button>
+            <button
+              onClick={() => {
+                // Let the user retype — go back to home
+                window.history.back()
+              }}
+              className="w-full text-left px-4 py-3.5 rounded-xl border border-white/[0.07] hover:border-white/[0.15] hover:bg-white/[0.03] transition-all text-sm text-[#71717A] hover:text-[#A1A1AA]"
+            >
+              No, go back and refine my query
+            </button>
           </div>
         </motion.div>
       )

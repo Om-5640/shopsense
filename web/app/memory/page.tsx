@@ -14,6 +14,7 @@ import {
   Sparkles,
   User,
   Tag,
+  Clock,
 } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
@@ -468,6 +469,15 @@ function SignalRow({
           <Badge className={`text-xs ${strengthColor(signal.strength)}`}>
             {strengthLabel(signal.strength)}
           </Badge>
+          {signal.is_stale && (
+            <Badge
+              title="This signal is older than 90 days — it has reduced influence on new searches."
+              className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20 gap-1"
+            >
+              <Clock className="w-2.5 h-2.5" />
+              Stale
+            </Badge>
+          )}
           <span className="text-xs text-[#4B4B55]">
             {formatDistanceToNow(new Date(signal.createdAt), { addSuffix: true })}
           </span>

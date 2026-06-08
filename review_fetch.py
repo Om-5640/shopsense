@@ -155,9 +155,11 @@ def find_review_urls_via_gemini(query: str, limit: int = 10) -> list[str]:
     if region == "india":
         region_clause = (
             "\n- This is an Indian market query (₹/Rs). Prioritize sources that cover "
-            "India-available models with ₹ pricing. Include Indian tech/review publications "
-            "alongside global authorities. Exclude US-only sources unless they explicitly cover "
-            "Indian-market availability."
+            "India-available models with ₹ pricing. Strongly prefer authoritative Indian "
+            "tech publications: 91mobiles.com, gadgets360.com, digit.in, mysmartprice.com, "
+            "beebom.com, techpp.com, bgr.in, fonearena.com, xda-developers.com. "
+            "Include global authorities only if they cover Indian-market availability. "
+            "Exclude US-only sources unless they explicitly compare India-available models."
         )
     elif region == "uk":
         region_clause = (

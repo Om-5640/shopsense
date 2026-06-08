@@ -85,6 +85,7 @@ export async function detectCategory(query: string, forcedCategory?: string) {
     category: string
     confidence: string
     needs_disambiguation: boolean
+    needs_clarification?: boolean
     options: { slug: string; label: string }[]
     region: string
     needs_region_clarification: boolean

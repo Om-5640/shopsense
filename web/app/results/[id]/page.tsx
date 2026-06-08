@@ -61,11 +61,11 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     : (bestPrice?.price_inr ?? bestPrice?.price_usd ?? retailer?.price_inr ?? retailer?.price_usd ?? 0)
   const priceNum = rawPrice
 
-  const criteriaScores: Record<string, { score: number; evidence?: string }> = {}
+  const criteriaScores: Record<string, { score: number; evidence?: string; relative_rank?: string }> = {}
   const labelMap = Object.fromEntries(rubricCriteria.map((c) => [c.id, c.label]))
   p.scores.forEach((s) => {
     const label = labelMap[s.criterion] ?? s.label ?? s.criterion
-    criteriaScores[label] = { score: s.score, evidence: s.evidence || undefined }
+    criteriaScores[label] = { score: s.score, evidence: s.evidence || undefined, relative_rank: s.relative_rank }
   })
 
   // Include image from best retailer (populated by price fetch)
@@ -125,6 +125,11 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     // Evidence reliability (scorer fairness pass + targeted enrichment)
     dataCoverage: p.data_coverage ?? null,
     confidence: p.confidence ?? null,
+    // Fix 13: inter-product relative ranking
+    overallRank: p.overall_rank ?? undefined,
+    gapToLeader: p.gap_to_leader ?? undefined,
+    // Fix 17: source coverage count
+    sourceCoverage: p.source_coverage ?? null,
   }
 }
 

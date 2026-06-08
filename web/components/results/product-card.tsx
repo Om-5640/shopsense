@@ -66,7 +66,7 @@ interface Product {
   alternativePrices?: { store: string; price: number; url?: string }[]
   highSignal?: boolean
   purchased?: boolean
-  criteriaScores: Record<string, { score: number; evidence?: string }>
+  criteriaScores: Record<string, { score: number; evidence?: string; relative_rank?: string }>
   pros?: string[]
   cons?: string[]
   fitReason?: string
@@ -94,6 +94,11 @@ interface Product {
   // Evidence reliability (scorer fairness + enrichment)
   dataCoverage?: number | null      // 0–1: fraction of weighted criteria backed by real evidence
   confidence?: 'high' | 'medium' | 'low' | string | null
+  // Fix 13: inter-product relative ranking
+  overallRank?: number
+  gapToLeader?: number
+  // Fix 17: source coverage count
+  sourceCoverage?: number | null
 }
 
 interface ProductCardProps {
@@ -317,6 +322,14 @@ export function ProductCard({
                   {Math.round(product.dataCoverage * 100)}% data-backed
                 </Badge>
               )}
+              {product.sourceCoverage != null && product.sourceCoverage === 1 && (
+                <Badge
+                  title="Based on a single source — treat score with extra caution."
+                  className="bg-amber-500/15 text-amber-300 border-amber-500/30"
+                >
+                  1 source
+                </Badge>
+              )}
               {product.purchased && (
                 <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
                   <Check className="w-3 h-3 mr-1" />
@@ -349,6 +362,9 @@ export function ProductCard({
             {product.score}%
           </span>
         </div>
+        {product.gapToLeader != null && product.gapToLeader > 0 && (
+          <p className="text-xs text-[#52525B] mt-1">{product.gapToLeader.toFixed(1)} pts behind leader</p>
+        )}
       </div>
 
       {/* Community Signal Row */}
@@ -750,7 +766,27 @@ export function ProductCard({
                 {Object.entries(product.criteriaScores).map(([criterion, data]) => (
                   <div key={criterion}>
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-sm text-[#A1A1AA]">{criterion}</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-[#A1A1AA]">{criterion}</span>
+                        {data.relative_rank && (
+                          <span className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-md border font-medium',
+                            data.relative_rank === 'Best'
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+                              : data.relative_rank === 'Above avg'
+                              ? 'bg-teal-500/15 text-teal-300 border-teal-500/25'
+                              : data.relative_rank === 'Average'
+                              ? 'bg-blue-500/15 text-blue-300 border-blue-500/25'
+                              : data.relative_rank === 'Weakest'
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/25'
+                              : data.relative_rank === 'Only option'
+                              ? 'bg-white/[0.08] text-[#71717A] border-white/[0.12]'
+                              : 'bg-zinc-500/15 text-zinc-300 border-zinc-500/25',
+                          )}>
+                            {data.relative_rank}
+                          </span>
+                        )}
+                      </div>
                       <span
                         className={cn(
                           'font-mono text-sm font-medium',

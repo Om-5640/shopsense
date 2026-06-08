@@ -20,6 +20,7 @@ Public API:
   summarize_user_profile() → str   (for injecting into LLM prompts)
 """
 
+import datetime
 import re
 import sys
 import time
@@ -303,6 +304,54 @@ def extract_and_save_signals(
 
 
 # ---------------------------------------------------------------------------
+# Fix 15: Signal time-decay
+# ---------------------------------------------------------------------------
+# Half-life of 90 days: a preference stored 3 months ago counts as ~50% weight;
+# at 6 months it's ~25%; at 1 year it's ~6%.  Minimum floor of 0.05 ensures old
+# signals are never completely invisible — they still influence, just weakly.
+
+_DECAY_HALFLIFE_DAYS: float = 90.0
+_DECAY_FLOOR: float = 0.05
+_STALE_THRESHOLD_DAYS: int = 90    # signals older than this are flagged as stale
+
+
+def _signal_decay_weight(created_at_iso: str | None) -> float:
+    """Return a [DECAY_FLOOR, 1.0] multiplier based on signal age.
+
+    Newer signals count more; half-life is 90 days.
+    Returns 1.0 when timestamp is missing (benefit of the doubt).
+    """
+    if not created_at_iso:
+        return 1.0
+    try:
+        # Handle both "2024-03-15T12:00:00Z" and "2024-03-15T12:00:00.000000"
+        ts = created_at_iso.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        age_days = (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 86400
+        weight = 0.5 ** (age_days / _DECAY_HALFLIFE_DAYS)
+        return max(_DECAY_FLOOR, round(weight, 4))
+    except Exception:
+        return 1.0
+
+
+def _is_stale_signal(created_at_iso: str | None) -> bool:
+    """Return True when a signal is older than _STALE_THRESHOLD_DAYS."""
+    if not created_at_iso:
+        return False
+    try:
+        ts = created_at_iso.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        age_days = (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 86400
+        return age_days > _STALE_THRESHOLD_DAYS
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Signal retrieval
 # ---------------------------------------------------------------------------
 
@@ -362,10 +411,15 @@ def find_relevant_signals(
             # Parent category (e.g. "electronics") matching a sub-category search
             threshold = min_similarity + 0.10
 
-        if sim >= threshold:
+        # Fix 15: apply time-decay — older signals need higher raw similarity to pass
+        decay = _signal_decay_weight(r.get("createdAt"))
+        effective_sim = sim * decay
+        r["decay_weight"] = decay  # expose to callers (UI can show staleness)
+
+        if effective_sim >= threshold:
             filtered.append(r)
 
-    filtered.sort(key=lambda x: -float(x.get("similarity") or 0.0))
+    filtered.sort(key=lambda x: -(float(x.get("similarity") or 0.0) * float(x.get("decay_weight") or 1.0)))
     return filtered[:k]
 
 
@@ -397,6 +451,12 @@ def summarize_user_profile(current_category: Optional[str] = None, user_id: str 
     if not relevant:
         return ""
 
+    # Fix 15: sort by decay-adjusted strength — fresh strong > stale strong > fresh moderate
+    def _sort_key(s: dict) -> float:
+        base = 1.0 if s.get("strength") == "strong" else 0.6
+        return base * _signal_decay_weight(s.get("createdAt"))
+
+    relevant.sort(key=_sort_key, reverse=True)
     strong   = [s for s in relevant if s.get("strength") == "strong"]
     moderate = [s for s in relevant if s.get("strength") == "moderate"]
 
@@ -405,7 +465,8 @@ def summarize_user_profile(current_category: Optional[str] = None, user_id: str 
 
     for s in strong[:10]:
         tag  = f"[{s.get('signalType', 'preference')}]"
-        line = f"  • {tag} {s['text']}"
+        stale_note = " (older preference — may no longer apply)" if _is_stale_signal(s.get("createdAt")) else ""
+        line = f"  • {tag} {s['text']}{stale_note}"
         if chars + len(line) > _MAX_PROFILE_CHARS:
             break
         lines.append(line)
@@ -413,7 +474,8 @@ def summarize_user_profile(current_category: Optional[str] = None, user_id: str 
 
     for s in moderate[:8]:
         tag  = f"[{s.get('signalType', 'preference')}]"
-        line = f"  • {tag} {s['text']}"
+        stale_note = " (older preference — may no longer apply)" if _is_stale_signal(s.get("createdAt")) else ""
+        line = f"  • {tag} {s['text']}{stale_note}"
         if chars + len(line) > _MAX_PROFILE_CHARS:
             break
         lines.append(line)
@@ -460,7 +522,12 @@ def list_user_signals(limit: int = 200, user_id: str = "default") -> list[dict]:
     if not _DB_AVAILABLE:
         return []
     try:
-        return _db_list_signals(user_id=user_id, limit=limit)
+        signals = _db_list_signals(user_id=user_id, limit=limit)
+        # Fix 15: attach decay_weight and is_stale so UI and cache-key logic can use them
+        for s in signals:
+            s["decay_weight"] = _signal_decay_weight(s.get("createdAt"))
+            s["is_stale"] = _is_stale_signal(s.get("createdAt"))
+        return signals
     except Exception:
         return []
 

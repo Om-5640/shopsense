@@ -61,7 +61,7 @@ TRUSTED_DOMAINS: frozenset[str] = frozenset({
     "headfonics.com",
     "whathifi.com",
     "headphonesaddict.com",
-    # Mobile / gadgets (India)
+    # Mobile / gadgets (India) — Fix 14: full India-tier authority list
     "91mobiles.com",
     "smartprix.com",
     "gadgets360.com",
@@ -70,6 +70,13 @@ TRUSTED_DOMAINS: frozenset[str] = frozenset({
     "indianexpress.com",
     "livemint.com",
     "techpp.com",
+    "mysmartprice.com",
+    "beebom.com",
+    "bgr.in",
+    "fonearena.com",
+    "xda-developers.com",
+    "pricekart.com",
+    "igyaan.in",
     # Mobile / gadgets (Global)
     "gsmarena.com",
     "anandtech.com",
@@ -171,23 +178,31 @@ _AUTHORITY_SCORES: dict[str, int] = {
     "theverge.com":         80,
     "engadget.com":         80,
     # Good editorial (65–79)
-    "91mobiles.com":        78,
-    "gadgets360.com":       76,
+    # Fix 14: Indian sites upgraded to par with comparable Western outlets
+    "91mobiles.com":        82,   # India's most cited gadget authority (was 78)
+    "gadgets360.com":       80,   # NDTV-owned, hands-on testing (was 76)
+    "mysmartprice.com":     76,   # Deep India-market spec + review coverage
+    "xda-developers.com":   80,   # Global enthusiast authority, heavy India readership
+    "beebom.com":           70,   # High-quality Indian tech blog
+    "bgr.in":               68,   # BGR India edition
+    "fonearena.com":        65,   # Dedicated Indian mobile reviews
+    "igyaan.in":            63,   # India video + written reviews
+    "pricekart.com":        60,   # India price comparison with user reviews
     "trustedreviews.co.uk": 76,
     "sleepfoundation.org":  80,
     "sleepopolis.com":      75,
     "mattressclarity.com":  73,
-    "digit.in":             72,
+    "digit.in":             74,   # Legacy India tech magazine (was 72)
     "expertreviews.co.uk":  72,
-    "smartprix.com":        70,
+    "smartprix.com":        72,   # (was 70)
     "bloomberg.com":        70,
     "wsj.com":              70,
     "allure.com":           75,
     "byrdie.com":           72,
     "goodhousekeeping.com": 74,
-    "indianexpress.com":    65,
+    "indianexpress.com":    67,   # (was 65)
     "livemint.com":         65,
-    "techpp.com":           65,
+    "techpp.com":           66,   # (was 65)
     "menshealth.com":       68,
     "womenshealthmag.com":  68,
     "runnersworld.com":     72,
@@ -247,6 +262,8 @@ _CATEGORY_ADJUSTMENTS: dict[str, dict[str, int]] = {
     "electronics/earbuds": {
         "rtings.com": +2, "soundguys.com": +10, "headfonics.com": +8, "whathifi.com": +5,
         "headphonesaddict.com": +8, "sleepfoundation.org": -30,
+        # Fix 14: India earbuds coverage
+        "91mobiles.com": +7, "gadgets360.com": +5, "digit.in": +4,
     },
     "electronics/laptop": {
         "notebookcheck.net": +10, "anandtech.com": +7, "rtings.com": +3,
@@ -255,6 +272,9 @@ _CATEGORY_ADJUSTMENTS: dict[str, dict[str, int]] = {
     "electronics/phone": {
         "gsmarena.com": +10, "91mobiles.com": +8, "dxomark.com": +8,
         "notebookcheck.net": +5, "rtings.com": -5, "sleepfoundation.org": -30,
+        # Fix 14: India-specialist phone review sites
+        "mysmartprice.com": +8, "gadgets360.com": +6, "fonearena.com": +7,
+        "bgr.in": +5, "digit.in": +5, "xda-developers.com": +5,
     },
     "bedding": {
         "sleepfoundation.org": +12, "sleepopolis.com": +10, "mattressclarity.com": +10,

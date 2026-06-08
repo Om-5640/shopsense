@@ -466,6 +466,7 @@ def detect(request: Request, req: DetectRequest) -> dict:
             "category": _sanitize_slug(req.forced_category),
             "confidence": "high",
             "needs_disambiguation": False,
+            "needs_clarification": False,   # Fix 16: explicit category never needs clarification
             "options": [],
         }
     else:

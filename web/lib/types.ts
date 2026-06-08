@@ -29,6 +29,7 @@ export interface Score {
   weighted_contribution: number
   has_data?: boolean   // false = imputed from comparable products (no direct evidence found)
   imputed?: boolean
+  relative_rank?: string  // Fix 13: inter-product label (Best/Above avg/Average/Below avg/Weakest/Only option)
 }
 
 export interface RetailerPrice {
@@ -163,6 +164,11 @@ export interface ScoredProduct {
   recency_weighted_mentions?: number | null
   // Fix 12: source passages for data lineage
   source_passages?: SourcePassage[]
+  // Fix 13: inter-product relative ranking
+  overall_rank?: number
+  gap_to_leader?: number
+  // Fix 17: source coverage count
+  source_coverage?: number | null
 }
 
 export interface SearchResult {
@@ -286,6 +292,9 @@ export interface UserSignal {
   sourceSearchId?: string
   createdAt: string
   similarity?: number
+  // Fix 15: signal decay fields
+  decay_weight?: number
+  is_stale?: boolean
 }
 
 export interface ProductMemory {
