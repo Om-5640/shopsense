@@ -22,6 +22,10 @@ from typing import Optional
 from unittest.mock import MagicMock, patch, call
 import pytest
 
+# Import the real module at collection time so test_quality_gaps_13_17.py's
+# module-level setdefault stub cannot replace it when the full suite runs.
+import embeddings as _embeddings_real  # noqa: F401
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

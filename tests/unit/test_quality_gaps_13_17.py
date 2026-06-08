@@ -29,35 +29,64 @@ import os
 import types
 
 # ---------------------------------------------------------------------------
-# Minimal stubs so imports succeed without full environment
+# Minimal stubs so imports succeed when this file is run in isolation.
+# IMPORTANT: use "if not in sys.modules" guards for EVERY stub so the real
+# module (already imported in a full pytest run) is never overwritten.
+# The unconditional sys.modules["cache"].get = lambda ... pattern was the
+# root cause of 36 cross-test failures: real cache.get/set were silently
+# replaced during pytest collection, corrupting tests that depend on them.
 # ---------------------------------------------------------------------------
 
-# Stub the cache module
-sys.modules.setdefault("cache", types.ModuleType("cache"))
-sys.modules["cache"].get = lambda *a, **kw: None  # type: ignore
-sys.modules["cache"].set = lambda *a, **kw: None  # type: ignore
+import json as _json  # needed by _try_repair_json stub below
+
+# Stub the cache module — only when not already imported by another test file
+if "cache" not in sys.modules:
+    _cache_stub = types.ModuleType("cache")
+    _cache_stub.get = lambda *a, **kw: None  # type: ignore
+    _cache_stub.set = lambda *a, **kw: None  # type: ignore
+    sys.modules["cache"] = _cache_stub
 
 # Stub agents + llm_client for category.py
-_agents_mod = types.ModuleType("agents")
-_agents_mod.run_agent = lambda *a, **kw: '{}'  # type: ignore
-sys.modules.setdefault("agents", _agents_mod)
+if "agents" not in sys.modules:
+    _agents_mod = types.ModuleType("agents")
+    _agents_mod.run_agent = lambda *a, **kw: "{}"  # type: ignore
+    sys.modules["agents"] = _agents_mod
 
-_llm_mod = types.ModuleType("llm_client")
-_llm_mod.safe_json_loads = lambda s: {}  # type: ignore
-sys.modules.setdefault("llm_client", _llm_mod)
+# llm_client stub MUST include:
+#   safe_json_loads    — used by rubric.fill_criterion_gaps to parse LLM response
+#   _try_repair_json   — used by scorer, rubric, interview lazily; absence raises
+#                        ImportError caught by their exception handlers → fall back
+#                        to defaults, breaking golden-shape and constraint-filter tests
+# Both must parse valid JSON so tests that mock run_agent get real parsed output.
+if "llm_client" not in sys.modules:
+    def _stub_json_parse(s):
+        if not isinstance(s, str):
+            return {}
+        try:
+            return _json.loads(s)
+        except Exception:
+            return {}
+
+    _llm_mod = types.ModuleType("llm_client")
+    _llm_mod.safe_json_loads = _stub_json_parse  # type: ignore
+    _llm_mod._try_repair_json = _stub_json_parse  # type: ignore
+    sys.modules["llm_client"] = _llm_mod
 
 # Stub db for memory.py
-_db_mod = types.ModuleType("db")
-_db_mod._DB_AVAILABLE = False  # type: ignore
-sys.modules.setdefault("db", _db_mod)
+if "db" not in sys.modules:
+    _db_mod = types.ModuleType("db")
+    _db_mod._DB_AVAILABLE = False  # type: ignore
+    sys.modules["db"] = _db_mod
 
-# Stub embeddings
-_emb_mod = types.ModuleType("embeddings")
-_emb_mod.embed = lambda *a, **kw: None  # type: ignore
-_emb_mod.embed_batch = lambda *a, **kw: []  # type: ignore
-_emb_mod.cosine_similarity = lambda *a, **kw: 0.0  # type: ignore
-_emb_mod.cosine_similarity_batch = lambda *a, **kw: []  # type: ignore
-sys.modules.setdefault("embeddings", _emb_mod)
+# Stub embeddings — only when not already imported (test_embeddings.py imports
+# embeddings at module level so the real module is always present in a full run)
+if "embeddings" not in sys.modules:
+    _emb_mod = types.ModuleType("embeddings")
+    _emb_mod.embed = lambda *a, **kw: None  # type: ignore
+    _emb_mod.embed_batch = lambda *a, **kw: []  # type: ignore
+    _emb_mod.cosine_similarity = lambda *a, **kw: 0.0  # type: ignore
+    _emb_mod.cosine_similarity_batch = lambda *a, **kw: []  # type: ignore
+    sys.modules["embeddings"] = _emb_mod
 
 # Now we can import from project root
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
