@@ -255,12 +255,48 @@ def _extract_usage_pattern(profile: dict | None) -> str | None:
     return None
 
 
+def _build_intent_query_variants(query: str, intent: dict) -> list[str]:
+    """
+    Fix 11: Build interview-aware search variants from structured UserIntent.
+
+    After the interview produces use_cases, hard_constraints, and preferences,
+    these feed back into Reddit search so threads relevant to the user's actual
+    context surface — not just the same generic query used for everyone.
+    """
+    variants: list[str] = []
+    query_lower = query.lower()
+
+    def _short(text: str, max_words: int = 3) -> str:
+        words = [w for w in str(text).lower().strip().split() if len(w) > 2][:max_words]
+        return " ".join(words)
+
+    # Use cases (e.g. "cold weather outdoor running") → add 1-2 context variants
+    for uc in (intent.get("use_cases") or [])[:2]:
+        uc_str = _short(uc, max_words=3)
+        if uc_str and uc_str not in query_lower:
+            variants.append(f"site:reddit.com {query} {uc_str}")
+
+    # Hard constraints (e.g. "must be wireless", "ANC required") → 1 requirement variant
+    for c in (intent.get("hard_constraints") or [])[:1]:
+        c_str = _short(c, max_words=2)
+        if c_str and c_str not in query_lower:
+            variants.append(f"site:reddit.com {query} {c_str}")
+
+    # Explicit preferences (e.g. "bass heavy sound signature") → 1 feature variant
+    for pref in (intent.get("preferences") or [])[:1]:
+        p_str = _short(pref, max_words=2)
+        if p_str and p_str not in query_lower:
+            variants.append(f"site:reddit.com {query} {p_str}")
+
+    return variants
+
+
 def _query_variations(query: str, profile: dict | None = None) -> list[str]:
     """
     Generate semantically diverse query variants to broaden the thread pool.
-    Profile-aware: injects usage pattern (gaming/gym/commute…) and budget term
-    as additional variants so Reddit threads relevant to the user's actual context
-    surface in the results.
+    Profile-aware: injects usage pattern (gaming/gym/commute…), budget term,
+    and — after Fix 11 — structured UserIntent fields (use_cases, hard_constraints,
+    preferences) so Reddit threads relevant to the user's actual context surface.
     """
     region = detect_region(query)
     variations = [
@@ -283,6 +319,12 @@ def _query_variations(query: str, profile: dict | None = None) -> list[str]:
     budget_str = intent.get("budget") if isinstance(intent, dict) else None
     if budget_str:
         variations.append(f"site:reddit.com {query} budget")
+
+    # Fix 11: Interview-intent-aware variants from structured UserIntent
+    if intent and isinstance(intent, dict):
+        for iv in _build_intent_query_variants(query, intent):
+            if iv not in variations:
+                variations.append(iv)
 
     # Region-targeted variant for localized advice threads
     if region == "india":
@@ -750,6 +792,7 @@ def _reddit_oauth_fetch_thread(permalink: str, max_comments: int) -> "dict | Non
             "body":   (post_data.get("selftext") or "")[:3000],
             "score":  post_data.get("score", 0),
             "url":    permalink,
+            "created_utc": post_data.get("created_utc", 0),  # Fix 7: recency
             "comments": merged,
             "total_comment_count_in_thread": post_data.get("num_comments", 0),
             "controversial_comments_added":  len(controversial_only),
@@ -816,6 +859,7 @@ def _pullpush_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
             "body": (post.get("selftext") or "")[:3000],
             "score": post.get("score", 0),
             "url": permalink,
+            "created_utc": post.get("created_utc", 0),  # Fix 7: recency
             "comments": comments,
             "total_comment_count_in_thread": post.get("num_comments", 0),
             "controversial_comments_added": controversial_count,
@@ -896,6 +940,7 @@ def _arctic_fetch_thread(permalink: str, max_comments: int) -> "dict | None":
             "body": (post.get("selftext") or "")[:3000],
             "score": post.get("score", 0) or post.get("ups", 0) or 0,
             "url": permalink,
+            "created_utc": post.get("created_utc", 0),  # Fix 7: recency
             "comments": comments,
             "total_comment_count_in_thread": post.get("num_comments", 0),
             "controversial_comments_added": controversial_count,

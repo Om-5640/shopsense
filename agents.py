@@ -21,6 +21,7 @@ import logging
 import os
 import threading
 import time
+from typing import NamedTuple
 
 _logger = logging.getLogger(__name__)
 
@@ -338,6 +339,7 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
         try:
             result = _dispatch(provider, user_prompt, system, json_mode, max_tokens, temperature)
             _record_provider_outcome(provider, success=True)
+            _record_provider_used(agent_name, provider)  # Fix 8
             return result
         except GroqQuotaExhausted as e:
             _record_provider_outcome("groq", success=False)
@@ -417,6 +419,70 @@ def _dispatch(
 
 def get_agent_config(agent_name: str) -> dict:
     return dict(AGENTS.get(agent_name, {}))
+
+
+# ── Fix 8: Per-session provider usage tracking ────────────────────────────────
+# Thread-local log so concurrent pipeline runs don't mix their provider traces.
+
+_provider_usage = threading.local()
+
+_PRIMARY_PROVIDERS: dict[str, str] = {
+    "category_detector":   "groq",
+    "criteria_generator":  "gemini",
+    "interview_questioner": "mistral",
+    "interview_classifier": "groq",
+    "preference_summarizer": "groq",
+    "rubric_generator":    "gemini",
+    "gap_filler":          "gemini",
+    "thread_summarizer":   "pool",    # round-robin — no single primary
+    "main_analyzer":       "gemini",
+    "product_scorer":      "groq",
+    "explanation_writer":  "groq",
+    "cross_validator":     "gemini",
+    "signal_extractor":    "groq",
+    "sentiment_analyser":  "groq",
+    "evidence_extractor":  "groq",
+    "evidence_enricher":   "gemini",
+}
+
+
+def reset_session_providers_used() -> None:
+    """Reset the per-thread provider log at the start of a new pipeline run."""
+    _provider_usage.log = []
+
+
+def _record_provider_used(agent_name: str, provider: str) -> None:
+    if not hasattr(_provider_usage, "log"):
+        _provider_usage.log = []
+    _provider_usage.log.append({"agent": agent_name, "provider": provider})
+
+
+def get_session_providers_used() -> list[dict]:
+    """Return list of {agent, provider} dicts for this thread's pipeline run."""
+    return list(getattr(_provider_usage, "log", []))
+
+
+def get_quality_metadata() -> dict:
+    """
+    Summarise provider usage.  Returns:
+      degraded: bool — True when any key agent used a fallback provider
+      fallback_agents: list of {agent, used, expected}
+    """
+    log = get_session_providers_used()
+    fallback_agents = []
+    for entry in log:
+        expected = _PRIMARY_PROVIDERS.get(entry["agent"])
+        if expected and expected != "pool" and entry["provider"] != expected:
+            fallback_agents.append({
+                "agent":    entry["agent"],
+                "used":     entry["provider"],
+                "expected": expected,
+            })
+    return {
+        "degraded": bool(fallback_agents),
+        "fallback_agents": fallback_agents,
+        "providers_used": log,
+    }
 
 
 def get_provider_status() -> dict:

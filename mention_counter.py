@@ -10,6 +10,7 @@ Uses pyahocorasick for O(n) multi-pattern scanning:
   - Returns deterministic integer counts — NOT LLM estimates
 """
 
+import datetime
 import hashlib
 import json
 import re
@@ -40,6 +41,7 @@ class MentionResult:
     negative: int = 0
     neutral: int = 0
     sentiment_records: list = field(default_factory=list)  # per-comment dicts
+    recency_weighted_mentions: float = 0.0  # Fix 7: mention count weighted by thread age
 
     @property
     def sentiment_score(self) -> float:
@@ -173,13 +175,28 @@ def _is_word_char(c: str) -> bool:
 def _has_word_boundary(text: str, start: int, end: int) -> bool:
     """
     Return True if the match at [start:end] sits on word boundaries.
-    char before start must NOT be alphanumeric (or we're at string start).
-    char after end must NOT be alphanumeric (or we're at string end).
+
+    Fix 6: hyphens between alphanumeric characters are treated as part of a
+    compound model-number token so that alias "1000XM5" does NOT match inside
+    "WF-1000XM5" or "WH-1000XM5".  Without this, the hyphen before "1000" is
+    transparent (non-word char) and the word boundary passes incorrectly.
     """
-    if start > 0 and _is_word_char(text[start - 1]):
-        return False
-    if end < len(text) and _is_word_char(text[end]):
-        return False
+    if start > 0:
+        prev = text[start - 1]
+        if _is_word_char(prev):
+            return False
+        # Hyphen immediately before the match, with an alnum before the hyphen →
+        # we are inside a hyphen-compound like "WF-1000XM5".
+        if prev == '-' and start >= 2 and text[start - 2].isalnum():
+            return False
+    if end < len(text):
+        nxt = text[end]
+        if _is_word_char(nxt):
+            return False
+        # Hyphen immediately after the match, with an alnum after the hyphen →
+        # the match is a prefix of a hyphen-compound.
+        if nxt == '-' and end + 1 < len(text) and text[end + 1].isalnum():
+            return False
     return True
 
 
@@ -255,6 +272,27 @@ def count_mentions_in_text(
     return counts
 
 
+# ── Recency weighting ─────────────────────────────────────────────────────────
+
+# Decay table: thread age in full years → multiplier.
+# A 2024 thread (age ~1-2 yrs in 2026) counts ≥1×; a 2021 thread counts 0.3×.
+_RECENCY_WEIGHTS: dict[int, float] = {0: 2.0, 1: 1.5, 2: 1.0, 3: 0.7, 4: 0.5}
+_RECENCY_DEFAULT_OLD = 0.3    # age ≥ 5 years
+_RECENCY_UNKNOWN = 0.7        # created_utc missing
+
+
+def _thread_recency_weight(created_utc: int | float | None) -> float:
+    """Return a recency multiplier for a thread given its Unix creation timestamp."""
+    if not created_utc:
+        return _RECENCY_UNKNOWN
+    try:
+        year = datetime.datetime.utcfromtimestamp(float(created_utc)).year
+        age = max(0, datetime.datetime.utcnow().year - year)
+        return _RECENCY_WEIGHTS.get(age, _RECENCY_DEFAULT_OLD)
+    except (OSError, ValueError, OverflowError):
+        return _RECENCY_UNKNOWN
+
+
 # ── Cross-thread aggregator ────────────────────────────────────────────────────
 
 def count_across_threads(
@@ -295,6 +333,9 @@ def count_across_threads(
             ).hexdigest()[:12]
         )
 
+        # Fix 7: recency multiplier for this thread
+        _weight = _thread_recency_weight(thread.get("created_utc"))
+
         # ── Title + body mention counting ─────────────────────────────────────
         title_counts = count_mentions_in_text(
             thread.get("title", ""), automaton, exclude_patterns, registry
@@ -311,15 +352,16 @@ def count_across_threads(
         for canonical, cnt in thread_counts.items():
             mr = results.setdefault(canonical, MentionResult(canonical_name=canonical))
             mr.total_mentions += cnt
+            mr.recency_weighted_mentions += cnt * _weight
             if thread_url not in mr.per_thread:
                 mr.per_thread[thread_url] = 0
                 mr.distinct_threads += 1
             mr.per_thread[thread_url] += cnt
 
         # ── Per-comment counting — collect sentiment inputs for batch call ────
-        # sentiment_inputs: (comment_body, products_in_comment) for each comment
-        # that has at least one confirmed product mention.
-        sentiment_inputs: list[tuple[str, list[str]]] = []
+        # sentiment_inputs: (comment_body, products_in_comment, thread_url) tuples
+        # for each comment that has at least one confirmed product mention.
+        sentiment_inputs: list[tuple[str, list[str], str]] = []
 
         for comment in thread.get("comments", []):
             comment_body = (comment.get("body") or "").strip()
@@ -337,6 +379,7 @@ def count_across_threads(
             for canonical, cnt in comment_counts.items():
                 mr = results.setdefault(canonical, MentionResult(canonical_name=canonical))
                 mr.total_mentions += cnt
+                mr.recency_weighted_mentions += cnt * _weight
                 mr.distinct_comments += 1
                 if thread_url not in mr.per_thread:
                     mr.per_thread[thread_url] = 0
@@ -344,13 +387,15 @@ def count_across_threads(
                 mr.per_thread[thread_url] += cnt
 
             if run_sentiment and llm_client is not None and _HAS_SENTIMENT:
-                sentiment_inputs.append((comment_body, products_in_comment))
+                sentiment_inputs.append((comment_body, products_in_comment, thread_url))
 
         # ── One batched sentiment call for the whole thread ───────────────────
         if sentiment_inputs:
             try:
-                sentiment_maps = _analyse_thread_comments(sentiment_inputs, llm_client)
-                for (comment_body, _), sentiment_map in zip(sentiment_inputs, sentiment_maps):
+                # Pass only (comment_body, products) to the analyser
+                pairs = [(cb, prods) for cb, prods, _ in sentiment_inputs]
+                sentiment_maps = _analyse_thread_comments(pairs, llm_client)
+                for (comment_body, _, t_url), sentiment_map in zip(sentiment_inputs, sentiment_maps):
                     for canonical, score_obj in sentiment_map.items():
                         if canonical not in results:
                             continue
@@ -362,10 +407,12 @@ def count_across_threads(
                             mr.negative += 1
                         else:
                             mr.neutral += 1
+                        # Fix 12: carry thread_url into sentiment_records for data lineage
                         mr.sentiment_records.append({
                             "comment_text": comment_body[:300],
                             "sentiment": s,
                             "source": score_obj.source,
+                            "thread_url": t_url,
                         })
             except Exception as exc:
                 logger.warning("[mention_counter] thread-level sentiment batch failed: %s", exc)

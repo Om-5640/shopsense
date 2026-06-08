@@ -245,18 +245,42 @@ def score_product(
     return _build_scored_dict(product, raw_scores, rubric)
 
 
+_COMPLAINT_CONFIDENCE_WEIGHTS = {"confirmed": 3, "reported": 2, "single": 1}
+
+
+def _complaint_weight(c: dict) -> int:
+    """Fix 9: numeric weight for a complaint based on its confidence level."""
+    return _COMPLAINT_CONFIDENCE_WEIGHTS.get(c.get("confidence", "single"), 1)
+
+
 def _format_product(p: dict) -> str:
     """Compact product summary for prompt header."""
     lines = [f"Name: {p.get('name', '?')}"]
-    if p.get("mention_count") is not None:
-        lines.append(f"Mentions: {p.get('mention_count')} "
+    raw_mentions = p.get("mention_count", 0) or 0
+    weighted = p.get("recency_weighted_mentions")
+    if raw_mentions or weighted:
+        mention_str = f"{raw_mentions}"
+        if weighted and abs(weighted - raw_mentions) > 0.5:
+            mention_str += f" (recency-weighted: {weighted:.1f})"
+        lines.append(f"Mentions: {mention_str} "
                      f"({p.get('positive_mentions', '?')} pos, "
                      f"{p.get('negative_mentions', '?')} neg)")
     if p.get("praise"):
         lines.append(f"Praise (extracted): {', '.join(p['praise'][:5])}")
     if p.get("complaints"):
-        comps = [f"{c.get('text', '')} [{c.get('confidence', '?')}]" for c in p["complaints"][:5]]
-        lines.append(f"Complaints (extracted): {'; '.join(comps)}")
+        complaints = p["complaints"][:5]
+        # Fix 9: compute confidence-weighted complaint severity for the LLM
+        weighted_neg = sum(_complaint_weight(c) for c in p["complaints"][:10])
+        comps = [
+            f"{c.get('text', '')} [confidence={c.get('confidence', 'single')}]"
+            for c in complaints
+        ]
+        lines.append(
+            f"Complaints (confidence-weighted severity={weighted_neg}): {'; '.join(comps)}"
+        )
+        lines.append(
+            "NOTE: 'confirmed' complaints (3+ users) are 3× more severe than 'single' reports."
+        )
     if p.get("representative_quote"):
         lines.append(f"Top quote: \"{p['representative_quote']}\"")
     return "\n".join(lines)
@@ -567,6 +591,7 @@ _COMMUNITY_FIELDS = (
     "praise", "complaints", "representative_quote", "sources",
     "sentiment_score", "dominant_sentiment", "sentiment_records",
     "cross_subreddit_signal",
+    "recency_weighted_mentions",  # Fix 7
 )
 
 
@@ -618,6 +643,25 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
     }
     for field in _COMMUNITY_FIELDS:
         result[field] = product.get(field)
+
+    # Fix 12: source lineage — attach top sentiment records as traceable evidence.
+    # Consumers (UI) can show "why this product scored well/poorly" with real quotes.
+    sentiment_recs = product.get("sentiment_records") or []
+    if sentiment_recs:
+        # Take up to 5 records: prefer positive for high-scoring criteria, negative otherwise
+        pos_recs = [r for r in sentiment_recs if r.get("sentiment") == "positive"][:3]
+        neg_recs = [r for r in sentiment_recs if r.get("sentiment") == "negative"][:2]
+        result["source_passages"] = [
+            {
+                "text": r["comment_text"][:250],
+                "sentiment": r["sentiment"],
+                "thread_url": r.get("thread_url", ""),
+            }
+            for r in (pos_recs + neg_recs)
+        ]
+    else:
+        result["source_passages"] = []
+
     return result
 
 
@@ -846,14 +890,20 @@ def _run_parallel_batch_scoring(
     return sorted(scored, key=lambda x: x["weighted_total"], reverse=True)
 
 
+_FAST_COMPLAINT_WEIGHTS = {"confirmed": 3.0, "reported": 1.5, "single": 0.5}
+
+
 def _fast_score(product: dict, rubric: dict, full_research_text: str) -> dict:
     """
     Heuristic scoring without LLM calls.
-    Uses mention count, positive/negative ratio, and signal_strength as proxy.
+    Uses recency-weighted mentions, positive/negative ratio, complaint confidence,
+    and signal_strength as proxies.
     ~100x faster than LLM scoring; quality is lower but good for quick previews.
     """
     name = product.get("name", "?")
-    mentions = int(product.get("mention_count", 0) or 0)
+    # Fix 7: prefer recency-weighted mentions for the volume signal
+    mentions_raw = int(product.get("mention_count", 0) or 0)
+    mentions = float(product.get("recency_weighted_mentions") or mentions_raw or 0)
     pos = int(product.get("positive_mentions", 0) or 0)
     neg = int(product.get("negative_mentions", 0) or 0)
     signal = (product.get("signal_strength") or "").lower()
@@ -864,7 +914,7 @@ def _fast_score(product: dict, rubric: dict, full_research_text: str) -> dict:
     else:
         sentiment_score = 5.0
 
-    # Mention volume boost (more mentions = more data = more confidence)
+    # Mention volume boost using recency-weighted count
     if mentions >= 20:
         volume_bonus = 1.0
     elif mentions >= 10:
@@ -877,7 +927,15 @@ def _fast_score(product: dict, rubric: dict, full_research_text: str) -> dict:
     # Signal strength modifier
     signal_mod = {"strong": 0.5, "moderate": 0.0, "weak": -0.5}.get(signal, 0.0)
 
-    base = max(1.0, min(9.5, sentiment_score + volume_bonus + signal_mod))
+    # Fix 9: confidence-weighted complaint penalty
+    complaints = product.get("complaints") or []
+    weighted_neg_score = sum(
+        _FAST_COMPLAINT_WEIGHTS.get(c.get("confidence", "single"), 0.5)
+        for c in complaints[:10]
+    )
+    complaint_penalty = min(weighted_neg_score * 0.25, 2.5)
+
+    base = max(1.0, min(9.5, sentiment_score + volume_bonus + signal_mod - complaint_penalty))
 
     raw_scores = []
     for c in rubric["weighted_criteria"]:

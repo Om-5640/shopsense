@@ -116,6 +116,10 @@ function toProductCardProps(p: ScoredProduct, rank: number, rubricCriteria: { id
     sentimentScore: ap.sentiment_score ?? p.sentiment_score ?? null,
     dominantSentiment: ap.dominant_sentiment ?? p.dominant_sentiment ?? null,
     sentimentRecords: (ap.sentiment_records ?? p.sentiment_records ?? []) as SentimentRecord[],
+    // Fix 7: recency-weighted mentions
+    recencyWeightedMentions: p.recency_weighted_mentions ?? null,
+    // Fix 12: source passages for data lineage
+    sourcePassages: p.source_passages ?? [],
     // Link Intelligence match score (from best retailer)
     matchScore: p.price?.intelligence?.match_score ?? null,
     // Evidence reliability (scorer fairness pass + targeted enrichment)
@@ -184,6 +188,7 @@ export default function ResultsPage() {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [copyLinkDone, setCopyLinkDone] = useState(false)
+  const [qualityDegraded, setQualityDegraded] = useState(false)  // Fix 8
 
   const { rubric, weights, products, compareSet, initResults, setWeight, resetWeights, toggleCompare } =
     useResultsStore()
@@ -270,6 +275,10 @@ export default function ResultsPage() {
             region: result.region,
             createdAt: result.createdAt,
           })
+          // Fix 8: surface quality degradation warning if fallback providers were used
+          if ((result as any).qualityMetadata?.degraded) {
+            setQualityDegraded(true)
+          }
           // Review intelligence — embedded in analysis by the pipeline
           if (result.analysis?.review_intelligence) {
             setReviewIntelligence(result.analysis.review_intelligence)
@@ -691,6 +700,18 @@ export default function ResultsPage() {
                       Reset weights
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Fix 8: Quality degradation warning — shown when fallback LLM providers were used */}
+              {qualityDegraded && (
+                <div className="flex items-start gap-3 px-4 py-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-500/8 text-amber-300 text-sm">
+                  <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <span>
+                    <strong className="font-semibold">Degraded quality:</strong> one or more AI providers fell back to alternates during this analysis. Results are complete but may have lower accuracy than usual.
+                  </span>
                 </div>
               )}
 

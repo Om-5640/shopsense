@@ -98,6 +98,20 @@ export interface SentimentRecord {
   source: 'rule' | 'llm'   // "rule" = keyword-matched, "llm" = model-classified
 }
 
+// Fix 12: traceable source passage for data lineage
+export interface SourcePassage {
+  text: string
+  sentiment: 'positive' | 'negative' | 'neutral'
+  thread_url: string
+}
+
+// Fix 8: provider quality metadata
+export interface QualityMetadata {
+  degraded: boolean
+  fallback_agents: { agent: string; used: string; expected: string }[]
+  providers_used: { agent: string; provider: string }[]
+}
+
 export interface AnalysisProduct {
   name: string
   mention_count?: number
@@ -145,6 +159,10 @@ export interface ScoredProduct {
   sentiment_score?: number | null
   dominant_sentiment?: string | null
   sentiment_records?: SentimentRecord[]
+  // Fix 7: recency-weighted mention count
+  recency_weighted_mentions?: number | null
+  // Fix 12: source passages for data lineage
+  source_passages?: SourcePassage[]
 }
 
 export interface SearchResult {
@@ -163,6 +181,7 @@ export interface SearchResult {
     review_intelligence?: ReviewIntelligence
   }
   scoredProducts?: ScoredProduct[]
+  qualityMetadata?: QualityMetadata  // Fix 8
 }
 
 // SSE event types

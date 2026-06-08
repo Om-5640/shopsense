@@ -818,6 +818,13 @@ def _execute_pipeline(
     # Computed once — profile doesn't change during a pipeline run
     _profile_hint = _build_analyzer_hint(profile) if isinstance(profile, dict) else ""
 
+    # Fix 8: reset per-thread provider log at the start of each pipeline run
+    try:
+        from agents import reset_session_providers_used as _reset_providers
+        _reset_providers()
+    except Exception:
+        pass
+
     # Snapshot provider status before any LLM calls so we can diff at the end
     # to produce human-readable pipeline_warnings for the UI.
     try:
@@ -1120,6 +1127,7 @@ def _execute_pipeline(
                 product["sentiment_score"] = round(mr.sentiment_score, 3)
                 product["dominant_sentiment"] = mr.dominant_sentiment
                 product["sentiment_records"] = mr.sentiment_records[:20]
+                product["recency_weighted_mentions"] = round(mr.recency_weighted_mentions, 2)  # Fix 7
                 overwritten += 1
 
         session.emit_log(
@@ -1315,6 +1323,19 @@ def _execute_pipeline(
     # without any DB schema changes.  Frontend reads it as data.analysis.review_intelligence.
     analysis["review_intelligence"] = _review_intel
 
+    # Fix 8: collect provider quality metadata before persisting result
+    _quality_meta: dict = {}
+    try:
+        from agents import get_quality_metadata as _get_quality_meta
+        _quality_meta = _get_quality_meta()
+        if _quality_meta.get("degraded"):
+            session.emit_log(
+                f"[quality] degraded-mode: {len(_quality_meta['fallback_agents'])} agent(s) "
+                f"used fallback providers — {_quality_meta['fallback_agents']}"
+            )
+    except Exception:
+        pass
+
     # ---- Persist result ----
     session.result = {
         "query": query,
@@ -1325,6 +1346,7 @@ def _execute_pipeline(
         "analysis": analysis,
         "scoredProducts": scored,
         "constraintViolations": constraint_violations,
+        "qualityMetadata": _quality_meta,  # Fix 8
     }
 
     _save_pipeline_cache(_post_gap_cache_key, session.result)
@@ -1353,6 +1375,7 @@ def _execute_pipeline(
             analysis=analysis,
             scoredProducts=scored,
             constraintViolations=constraint_violations,
+            qualityMetadata=_quality_meta,
         )
     except Exception as db_err:
         session.emit_log(f"[db] write failed (non-fatal): {db_err}")

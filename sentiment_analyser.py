@@ -117,11 +117,59 @@ _COMPILED_NEG: list[tuple[re.Pattern, float]] = [
 # Keeps false-positive rate low — ambiguous comments fall through to LLM.
 _RULE_THRESHOLD = 2.5
 
+# Fix 10: Negation window — any sentiment keyword within 4 words of a negator
+# gets its polarity flipped.  "not good at all" → negative; "not bad" → weak positive.
+_NEGATORS_RE = re.compile(
+    r"\b(not|no|never|don'?t|doesn'?t|didn'?t|isn'?t|wasn'?t|"
+    r"can'?t|couldn'?t|wouldn'?t|shouldn'?t|hardly|barely|"
+    r"without|nothing|none|nor)\b",
+    re.IGNORECASE,
+)
+_NEGATION_WINDOW_CHARS = 45   # chars to look back from match start for a negator
+_NEGATION_WORD_GAP = 4        # max words between negator end and match start
+
+
+def _negator_ends(text: str) -> list[int]:
+    """Return end-character positions of all negators in text (cached per call)."""
+    return [m.end() for m in _NEGATORS_RE.finditer(text)]
+
+
+def _is_negated(match_start: int, neg_ends: list[int], text: str) -> bool:
+    """True when a negator ends within _NEGATION_WINDOW_CHARS and ≤_NEGATION_WORD_GAP words before match_start."""
+    window_start = max(0, match_start - _NEGATION_WINDOW_CHARS)
+    for ne in neg_ends:
+        if window_start <= ne <= match_start:
+            gap = text[ne:match_start]
+            if len(gap.split()) <= _NEGATION_WORD_GAP:
+                return True
+    return False
+
 
 def _score_window(text: str) -> tuple[float, float]:
-    """Return (positive_score, negative_score) for a text chunk."""
-    pos = sum(w for pat, w in _COMPILED_POS if pat.search(text))
-    neg = sum(w for pat, w in _COMPILED_NEG if pat.search(text))
+    """
+    Return (positive_score, negative_score) for a text chunk.
+
+    Fix 10: negation window — iterates per-occurrence so each match is checked
+    individually against nearby negators.  "not good at all" correctly scores
+    negative; "not bad" scores weakly positive.
+    """
+    neg_ends = _negator_ends(text)
+    pos = neg = 0.0
+
+    for pat, w in _COMPILED_POS:
+        for m in pat.finditer(text):
+            if _is_negated(m.start(), neg_ends, text):
+                neg += w          # negated positive → negative evidence
+            else:
+                pos += w
+
+    for pat, w in _COMPILED_NEG:
+        for m in pat.finditer(text):
+            if _is_negated(m.start(), neg_ends, text):
+                pos += w * 0.5   # negated negative → weak positive (double-negative ≠ strong positive)
+            else:
+                neg += w
+
     return pos, neg
 
 

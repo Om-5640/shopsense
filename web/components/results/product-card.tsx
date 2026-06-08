@@ -44,6 +44,13 @@ interface SentimentRecord {
   source: 'rule' | 'llm'   // "rule" = keyword-matched, "llm" = model-classified
 }
 
+// Fix 12: traceable source passage
+interface SourcePassage {
+  text: string
+  sentiment: 'positive' | 'negative' | 'neutral'
+  thread_url: string
+}
+
 interface Product {
   id: string
   rank: number
@@ -78,6 +85,10 @@ interface Product {
   sentimentScore?: number | null
   dominantSentiment?: string | null
   sentimentRecords?: SentimentRecord[]
+  // Fix 7: recency-weighted mentions
+  recencyWeightedMentions?: number | null
+  // Fix 12: traceable source passages
+  sourcePassages?: SourcePassage[]
   // Link Intelligence
   matchScore?: number | null
   // Evidence reliability (scorer fairness + enrichment)
@@ -476,6 +487,49 @@ export function ProductCard({
               </AnimatePresence>
             </>
           )}
+        </div>
+      )}
+
+      {/* Fix 12: Source Evidence — traceable passages that backed this ranking */}
+      {(product.sourcePassages?.length ?? 0) > 0 && (
+        <div className="ml-6 mb-4">
+          <details className="group">
+            <summary className="flex items-center gap-2 text-xs text-[#71717A] cursor-pointer hover:text-[#A1A1AA] transition-colors list-none select-none">
+              <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Evidence trail
+              <span className="text-[#52525B]">({product.sourcePassages!.length} source{product.sourcePassages!.length > 1 ? 's' : ''})</span>
+            </summary>
+            <div className="mt-2 pl-4 space-y-2">
+              {product.sourcePassages!.map((passage, i) => (
+                <div key={i} className="flex items-start gap-2 group/passage">
+                  <SentimentIcon sentiment={passage.sentiment} size="xs" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-[#71717A] leading-relaxed line-clamp-2 italic">
+                      &ldquo;{passage.text.slice(0, 180)}{passage.text.length > 180 ? '…' : ''}&rdquo;
+                    </p>
+                    {passage.thread_url && (
+                      <a
+                        href={passage.thread_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-0.5 text-[9px] text-violet-400/70 hover:text-violet-300 transition-colors"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" />
+                        {(() => {
+                          try {
+                            const m = passage.thread_url.match(/reddit\.com\/r\/([^/]+)/)
+                            return m ? `r/${m[1]}` : 'Source'
+                          } catch { return 'Source' }
+                        })()}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
       )}
 
