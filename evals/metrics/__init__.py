@@ -11,6 +11,7 @@ from .stage_isolation import StageIsolationMetric
 from .score_calibration import ScoreCalibrationMetric
 from .conflict_detection import ConflictDetectionMetric
 from .mention_popularity_bias import MentionPopularityBiasMetric
+from .nugget_alignment import NuggetAlignmentMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -27,4 +28,5 @@ __all__ = [
     "ScoreCalibrationMetric",
     "ConflictDetectionMetric",
     "MentionPopularityBiasMetric",
+    "NuggetAlignmentMetric",
 ]

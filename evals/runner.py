@@ -18,6 +18,7 @@ from evals.benchmarks.fault_injection import all_fault_scenarios
 from evals.benchmarks.score_calibration import all_calibration_suites
 from evals.benchmarks.conflict_detection import all_conflict_scenarios
 from evals.benchmarks.mention_popularity_bias import all_bias_scenarios
+from evals.benchmarks.nugget_alignment import all_nugget_judgments
 from evals.metrics import (
     RecommendationQualityMetric,
     SemanticConsistencyMetric,
@@ -33,6 +34,7 @@ from evals.metrics import (
     ScoreCalibrationMetric,
     ConflictDetectionMetric,
     MentionPopularityBiasMetric,
+    NuggetAlignmentMetric,
 )
 from evals.metrics.base import MetricResult
 from evals.index import compute_index, compute_index_breakdown
@@ -84,6 +86,7 @@ class EvalRunner:
         self.calibration_suites = all_calibration_suites()
         self.conflict_scenarios = all_conflict_scenarios()
         self.bias_scenarios = all_bias_scenarios()
+        self.nugget_judgments = all_nugget_judgments()
 
     def run(self) -> EvalRunResult:
         start = time.perf_counter()
@@ -150,6 +153,12 @@ class EvalRunner:
         print("  [Phase 14] Mention Popularity Bias...")
         result = MentionPopularityBiasMetric().evaluate(self.bias_scenarios)
         metric_results["mention_popularity_bias"] = result
+        _print_metric_summary(result)
+
+        # Phase 15: Nugget-Based Partial Credit
+        print("  [Phase 15] Nugget Alignment...")
+        result = NuggetAlignmentMetric().evaluate(self.nugget_judgments)
+        metric_results["nugget_alignment"] = result
         _print_metric_summary(result)
 
         if self.mode == "full":

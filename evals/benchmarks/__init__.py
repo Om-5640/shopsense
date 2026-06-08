@@ -21,6 +21,7 @@ from .fault_injection import all_fault_scenarios
 from .score_calibration import all_calibration_suites
 from .conflict_detection import all_conflict_scenarios
 from .mention_popularity_bias import all_bias_scenarios
+from .nugget_alignment import all_nugget_judgments
 
 
 def all_scenarios():
@@ -51,4 +52,5 @@ __all__ = [
     "all_calibration_suites",
     "all_conflict_scenarios",
     "all_bias_scenarios",
+    "all_nugget_judgments",
 ]
