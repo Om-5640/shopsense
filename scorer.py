@@ -621,6 +621,95 @@ def _build_scored_dict(product: dict, raw_scores: list, rubric: dict) -> dict:
     return result
 
 
+def filter_constraint_violators(
+    products: list[dict],
+    user_intent: dict | None,
+    research_text: str,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Pre-scoring filter: remove products that clearly violate hard user constraints.
+
+    Makes one fast LLM batch call to classify all products against the user's
+    hard_constraints and exclusions before any per-product scoring call runs.
+    Products that clearly violate constraints are returned as the second element
+    and never reach the scoring stage — they cannot rank regardless of LLM scoring.
+
+    Fails open: on any LLM or parse error every product is returned as compliant
+    so the pipeline never silently drops results due to this stage.
+
+    Returns (compliant_products, violated_products).
+    """
+    if not user_intent or not isinstance(user_intent, dict):
+        return products, []
+
+    constraints = [c for c in user_intent.get("hard_constraints", []) if c]
+    exclusions  = [e for e in user_intent.get("exclusions", []) if e]
+
+    if not constraints and not exclusions:
+        return products, []
+
+    constraint_lines = "\n".join(f"- MUST: {c}" for c in constraints)
+    exclusion_lines  = "\n".join(f"- MUST NOT include: {e}" for e in exclusions)
+    product_lines    = "\n".join(f"{i+1}. {p.get('name', '?')}" for i, p in enumerate(products))
+    research_excerpt = (research_text or "")[:2000]
+
+    system = (
+        "You are a product constraint checker. "
+        "Given hard user requirements and a product list, identify products that "
+        "CLEARLY AND CERTAINLY violate any requirement. "
+        "Only mark compliant=false when you have HIGH CONFIDENCE the product fails "
+        "a specific requirement based on its name or well-known features. "
+        "When uncertain, always default to compliant=true — overfiltration is worse "
+        "than under-filtration. "
+        'Return JSON only: {"results": [{"name": "...", "compliant": true, "reason": ""}]}'
+    )
+    prompt = (
+        f"HARD USER REQUIREMENTS:\n{constraint_lines}\n{exclusion_lines}\n\n"
+        f"PRODUCTS TO CHECK:\n{product_lines}\n\n"
+        f"RESEARCH CONTEXT:\n{research_excerpt}\n\n"
+        "Return compliant=false ONLY when clearly violated. Default to compliant=true when unsure."
+    )
+
+    try:
+        from llm_client import _try_repair_json
+        raw = run_agent("product_scorer", user_prompt=prompt, system=system)
+        data = _try_repair_json(raw)
+        results_list = data.get("results", []) if isinstance(data, dict) else []
+
+        compliance_map: dict[str, bool] = {}
+        reason_map: dict[str, str] = {}
+        for r in results_list:
+            if isinstance(r, dict) and r.get("name"):
+                key = r["name"].lower()
+                compliance_map[key] = bool(r.get("compliant", True))
+                reason_map[key] = str(r.get("reason", ""))
+
+        compliant: list[dict] = []
+        violated:  list[dict] = []
+        for p in products:
+            name_lower = p.get("name", "").lower()
+            if compliance_map.get(name_lower, True):  # unknown → keep
+                compliant.append(p)
+            else:
+                excluded = dict(p)
+                excluded["constraint_violation_reason"] = (
+                    reason_map.get(name_lower) or "Violates hard user requirements"
+                )
+                violated.append(excluded)
+
+        if violated:
+            _logger.info(
+                "[constraint_filter] excluded %d product(s): %s",
+                len(violated),
+                ", ".join(p.get("name", "?") for p in violated),
+            )
+        return compliant, violated
+
+    except Exception as exc:
+        _logger.warning("[constraint_filter] check failed (non-fatal, keeping all): %s", exc)
+        return products, []
+
+
 def score_all_products(
     products: list[dict],
     rubric: dict,

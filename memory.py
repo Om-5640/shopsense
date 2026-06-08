@@ -236,6 +236,35 @@ def extract_and_save_signals(
     if not signals_raw:
         return []
 
+    # Fix 3: Narrow over-broad category hints to prevent cross-product-type bleed.
+    # When the LLM stores a signal under the top-level category (e.g. "electronics")
+    # but the current research is product-specific (e.g. "electronics/earbuds"),
+    # signals describing product-specific attributes (sound signature, fit, ANC quality)
+    # must not bleed into unrelated subcategory searches (headphones, keyboards, etc.).
+    # We only preserve the broad hint for cross-category-safe attributes (brand loyalty,
+    # price sensitivity, build quality preference) which are genuinely universal.
+    _CROSS_CATEGORY_SAFE_TERMS = frozenset({
+        "brand", "budget", "price", "warranty", "durability", "build quality",
+        "material", "design", "reliability", "longevity", "value", "aesthetic",
+        "weight", "portability", "colour", "color",
+    })
+    if "/" in category:
+        _top_level = category.split("/")[0].lower()
+        for _sig in signals_raw:
+            _hint = _sig.get("category_hint", "any")
+            if _hint in ("any", category):
+                continue
+            # Broad parent hint (e.g. "electronics") for a specific category (e.g. "electronics/earbuds")
+            if _hint == _top_level:
+                _sig_lower = _sig.get("text", "").lower()
+                _is_safe = any(term in _sig_lower for term in _CROSS_CATEGORY_SAFE_TERMS)
+                if not _is_safe:
+                    _logger.debug(
+                        "[memory] narrowed hint %r → %r for signal: %s",
+                        _hint, category, _sig.get("text"),
+                    )
+                    _sig["category_hint"] = category
+
     if not _DB_AVAILABLE:
         _logger.warning("[memory] db not available — signals will not be persisted")
         return signals_raw

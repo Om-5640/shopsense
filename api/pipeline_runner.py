@@ -287,10 +287,30 @@ def _pipeline_cache_key(query: str, category: str, rubric: dict, profile: dict |
                 if q or a:
                     qa_pairs.append((q, a))
         qa_pairs.sort()
+    # Fix 4: Include a memory fingerprint so that adding or removing a preference
+    # signal invalidates the cache for that user — preventing stale results that
+    # predate the new preference. Guest users share cache entries (no per-user signals).
+    memory_fp = ""
+    user_id = (profile or {}).get("user_id", "default") if isinstance(profile, dict) else "default"
+    if user_id and user_id not in ("default", "__legacy__"):
+        try:
+            from memory import list_user_signals as _list_signals
+            _signals = _list_signals(user_id=user_id, limit=100)
+            _sig_key = "|".join(sorted(
+                f"{s.get('type', s.get('signal_type', ''))}"
+                f"{s.get('text', s.get('signal_value', ''))}"
+                f"{s.get('strength', '')}"
+                for s in _signals
+            ))
+            memory_fp = "|mem:" + hashlib.md5(_sig_key.encode()).hexdigest()[:8]
+        except Exception:
+            pass
+
     payload = (
         f"{query.lower().strip()}|{category}"
         f"|{json.dumps(weights, sort_keys=True)}"
         f"|{json.dumps(qa_pairs)}"
+        f"{memory_fp}"
     )
     return hashlib.md5(payload.encode()).hexdigest()
 
@@ -1108,10 +1128,56 @@ def _execute_pipeline(
     except Exception as mp_err:
         session.emit_log(f"[mention_pipeline] non-fatal: {mp_err}")
         # Products keep their LLM-estimated counts — pipeline continues unaffected
+
+    # Fix 1: Hallucination filter — drop products with zero text corroboration.
+    # An LLM can confidently name a product that never appeared in any source.
+    # Keep a product only if the Aho-Corasick automaton found ≥1 confirmed text hit
+    # (mention_count > 0) OR the LLM attributed it to at least one source URL/subreddit.
+    # Review-site-only products have no Reddit mention count but a valid sources list.
+    _pre_hallucination = len(products)
+    products = [
+        p for p in products
+        if p.get("mention_count", 0) > 0 or p.get("sources")
+    ]
+    _hallucination_dropped = _pre_hallucination - len(products)
+    if _hallucination_dropped:
+        session.emit_log(
+            f"[hallucination_filter] removed {_hallucination_dropped} product(s) "
+            f"with no text corroboration and no source attribution"
+        )
+        session.stats["hallucination_filter_dropped"] = _hallucination_dropped
+
     _stage_timings["mention_counting"] = round(time.time() - _t0, 1)
     session.stats["stage_timings"]["mention_counting"] = _stage_timings["mention_counting"]
     session.emit("stage_done", {"stage": "mention_counting", "elapsed_s": _stage_timings["mention_counting"]})
     _check_cancelled(session)
+
+    # Fix 2: Pre-scoring hard constraint filter — remove products that clearly violate
+    # the user's MUST/MUST-NOT requirements before any LLM scoring call runs.
+    # Violations are preserved in constraint_violations so the result can surface them.
+    user_intent = (profile or {}).get("intent") if isinstance(profile, dict) else None
+    constraint_violations: list[dict] = []
+    if user_intent and (user_intent.get("hard_constraints") or user_intent.get("exclusions")):
+        _t_cf = time.time()
+        session.emit("stage_start", {"stage": "constraint_filter", "label": "Checking Requirements"})
+        try:
+            from scorer import filter_constraint_violators
+            products, constraint_violations = filter_constraint_violators(
+                products, user_intent, research_text
+            )
+            if constraint_violations:
+                session.emit_log(
+                    f"[constraint_filter] excluded {len(constraint_violations)} product(s) "
+                    f"that violate hard user requirements"
+                )
+                session.stats["constraint_violations_excluded"] = len(constraint_violations)
+        except Exception as _cf_err:
+            session.emit_log(f"[constraint_filter] non-fatal: {_cf_err}")
+        session.emit("stage_done", {
+            "stage": "constraint_filter",
+            "elapsed_s": round(time.time() - _t_cf, 1),
+        })
+        _check_cancelled(session)
 
     # ---- Stage 5: Per-product scoring ----
     _t0 = time.time()
@@ -1128,8 +1194,6 @@ def _execute_pipeline(
             "total": total,
             "detail": name,
         })
-
-    user_intent = (profile or {}).get("intent") if isinstance(profile, dict) else None
 
     # Phase 7: emit token estimate + enforce budget on research_text before scoring
     _rt_tokens = _estimate_tokens(research_text)
@@ -1260,6 +1324,7 @@ def _execute_pipeline(
         "rubric": rubric,
         "analysis": analysis,
         "scoredProducts": scored,
+        "constraintViolations": constraint_violations,
     }
 
     _save_pipeline_cache(_post_gap_cache_key, session.result)
@@ -1287,6 +1352,7 @@ def _execute_pipeline(
             rubric=rubric,
             analysis=analysis,
             scoredProducts=scored,
+            constraintViolations=constraint_violations,
         )
     except Exception as db_err:
         session.emit_log(f"[db] write failed (non-fatal): {db_err}")
