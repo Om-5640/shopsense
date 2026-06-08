@@ -6,7 +6,7 @@ from __future__ import annotations
 
 # ── Intelligence Index weights (must sum to 1.0) ──────────────────────────
 INDEX_WEIGHTS: dict[str, float] = {
-    "recommendation_quality":     0.20,
+    "recommendation_quality":     0.18,  # reduced from 0.20 to make room for new metrics
     "personalization_strength":   0.15,
     "counterfactual_sensitivity": 0.15,
     "ranking_quality":            0.15,
@@ -21,6 +21,8 @@ INDEX_WEIGHTS: dict[str, float] = {
     "mention_popularity_bias":    0.02,
     "nugget_alignment":           0.02,
     "fixture_staleness":          0.01,
+    "extraction_recall":          0.01,  # Fix 18: normalizer precision/recall
+    "ranking_stability":          0.01,  # Fix 19: weight-perturbation rank stability
 }
 
 # ── Pass thresholds per metric (0-100) ────────────────────────────────────
@@ -40,6 +42,8 @@ PASS_THRESHOLDS: dict[str, float] = {
     "mention_popularity_bias":    85.0,
     "nugget_alignment":           70.0,
     "fixture_staleness":          80.0,
+    "extraction_recall":          90.0,  # Fix 18: normalizer must preserve ≥90% of expected products
+    "ranking_stability":          70.0,  # Fix 19: mean Spearman ρ × 100 ≥ 70
 }
 
 # ── CI blocking thresholds (fail build below these) ───────────────────────
@@ -61,6 +65,8 @@ CI_BLOCK_THRESHOLDS: dict[str, float] = {
     "mention_popularity_bias":    75.0,   # current 100.0 — pure offline math, any drop is a regression
     "nugget_alignment":           60.0,   # current  82.4 — pure offline math, any drop is a regression
     "fixture_staleness":          70.0,   # current 100.0 — pure offline math, any drop is a regression
+    "extraction_recall":          85.0,   # Fix 18: high-confidence offline math
+    "ranking_stability":          65.0,   # Fix 19: offline math — tight cluster sc-002 keeps this lower
 }
 
 # Minimum Intelligence Index to pass CI (current full-mode index ≈ 96.8).
@@ -79,6 +85,8 @@ QUICK_EVAL_METRICS = [
     "mention_popularity_bias",
     "nugget_alignment",
     "fixture_staleness",
+    "extraction_recall",   # Fix 18: pure offline, fast
+    "ranking_stability",   # Fix 19: pure offline, fast
 ]
 
 FULL_EVAL_METRICS = list(INDEX_WEIGHTS.keys())

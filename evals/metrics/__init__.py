@@ -13,6 +13,8 @@ from .conflict_detection import ConflictDetectionMetric
 from .mention_popularity_bias import MentionPopularityBiasMetric
 from .nugget_alignment import NuggetAlignmentMetric
 from .fixture_staleness import FixtureStalenessMetric
+from .extraction_recall import ExtractionRecallMetric
+from .ranking_stability import RankingStabilityMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -31,4 +33,6 @@ __all__ = [
     "MentionPopularityBiasMetric",
     "NuggetAlignmentMetric",
     "FixtureStalenessMetric",
+    "ExtractionRecallMetric",
+    "RankingStabilityMetric",
 ]

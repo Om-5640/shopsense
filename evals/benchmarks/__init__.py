@@ -23,6 +23,8 @@ from .conflict_detection import all_conflict_scenarios
 from .mention_popularity_bias import all_bias_scenarios
 from .nugget_alignment import all_nugget_judgments
 from .fixture_staleness import load_all_fixture_records
+from .extraction_recall import all_extraction_scenarios, ExtractionScenario
+from .ranking_stability import all_stability_scenarios, StabilityScenario
 
 
 def all_scenarios():
@@ -55,4 +57,8 @@ __all__ = [
     "all_bias_scenarios",
     "all_nugget_judgments",
     "load_all_fixture_records",
+    "all_extraction_scenarios",
+    "ExtractionScenario",
+    "all_stability_scenarios",
+    "StabilityScenario",
 ]

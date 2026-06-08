@@ -20,6 +20,8 @@ from evals.benchmarks.conflict_detection import all_conflict_scenarios
 from evals.benchmarks.mention_popularity_bias import all_bias_scenarios
 from evals.benchmarks.nugget_alignment import all_nugget_judgments
 from evals.benchmarks.fixture_staleness import load_all_fixture_records
+from evals.benchmarks.extraction_recall import all_extraction_scenarios
+from evals.benchmarks.ranking_stability import all_stability_scenarios
 from evals.metrics import (
     RecommendationQualityMetric,
     SemanticConsistencyMetric,
@@ -37,6 +39,8 @@ from evals.metrics import (
     MentionPopularityBiasMetric,
     NuggetAlignmentMetric,
     FixtureStalenessMetric,
+    ExtractionRecallMetric,
+    RankingStabilityMetric,
 )
 from evals.metrics.base import MetricResult
 from evals.index import compute_index, compute_index_breakdown
@@ -90,6 +94,8 @@ class EvalRunner:
         self.bias_scenarios = all_bias_scenarios()
         self.nugget_judgments = all_nugget_judgments()
         self.fixture_records = load_all_fixture_records()
+        self.extraction_scenarios = all_extraction_scenarios()
+        self.stability_scenarios = all_stability_scenarios()
 
     def run(self) -> EvalRunResult:
         start = time.perf_counter()
@@ -168,6 +174,18 @@ class EvalRunner:
         print("  [Phase 16] Fixture Staleness...")
         result = FixtureStalenessMetric().evaluate(self.fixture_records)
         metric_results["fixture_staleness"] = result
+        _print_metric_summary(result)
+
+        # Fix 18: Extraction Precision/Recall
+        print("  [Fix 18] Extraction Recall...")
+        result = ExtractionRecallMetric().evaluate(self.extraction_scenarios)
+        metric_results["extraction_recall"] = result
+        _print_metric_summary(result)
+
+        # Fix 19: Ranking Stability
+        print("  [Fix 19] Ranking Stability...")
+        result = RankingStabilityMetric().evaluate(self.stability_scenarios)
+        metric_results["ranking_stability"] = result
         _print_metric_summary(result)
 
         if self.mode == "full":

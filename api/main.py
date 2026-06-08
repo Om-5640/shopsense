@@ -1024,11 +1024,19 @@ def health() -> dict:
     except Exception:
         pass
 
+    cache_backend_name = "file"
+    try:
+        from cache import cache_backend as _cache_backend
+        cache_backend_name = _cache_backend()
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "db": "ok" if db_ok else "error",
         "memory": "ok" if memory_ok else "unavailable",
         "providers": get_provider_status(),
         "scoring_mode": scoring_mode,
+        "cache_backend": cache_backend_name,
         **({"scoring_mode_note": scoring_mode_note} if scoring_mode_note else {}),
     }

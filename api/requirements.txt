@@ -25,6 +25,10 @@ alembic>=1.13
 # JWT validation for NextAuth sessions
 PyJWT>=2.8
 
+# Fix 20: Redis cache tier (optional — file-based cache is always available as fallback)
+# Install only when you set REDIS_URL in your .env
+redis>=6.4.0
+
 # CI / testing
 pytest>=7.0
 httpx>=0.27          # required by FastAPI TestClient (starlette.testclient)
