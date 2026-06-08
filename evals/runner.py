@@ -14,6 +14,7 @@ from evals.benchmarks import (
     all_scenarios, all_clusters, all_counterfactuals,
     all_personalization_tests, all_adversarial, all_human_judgments,
 )
+from evals.benchmarks.fault_injection import all_fault_scenarios
 from evals.metrics import (
     RecommendationQualityMetric,
     SemanticConsistencyMetric,
@@ -25,6 +26,7 @@ from evals.metrics import (
     ExplanationIntegrityMetric,
     RobustnessMetric,
     HumanAlignmentMetric,
+    StageIsolationMetric,
 )
 from evals.metrics.base import MetricResult
 from evals.index import compute_index, compute_index_breakdown
@@ -72,6 +74,7 @@ class EvalRunner:
         self.personalization_tests = all_personalization_tests()
         self.adversarial_scenarios = all_adversarial()
         self.human_judgments = all_human_judgments()
+        self.fault_scenarios = all_fault_scenarios()
 
     def run(self) -> EvalRunResult:
         start = time.perf_counter()
@@ -114,6 +117,12 @@ class EvalRunner:
         print("  [Phase 9] Robustness...")
         result = RobustnessMetric().evaluate(self.adversarial_scenarios)
         metric_results["robustness"] = result
+        _print_metric_summary(result)
+
+        # Phase 10: Stage Fault Injection
+        print("  [Phase 10] Stage Fault Injection...")
+        result = StageIsolationMetric().evaluate(self.fault_scenarios)
+        metric_results["stage_isolation"] = result
         _print_metric_summary(result)
 
         if self.mode == "full":

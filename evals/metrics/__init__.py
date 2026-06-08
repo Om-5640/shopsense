@@ -7,6 +7,7 @@ from .ranking_quality import RankingQualityMetric, GoldRankingQualityMetric
 from .explanation_integrity import ExplanationIntegrityMetric
 from .robustness import RobustnessMetric
 from .human_alignment import HumanAlignmentMetric
+from .stage_isolation import StageIsolationMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -19,4 +20,5 @@ __all__ = [
     "ExplanationIntegrityMetric",
     "RobustnessMetric",
     "HumanAlignmentMetric",
+    "StageIsolationMetric",
 ]

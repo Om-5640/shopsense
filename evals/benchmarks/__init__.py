@@ -17,6 +17,7 @@ from .personalization import all_personalization_tests
 from .adversarial import all_adversarial
 from .human_judgments import all_human_judgments as _earbuds_human_judgments
 from .pool_loader import pool_scenarios, pool_human_judgments, pool_categories
+from .fault_injection import all_fault_scenarios
 
 
 def all_scenarios():
@@ -43,4 +44,5 @@ __all__ = [
     "all_adversarial",
     "all_human_judgments",
     "all_categories",
+    "all_fault_scenarios",
 ]
