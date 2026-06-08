@@ -1,0 +1,402 @@
+{
+  "category": "earbuds_real",
+  "description": "Real-world true-wireless earbuds benchmarks covering audiophile, commute, travel, business and budget use cases. Products and scores are derived from published specs and extensive user-review data.",
+  "criteria": [
+    {"name": "sound_quality",      "label": "Sound Quality (tonality, detail, soundstage)"},
+    {"name": "noise_cancellation", "label": "Active Noise Cancellation effectiveness"},
+    {"name": "transparency_mode",  "label": "Transparency / Awareness Mode quality"},
+    {"name": "battery_life",       "label": "Battery Life (earbuds + charging case)"},
+    {"name": "comfort",            "label": "Comfort & Fit (long-wear fatigue, tip options)"},
+    {"name": "microphone_quality", "label": "Microphone Quality (voice capture, wind rejection)"},
+    {"name": "call_quality",       "label": "Call Clarity & Reliability"},
+    {"name": "price_to_value",     "label": "Price to Value (feature density per dollar)"},
+    {"name": "codec_support",      "label": "Audio Codec Support (SBC / AAC / LDAC / aptX)"},
+    {"name": "durability",         "label": "Build Quality & Water Resistance (IPX rating)"}
+  ],
+  "products": [
+    {
+      "name": "Sony WF-1000XM5",
+      "scores": {
+        "sound_quality": 9, "noise_cancellation": 9, "transparency_mode": 8,
+        "battery_life": 7, "comfort": 7, "microphone_quality": 8,
+        "call_quality": 8, "price_to_value": 5, "codec_support": 9, "durability": 7
+      },
+      "signal_strength": "strong",
+      "mention_count": 120, "positive_mentions": 98, "negative_mentions": 22,
+      "praise": ["best-in-class ANC", "LDAC hi-res audio", "excellent noise isolation", "detailed soundstage"],
+      "complaints": [
+        {"text": "premium price tag around $280", "confidence": "high"},
+        {"text": "larger earbud shell may not fit small ears", "confidence": "medium"},
+        {"text": "no aptX or Bluetooth multipoint on base firmware", "confidence": "low"}
+      ]
+    },
+    {
+      "name": "Apple AirPods Pro 2",
+      "scores": {
+        "sound_quality": 8, "noise_cancellation": 9, "transparency_mode": 9,
+        "battery_life": 6, "comfort": 9, "microphone_quality": 8,
+        "call_quality": 9, "price_to_value": 5, "codec_support": 3, "durability": 8
+      },
+      "signal_strength": "strong",
+      "mention_count": 145, "positive_mentions": 118, "negative_mentions": 27,
+      "praise": ["world-class transparency mode", "seamless Apple ecosystem", "Adaptive Audio", "comfortable H2 chip"],
+      "complaints": [
+        {"text": "AAC-only codec — LDAC/aptX not supported", "confidence": "high"},
+        {"text": "shorter battery life than rivals at $249", "confidence": "medium"},
+        {"text": "limited use on Android — no spatial audio or Adaptive Audio", "confidence": "high"}
+      ]
+    },
+    {
+      "name": "Bose QuietComfort Ultra Earbuds",
+      "scores": {
+        "sound_quality": 8, "noise_cancellation": 8, "transparency_mode": 8,
+        "battery_life": 6, "comfort": 10, "microphone_quality": 7,
+        "call_quality": 7, "price_to_value": 3, "codec_support": 5, "durability": 8
+      },
+      "signal_strength": "strong",
+      "mention_count": 88, "positive_mentions": 72, "negative_mentions": 16,
+      "praise": ["legendary StayHear Max tip comfort", "Immersive Audio spatial feature", "premium build", "consistent ANC across environments"],
+      "complaints": [
+        {"text": "very expensive at $299", "confidence": "high"},
+        {"text": "average call quality compared to Sony and AirPods", "confidence": "medium"},
+        {"text": "SBC/AAC only — no LDAC", "confidence": "medium"}
+      ]
+    },
+    {
+      "name": "Nothing Ear (2)",
+      "scores": {
+        "sound_quality": 8, "noise_cancellation": 7, "transparency_mode": 7,
+        "battery_life": 7, "comfort": 7, "microphone_quality": 6,
+        "call_quality": 6, "price_to_value": 9, "codec_support": 8, "durability": 7
+      },
+      "signal_strength": "moderate",
+      "mention_count": 76, "positive_mentions": 59, "negative_mentions": 17,
+      "praise": ["LDAC support at $149", "flat audiophile tuning", "strong value", "custom EQ with LHDC"],
+      "complaints": [
+        {"text": "average mic quality for calls", "confidence": "medium"},
+        {"text": "ANC trails Sony and AirPods", "confidence": "medium"},
+        {"text": "proprietary case shape is polarising", "confidence": "low"}
+      ]
+    },
+    {
+      "name": "Anker Soundcore Liberty 4 NC",
+      "scores": {
+        "sound_quality": 6, "noise_cancellation": 7, "transparency_mode": 6,
+        "battery_life": 9, "comfort": 7, "microphone_quality": 6,
+        "call_quality": 6, "price_to_value": 10, "codec_support": 7, "durability": 6
+      },
+      "signal_strength": "moderate",
+      "mention_count": 52, "positive_mentions": 40, "negative_mentions": 12,
+      "praise": ["exceptional 50-hour total battery", "LDAC at $80", "solid ANC for price", "hi-res audio certification"],
+      "complaints": [
+        {"text": "sound quality noticeably below premium rivals", "confidence": "high"},
+        {"text": "IPX4 only — not suitable for heavy rain or swimming", "confidence": "medium"},
+        {"text": "fit can feel loose during intense activity", "confidence": "medium"}
+      ]
+    },
+    {
+      "name": "Jabra Elite 5",
+      "scores": {
+        "sound_quality": 7, "noise_cancellation": 7, "transparency_mode": 7,
+        "battery_life": 7, "comfort": 7, "microphone_quality": 9,
+        "call_quality": 9, "price_to_value": 8, "codec_support": 5, "durability": 9
+      },
+      "signal_strength": "moderate",
+      "mention_count": 61, "positive_mentions": 49, "negative_mentions": 12,
+      "praise": ["best-in-class 6-mic call quality", "IP55 dust+water resistance", "reliable multipoint Bluetooth", "Jabra Sound+ EQ"],
+      "complaints": [
+        {"text": "SBC/AAC only — no LDAC", "confidence": "high"},
+        {"text": "sound quality average compared to audiophile picks", "confidence": "medium"},
+        {"text": "no spatial audio or immersive mode", "confidence": "low"}
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "android_audiophile",
+      "name": "Audiophile Android Commuter",
+      "description": "Heavy music listener on Android who needs LDAC, strong ANC for metro commutes, and studio-grade sound.",
+      "tags": ["audiophile", "android", "commute"],
+      "weights": {
+        "noise_cancellation": 10, "codec_support": 9, "sound_quality": 7,
+        "battery_life": 5, "comfort": 4
+      },
+      "expected_rank_1": "Sony WF-1000XM5",
+      "expected_rank_1_not": ["Apple AirPods Pro 2"]
+    },
+    {
+      "id": "apple_daily_commute",
+      "name": "Apple Ecosystem Daily Commuter",
+      "description": "iPhone user who wants seamless ecosystem integration, best-in-class transparency mode, and comfortable all-day wear.",
+      "tags": ["apple", "commute", "daily"],
+      "weights": {
+        "transparency_mode": 10, "comfort": 9, "call_quality": 8,
+        "noise_cancellation": 6, "sound_quality": 4
+      },
+      "expected_rank_1": "Apple AirPods Pro 2",
+      "expected_rank_1_not": ["Anker Soundcore Liberty 4 NC"]
+    },
+    {
+      "id": "comfort_traveler",
+      "name": "Premium Comfort Traveler",
+      "description": "Frequent flyer who values wearing comfort above all — long flights, extended airport waits, and all-day wearability.",
+      "tags": ["travel", "comfort", "premium"],
+      "weights": {
+        "comfort": 10, "sound_quality": 6, "transparency_mode": 5,
+        "durability": 5, "battery_life": 3
+      },
+      "expected_rank_1": "Bose QuietComfort Ultra Earbuds",
+      "expected_rank_1_not": ["Anker Soundcore Liberty 4 NC"]
+    },
+    {
+      "id": "value_audiophile",
+      "name": "Value-Focused Audiophile",
+      "description": "Audiophile on a mid-range budget wanting excellent sound and LDAC support without spending $250+.",
+      "tags": ["value", "audiophile", "mid-range"],
+      "weights": {
+        "price_to_value": 9, "sound_quality": 9, "codec_support": 7,
+        "noise_cancellation": 4
+      },
+      "expected_rank_1": "Nothing Ear (2)",
+      "expected_rank_1_not": ["Bose QuietComfort Ultra Earbuds"]
+    },
+    {
+      "id": "budget_anc",
+      "name": "Budget ANC Shopper",
+      "description": "Price-conscious buyer who wants solid active noise cancellation and long battery without spending more than $100.",
+      "tags": ["budget", "anc", "student"],
+      "weights": {
+        "price_to_value": 10, "noise_cancellation": 8,
+        "battery_life": 7, "sound_quality": 3
+      },
+      "expected_rank_1": "Anker Soundcore Liberty 4 NC",
+      "expected_rank_1_not": ["Bose QuietComfort Ultra Earbuds", "Sony WF-1000XM5"]
+    },
+    {
+      "id": "business_calls",
+      "name": "Business Professional — Call Quality",
+      "description": "Remote worker or business traveler who spends hours daily on calls and needs crystal-clear voice pickup and reliable call handling.",
+      "tags": ["business", "calls", "professional"],
+      "weights": {
+        "microphone_quality": 10, "call_quality": 10,
+        "noise_cancellation": 3, "comfort": 4, "durability": 6
+      },
+      "expected_rank_1": "Jabra Elite 5",
+      "expected_rank_1_not": ["Nothing Ear (2)"]
+    },
+    {
+      "id": "long_haul_flight",
+      "name": "Long-Haul Flight Companion",
+      "description": "Passenger on 10+ hour international flights who needs sustained comfort, reliable ANC, and quick transparency for announcements.",
+      "tags": ["travel", "flight", "comfort"],
+      "weights": {
+        "noise_cancellation": 9, "comfort": 10, "transparency_mode": 7,
+        "sound_quality": 5, "battery_life": 4
+      },
+      "expected_rank_1": "Apple AirPods Pro 2"
+    },
+    {
+      "id": "active_outdoor",
+      "name": "Active Outdoor Athlete",
+      "description": "Runner or gym-goer who needs earbuds that stay put, survive sweat and rain, and work well for outdoor voice calls.",
+      "tags": ["sports", "outdoor", "active"],
+      "weights": {
+        "durability": 10, "comfort": 7, "battery_life": 7,
+        "microphone_quality": 8, "noise_cancellation": 2
+      },
+      "expected_rank_1": "Jabra Elite 5",
+      "expected_rank_1_not": ["Anker Soundcore Liberty 4 NC"]
+    },
+    {
+      "id": "music_listening",
+      "name": "Dedicated Music Listener (Home & Commute)",
+      "description": "Audiophile who primarily uses earbuds for high-quality music playback and wants the best sound signature with hi-res codec support.",
+      "tags": ["music", "audiophile", "home"],
+      "weights": {
+        "sound_quality": 10, "codec_support": 9,
+        "noise_cancellation": 7, "comfort": 4
+      },
+      "expected_rank_1": "Sony WF-1000XM5"
+    },
+    {
+      "id": "budget_daily_driver",
+      "name": "Budget Daily Driver",
+      "description": "Everyday user on a tight budget who just wants reliable earbuds with long battery life for music and podcasts all day.",
+      "tags": ["budget", "daily", "commute"],
+      "weights": {
+        "price_to_value": 10, "battery_life": 9,
+        "comfort": 5, "noise_cancellation": 3
+      },
+      "expected_rank_1": "Anker Soundcore Liberty 4 NC",
+      "expected_rank_1_not": ["Bose QuietComfort Ultra Earbuds"]
+    },
+    {
+      "id": "podcast_creator",
+      "name": "Podcast Creator & Remote Interviewer",
+      "description": "Content creator who records podcast interviews and voice content on the go — mic quality and call reliability are essential.",
+      "tags": ["podcast", "creator", "professional"],
+      "weights": {
+        "microphone_quality": 10, "call_quality": 9,
+        "noise_cancellation": 5, "durability": 6, "battery_life": 4
+      },
+      "expected_rank_1": "Jabra Elite 5",
+      "expected_rank_1_not": ["Nothing Ear (2)"]
+    },
+    {
+      "id": "casual_commuter",
+      "name": "Casual Daily Commuter",
+      "description": "Everyday commuter who wants good sound, reasonable ANC, and strong value — not willing to pay flagship prices.",
+      "tags": ["commute", "casual", "daily"],
+      "weights": {
+        "price_to_value": 8, "sound_quality": 8, "noise_cancellation": 7,
+        "comfort": 6, "codec_support": 5
+      },
+      "expected_rank_1": "Nothing Ear (2)"
+    },
+    {
+      "id": "premium_no_compromise",
+      "name": "Premium — No Compromise",
+      "description": "Enthusiast willing to pay top dollar for the absolute best combination of sound, ANC, codec quality, and call performance.",
+      "tags": ["premium", "audiophile", "no-compromise"],
+      "weights": {
+        "sound_quality": 9, "noise_cancellation": 9, "call_quality": 7,
+        "comfort": 6, "codec_support": 8, "price_to_value": 1
+      },
+      "expected_rank_1": "Sony WF-1000XM5",
+      "expected_rank_1_not": ["Anker Soundcore Liberty 4 NC"]
+    },
+    {
+      "id": "sleep_relaxation",
+      "name": "Sleep & Relaxation (Comfort-First)",
+      "description": "User who wears earbuds while falling asleep or meditating — needs the most comfortable fit that won't cause ear fatigue after hours.",
+      "tags": ["comfort", "sleep", "meditation"],
+      "weights": {
+        "comfort": 10, "transparency_mode": 5, "noise_cancellation": 2,
+        "codec_support": 2, "sound_quality": 4
+      },
+      "expected_rank_1": "Bose QuietComfort Ultra Earbuds"
+    },
+    {
+      "id": "students_dorm",
+      "name": "College Student — Dorm & Study",
+      "description": "College student who needs versatile earbuds for studying, casual listening, and gaming on a student budget.",
+      "tags": ["student", "dorm", "budget"],
+      "weights": {
+        "price_to_value": 10, "sound_quality": 7, "noise_cancellation": 7,
+        "comfort": 5, "codec_support": 5
+      },
+      "expected_rank_1": "Nothing Ear (2)",
+      "expected_rank_1_not": ["Bose QuietComfort Ultra Earbuds", "Apple AirPods Pro 2"]
+    }
+  ],
+  "human_judgments": [
+    {
+      "id": "hj_android_audiophile",
+      "name": "Expert — Audiophile Android Power User",
+      "query": "best wireless earbuds for audiophile Android users with LDAC",
+      "expert_rank_1": "Sony WF-1000XM5",
+      "expert_rank_2": "Nothing Ear (2)",
+      "expert_rank_3": "Bose QuietComfort Ultra Earbuds",
+      "expert_rationale": "For an Android audiophile, LDAC codec support is non-negotiable — it unlocks 990 kbps hi-res streaming from Tidal, Amazon Music HD, and Qobuz. Sony WF-1000XM5 dominates: LDAC + best-in-class ANC + audiophile-grade sound at 9/10. Nothing Ear (2) earns #2 with LDAC at $149 — exceptional value for the codec alone. Bose edges #3 with superior ANC and comfort despite lacking LDAC. Apple AirPods rank last here: AAC-only makes them unsuitable for serious Android audiophile use.",
+      "weights": {
+        "noise_cancellation": 10, "codec_support": 9, "sound_quality": 7,
+        "battery_life": 5, "comfort": 4
+      },
+      "key_tradeoffs": [
+        "Nothing Ear (2) delivers LDAC at nearly half the Sony price — the gap is ANC depth and build polish",
+        "Bose has superior physical comfort but its SBC/AAC-only codec disqualifies it from hi-res Android use",
+        "AirPods Pro 2 leads in ANC-to-comfort but AAC ceiling makes it a poor audiophile choice on Android"
+      ]
+    },
+    {
+      "id": "hj_apple_ecosystem",
+      "name": "Expert — Apple Ecosystem Power User",
+      "query": "best earbuds for iPhone users with seamless Apple integration",
+      "expert_rank_1": "Apple AirPods Pro 2",
+      "expert_rank_2": "Bose QuietComfort Ultra Earbuds",
+      "expert_rank_3": "Sony WF-1000XM5",
+      "expert_rationale": "AirPods Pro 2 is unequivocally the best choice for Apple users: Adaptive Audio, seamless iCloud device switching, Find My, Siri integration, and the best transparency mode ever shipped in an earbud. Bose takes #2 — its comfort is unmatched and it pairs reliably with iPhone with solid ANC, though lacking Apple-specific features. Sony is #3: strong sound and ANC, but the Apple-specific features that matter most (spatial audio in Apple content, Handoff, Live Listen) are AirPods-exclusive.",
+      "weights": {
+        "transparency_mode": 10, "comfort": 9, "call_quality": 8,
+        "noise_cancellation": 6, "sound_quality": 4
+      },
+      "key_tradeoffs": [
+        "Bose Immersive Audio vs AirPods Spatial Audio — both are excellent, but AirPods ties into Apple TV+ and Dolby Atmos ecosystem",
+        "Sony outperforms Bose on sound quality but its Android-first optimisations leave iPhone users missing features",
+        "Any non-AirPods choice sacrifices Adaptive Audio and seamless multi-device switching on Apple hardware"
+      ]
+    },
+    {
+      "id": "hj_remote_worker_calls",
+      "name": "Expert — Remote Worker (All-Day Call Quality)",
+      "query": "best wireless earbuds for remote workers who spend all day on calls",
+      "expert_rank_1": "Jabra Elite 5",
+      "expert_rank_2": "Apple AirPods Pro 2",
+      "expert_rank_3": "Sony WF-1000XM5",
+      "expert_rationale": "Jabra has been the call-quality benchmark for years: its 6-microphone array with wind noise reduction and voice isolation produces the clearest pickup in any TWS earbud. IP55 rating means it survives outdoor walking calls year-round. AirPods Pro 2 earns #2 — Apple's H2 chip delivers crisp voice transmission and the stem mics excel in meetings. Sony is #3: eight-mic array and AI noise reduction are impressive, but Jabra's purpose-built business audio pipeline still leads in enterprise environments.",
+      "weights": {
+        "microphone_quality": 10, "call_quality": 10,
+        "noise_cancellation": 3, "comfort": 4, "durability": 6
+      },
+      "key_tradeoffs": [
+        "AirPods Pro 2 wins on comfort for long calls but Jabra's mic array is purpose-built for voice isolation",
+        "Sony offers the best ANC for blocking office noise but its call quality trails Jabra in windy outdoor conditions",
+        "Jabra multipoint Bluetooth is more reliable than Sony for simultaneous phone + laptop connections"
+      ]
+    },
+    {
+      "id": "hj_budget_student_anc",
+      "name": "Expert — Budget Student ANC Shopper",
+      "query": "best budget wireless earbuds with strong noise cancellation under $100",
+      "expert_rank_1": "Anker Soundcore Liberty 4 NC",
+      "expert_rank_2": "Nothing Ear (2)",
+      "expert_rank_3": "Jabra Elite 5",
+      "expert_rationale": "Anker Soundcore Liberty 4 NC is the undisputed budget ANC champion: LDAC + 50-hour case battery + solid ANC for $80 is unprecedented value. It even achieves Hi-Res Audio certification. Nothing Ear (2) takes #2 — better sound signature and build at $149, but $70 more. Jabra Elite 5 rounds out #3: its IP55 durability and call quality make it excellent for students who commute in all weather, and the street price often drops below $100. Premium options (Sony, AirPods, Bose) are simply too expensive for the student use case.",
+      "weights": {
+        "price_to_value": 10, "noise_cancellation": 8,
+        "battery_life": 7, "sound_quality": 4
+      },
+      "key_tradeoffs": [
+        "Nothing Ear (2) sounds better and looks cooler but costs nearly double the Anker",
+        "Jabra Elite 5 is more durable and has much better call quality — worth paying more for active campus life",
+        "Anker's LDAC at $80 is the standout feature — audiophile-grade codec at a fraction of premium prices"
+      ]
+    },
+    {
+      "id": "hj_comfort_travel",
+      "name": "Expert — Premium Comfort Traveler",
+      "query": "best earbuds for long-haul travel comfort and noise cancellation",
+      "expert_rank_1": "Bose QuietComfort Ultra Earbuds",
+      "expert_rank_2": "Apple AirPods Pro 2",
+      "expert_rank_3": "Sony WF-1000XM5",
+      "expert_rationale": "For long-haul travel comfort, Bose is in a class of its own. The StayHear Max tips distribute pressure across the outer ear rather than inserting deep into the canal — the only earbud that remains genuinely comfortable after 10+ hours. AirPods Pro 2 is #2: excellent H2-chip ANC, best transparency for airport announcements, and lightweight. Sony edges #3: best sound and equal ANC to AirPods but the larger shell causes fatigue over extended wear. Price is irrelevant for the traveler use case — comfort and silence are the non-negotiables.",
+      "weights": {
+        "comfort": 10, "sound_quality": 6, "transparency_mode": 5,
+        "durability": 5, "battery_life": 3
+      },
+      "key_tradeoffs": [
+        "Sony has better codec support and sound quality but its larger housing causes noticeable fatigue past hour 6",
+        "AirPods Pro 2 leads in transparency mode — critical for hearing gate announcements without removing earbuds",
+        "Bose Immersive Audio spatial feature adds an enjoyable cinematic feel for movies on long-haul flights"
+      ]
+    },
+    {
+      "id": "hj_budget_audiophile",
+      "name": "Expert — Budget Audiophile (Android Mid-Range)",
+      "query": "best wireless earbuds for audiophiles on a mid-range budget with Android",
+      "expert_rank_1": "Nothing Ear (2)",
+      "expert_rank_2": "Anker Soundcore Liberty 4 NC",
+      "expert_rank_3": "Sony WF-1000XM5",
+      "expert_rationale": "Nothing Ear (2) is the clear winner for a budget audiophile: flat, reference-tuned sound signature, LDAC/LHDC codec support, 11-band custom EQ in the app, and a transparent design aesthetic — all for $149. Anker Soundcore Liberty 4 NC takes #2: its LDAC at $80 is extraordinary value and the 50-hour battery outlasts everything else in this segment. Sony WF-1000XM5 is #3: best overall sound quality of any TWS earbud, but at $280 it stretches the 'mid-range budget' premise — included for listeners who can stretch.",
+      "weights": {
+        "price_to_value": 9, "sound_quality": 9, "codec_support": 6,
+        "comfort": 5, "durability": 5
+      },
+      "key_tradeoffs": [
+        "Anker delivers LDAC at half the Nothing price but its sound tuning is more consumer V-shaped, less reference-accurate",
+        "Sony is technically superior to Nothing in sound quality but the $130 premium is hard to justify for budget-focused buyers",
+        "Nothing Ear (2) strikes the best balance: audiophile codec + tuning + app features at a sub-$150 price point"
+      ]
+    }
+  ]
+}
