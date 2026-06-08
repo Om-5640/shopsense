@@ -12,11 +12,12 @@ INDEX_WEIGHTS: dict[str, float] = {
     "ranking_quality":            0.15,
     "semantic_consistency":       0.10,
     "retrieval_quality":          0.10,
-    "explanation_integrity":      0.02,
+    "explanation_integrity":      0.01,
     "robustness":                 0.03,
     "human_alignment":            0.05,
     "stage_isolation":            0.03,
-    "score_calibration":          0.02,
+    "score_calibration":          0.01,
+    "conflict_detection":         0.02,
 }
 
 # ── Pass thresholds per metric (0-100) ────────────────────────────────────
@@ -32,6 +33,7 @@ PASS_THRESHOLDS: dict[str, float] = {
     "human_alignment":            60.0,
     "stage_isolation":            90.0,
     "score_calibration":          70.0,
+    "conflict_detection":         80.0,
 }
 
 # ── CI blocking thresholds (fail build below these) ───────────────────────
@@ -49,6 +51,7 @@ CI_BLOCK_THRESHOLDS: dict[str, float] = {
     "human_alignment":            65.0,   # current  76.9 (cross-category expert panel)
     "stage_isolation":            80.0,   # deterministic — any drop means inject_fault regression
     "score_calibration":          50.0,   # current 100.0 — block on severe LLM inflation regression
+    "conflict_detection":         70.0,   # current 100.0 — pure offline math, any drop is a regression
 }
 
 # Minimum Intelligence Index to pass CI (current full-mode index ≈ 96.8).
@@ -63,6 +66,7 @@ QUICK_EVAL_METRICS = [
     "robustness",
     "stage_isolation",
     "score_calibration",
+    "conflict_detection",
 ]
 
 FULL_EVAL_METRICS = list(INDEX_WEIGHTS.keys())

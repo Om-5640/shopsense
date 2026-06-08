@@ -9,6 +9,7 @@ from .robustness import RobustnessMetric
 from .human_alignment import HumanAlignmentMetric
 from .stage_isolation import StageIsolationMetric
 from .score_calibration import ScoreCalibrationMetric
+from .conflict_detection import ConflictDetectionMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -23,4 +24,5 @@ __all__ = [
     "HumanAlignmentMetric",
     "StageIsolationMetric",
     "ScoreCalibrationMetric",
+    "ConflictDetectionMetric",
 ]

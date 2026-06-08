@@ -586,7 +586,7 @@ class TestConfigConsistency:
 
     def test_explanation_integrity_weight_reduced(self):
         from evals.config import INDEX_WEIGHTS
-        assert INDEX_WEIGHTS["explanation_integrity"] == 0.02
+        assert INDEX_WEIGHTS["explanation_integrity"] == 0.01
 
     def test_stage_isolation_weight_is_003(self):
         from evals.config import INDEX_WEIGHTS
