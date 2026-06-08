@@ -1,94 +1,504 @@
 {
+  "_meta": {
+    "captured_at": "2026-06-08T00:00:00+00:00",
+    "schema_version": "1.0",
+    "content_hash": "73b0ca935b5558f0aedea76e5fd1150305a9c119db1d9a96e0f084f521722f26",
+    "note": "Benchmark pool for monitors. Content hash covers criteria and products only."
+  },
   "category": "monitors",
   "description": "Monitor benchmarks across color-critical, gaming, productivity, ultrawide, portable and budget use cases.",
   "criteria": [
-    {"name": "resolution_clarity", "label": "Resolution & Clarity"},
-    {"name": "refresh_rate",       "label": "Refresh Rate"},
-    {"name": "color_accuracy",     "label": "Color Accuracy"},
-    {"name": "response_time",      "label": "Response Time"},
-    {"name": "panel_brightness",   "label": "Panel Brightness"},
-    {"name": "price_to_value",     "label": "Price to Value"},
-    {"name": "connectivity_ports", "label": "Ports & Connectivity"},
-    {"name": "ergonomic_stand",    "label": "Ergonomic Stand"},
-    {"name": "panel_size",         "label": "Panel Size"},
-    {"name": "build_quality",      "label": "Build Quality"},
-    {"name": "portability",        "label": "Portability"}
+    {
+      "name": "resolution_clarity",
+      "label": "Resolution & Clarity"
+    },
+    {
+      "name": "refresh_rate",
+      "label": "Refresh Rate"
+    },
+    {
+      "name": "color_accuracy",
+      "label": "Color Accuracy"
+    },
+    {
+      "name": "response_time",
+      "label": "Response Time"
+    },
+    {
+      "name": "panel_brightness",
+      "label": "Panel Brightness"
+    },
+    {
+      "name": "price_to_value",
+      "label": "Price to Value"
+    },
+    {
+      "name": "connectivity_ports",
+      "label": "Ports & Connectivity"
+    },
+    {
+      "name": "ergonomic_stand",
+      "label": "Ergonomic Stand"
+    },
+    {
+      "name": "panel_size",
+      "label": "Panel Size"
+    },
+    {
+      "name": "build_quality",
+      "label": "Build Quality"
+    },
+    {
+      "name": "portability",
+      "label": "Portability"
+    }
   ],
   "products": [
     {
       "name": "BudgetScreen B4",
-      "scores": {"resolution_clarity": 5, "refresh_rate": 3, "color_accuracy": 6, "response_time": 4, "panel_brightness": 5, "price_to_value": 9, "connectivity_ports": 5, "ergonomic_stand": 4, "panel_size": 5, "build_quality": 5, "portability": 4},
-      "signal_strength": "moderate", "mention_count": 26, "positive_mentions": 16, "negative_mentions": 10,
-      "praise": ["does the job for the price", "easy to set up"],
-      "complaints": [{"text": "blurry text at close range", "confidence": "medium"}, {"text": "no height adjustment", "confidence": "high"}, {"text": "very slow for gaming", "confidence": "high"}]
+      "scores": {
+        "resolution_clarity": 5,
+        "refresh_rate": 3,
+        "color_accuracy": 6,
+        "response_time": 4,
+        "panel_brightness": 5,
+        "price_to_value": 9,
+        "connectivity_ports": 5,
+        "ergonomic_stand": 4,
+        "panel_size": 5,
+        "build_quality": 5,
+        "portability": 4
+      },
+      "signal_strength": "moderate",
+      "mention_count": 26,
+      "positive_mentions": 16,
+      "negative_mentions": 10,
+      "praise": [
+        "does the job for the price",
+        "easy to set up"
+      ],
+      "complaints": [
+        {
+          "text": "blurry text at close range",
+          "confidence": "medium"
+        },
+        {
+          "text": "no height adjustment",
+          "confidence": "high"
+        },
+        {
+          "text": "very slow for gaming",
+          "confidence": "high"
+        }
+      ]
     },
     {
       "name": "GamingDisplay G9",
-      "scores": {"resolution_clarity": 8, "refresh_rate": 9, "color_accuracy": 7, "response_time": 8, "panel_brightness": 7, "price_to_value": 7, "connectivity_ports": 7, "ergonomic_stand": 8, "panel_size": 7, "build_quality": 7, "portability": 3},
-      "signal_strength": "strong", "mention_count": 58, "positive_mentions": 46, "negative_mentions": 12,
-      "praise": ["buttery smooth motion", "great for competitive gaming", "solid HDR"],
-      "complaints": [{"text": "not for color-critical work", "confidence": "medium"}, {"text": "backlight bleed on some units", "confidence": "low"}]
+      "scores": {
+        "resolution_clarity": 8,
+        "refresh_rate": 9,
+        "color_accuracy": 7,
+        "response_time": 8,
+        "panel_brightness": 7,
+        "price_to_value": 7,
+        "connectivity_ports": 7,
+        "ergonomic_stand": 8,
+        "panel_size": 7,
+        "build_quality": 7,
+        "portability": 3
+      },
+      "signal_strength": "strong",
+      "mention_count": 58,
+      "positive_mentions": 46,
+      "negative_mentions": 12,
+      "praise": [
+        "buttery smooth motion",
+        "great for competitive gaming",
+        "solid HDR"
+      ],
+      "complaints": [
+        {
+          "text": "not for color-critical work",
+          "confidence": "medium"
+        },
+        {
+          "text": "backlight bleed on some units",
+          "confidence": "low"
+        }
+      ]
     },
     {
       "name": "ProPanel P7",
-      "scores": {"resolution_clarity": 10, "refresh_rate": 3, "color_accuracy": 10, "response_time": 3, "panel_brightness": 8, "price_to_value": 5, "connectivity_ports": 9, "ergonomic_stand": 8, "panel_size": 7, "build_quality": 9, "portability": 3},
-      "signal_strength": "strong", "mention_count": 43, "positive_mentions": 38, "negative_mentions": 5,
-      "praise": ["factory-calibrated colors", "4K sharpness is stunning", "USB-C hub built in"],
-      "complaints": [{"text": "not a gaming monitor", "confidence": "high"}, {"text": "expensive for the size", "confidence": "medium"}]
+      "scores": {
+        "resolution_clarity": 10,
+        "refresh_rate": 3,
+        "color_accuracy": 10,
+        "response_time": 3,
+        "panel_brightness": 8,
+        "price_to_value": 5,
+        "connectivity_ports": 9,
+        "ergonomic_stand": 8,
+        "panel_size": 7,
+        "build_quality": 9,
+        "portability": 3
+      },
+      "signal_strength": "strong",
+      "mention_count": 43,
+      "positive_mentions": 38,
+      "negative_mentions": 5,
+      "praise": [
+        "factory-calibrated colors",
+        "4K sharpness is stunning",
+        "USB-C hub built in"
+      ],
+      "complaints": [
+        {
+          "text": "not a gaming monitor",
+          "confidence": "high"
+        },
+        {
+          "text": "expensive for the size",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "UltraWide U5",
-      "scores": {"resolution_clarity": 8, "refresh_rate": 8, "color_accuracy": 8, "response_time": 7, "panel_brightness": 7, "price_to_value": 6, "connectivity_ports": 7, "ergonomic_stand": 6, "panel_size": 10, "build_quality": 7, "portability": 2},
-      "signal_strength": "moderate", "mention_count": 35, "positive_mentions": 27, "negative_mentions": 8,
-      "praise": ["eliminates need for dual monitors", "immersive gaming", "good for multitasking"],
-      "complaints": [{"text": "some apps don't support ultrawide", "confidence": "medium"}, {"text": "limited tilt only stand", "confidence": "medium"}]
+      "scores": {
+        "resolution_clarity": 8,
+        "refresh_rate": 8,
+        "color_accuracy": 8,
+        "response_time": 7,
+        "panel_brightness": 7,
+        "price_to_value": 6,
+        "connectivity_ports": 7,
+        "ergonomic_stand": 6,
+        "panel_size": 10,
+        "build_quality": 7,
+        "portability": 2
+      },
+      "signal_strength": "moderate",
+      "mention_count": 35,
+      "positive_mentions": 27,
+      "negative_mentions": 8,
+      "praise": [
+        "eliminates need for dual monitors",
+        "immersive gaming",
+        "good for multitasking"
+      ],
+      "complaints": [
+        {
+          "text": "some apps don't support ultrawide",
+          "confidence": "medium"
+        },
+        {
+          "text": "limited tilt only stand",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "PortableView PV1",
-      "scores": {"resolution_clarity": 6, "refresh_rate": 4, "color_accuracy": 7, "response_time": 4, "panel_brightness": 5, "price_to_value": 7, "connectivity_ports": 5, "ergonomic_stand": 2, "panel_size": 3, "build_quality": 6, "portability": 10},
-      "signal_strength": "weak", "mention_count": 14, "positive_mentions": 9, "negative_mentions": 5,
-      "praise": ["fits in a laptop bag", "plug-and-play USB-C", "weighs under a kilo"],
-      "complaints": [{"text": "small screen for serious work", "confidence": "high"}, {"text": "dim outdoors", "confidence": "medium"}]
+      "scores": {
+        "resolution_clarity": 6,
+        "refresh_rate": 4,
+        "color_accuracy": 7,
+        "response_time": 4,
+        "panel_brightness": 5,
+        "price_to_value": 7,
+        "connectivity_ports": 5,
+        "ergonomic_stand": 2,
+        "panel_size": 3,
+        "build_quality": 6,
+        "portability": 10
+      },
+      "signal_strength": "weak",
+      "mention_count": 14,
+      "positive_mentions": 9,
+      "negative_mentions": 5,
+      "praise": [
+        "fits in a laptop bag",
+        "plug-and-play USB-C",
+        "weighs under a kilo"
+      ],
+      "complaints": [
+        {
+          "text": "small screen for serious work",
+          "confidence": "high"
+        },
+        {
+          "text": "dim outdoors",
+          "confidence": "medium"
+        }
+      ]
     }
   ],
   "scenarios": [
-    {"id": "photo_editor", "name": "Professional Photo Editor / Color Grading", "tags": ["professional", "color"], "weights": {"color_accuracy": 10, "resolution_clarity": 9, "panel_brightness": 7, "build_quality": 6}, "expected_rank_1": "ProPanel P7", "expected_rank_1_not": ["BudgetScreen B4", "GamingDisplay G9"]},
-    {"id": "competitive_fps", "name": "Competitive FPS Gamer", "tags": ["gaming", "competitive"], "weights": {"refresh_rate": 10, "response_time": 9, "resolution_clarity": 6, "price_to_value": 5}, "expected_rank_1": "GamingDisplay G9", "expected_rank_1_not": ["ProPanel P7", "BudgetScreen B4"]},
-    {"id": "developer_multiwindow", "name": "Software Developer (Multi-Window Workflow)", "tags": ["developer", "productivity"], "weights": {"panel_size": 10, "resolution_clarity": 5, "connectivity_ports": 4}, "expected_rank_1": "UltraWide U5", "expected_rank_1_not": ["PortableView PV1"]},
-    {"id": "budget_office", "name": "Budget Office Worker", "tags": ["office", "budget"], "weights": {"price_to_value": 10, "ergonomic_stand": 3, "build_quality": 3}, "expected_rank_1": "BudgetScreen B4", "expected_rank_1_not": ["ProPanel P7"]},
-    {"id": "video_editor", "name": "Freelance Video Editor", "tags": ["creative", "video"], "weights": {"color_accuracy": 10, "resolution_clarity": 9, "panel_size": 7, "panel_brightness": 7}, "expected_rank_1": "ProPanel P7"},
-    {"id": "immersive_gaming", "name": "Immersive Gaming (RPG / Open World)", "tags": ["gaming", "immersive"], "weights": {"panel_size": 10, "refresh_rate": 8, "color_accuracy": 7, "resolution_clarity": 7}, "expected_rank_1": "UltraWide U5", "expected_rank_1_not": ["BudgetScreen B4"]},
-    {"id": "remote_travel", "name": "Remote Worker Who Travels Frequently", "tags": ["portable", "travel"], "weights": {"portability": 10, "price_to_value": 7, "build_quality": 4}, "expected_rank_1": "PortableView PV1"},
-    {"id": "graphic_design", "name": "In-House Graphic Designer", "tags": ["design", "color"], "weights": {"color_accuracy": 10, "resolution_clarity": 9, "ergonomic_stand": 8, "connectivity_ports": 7}, "expected_rank_1": "ProPanel P7", "expected_rank_1_not": ["BudgetScreen B4", "GamingDisplay G9"]},
-    {"id": "streamer_second", "name": "Streamer (Second Monitor for Chat)", "tags": ["streaming", "budget"], "weights": {"price_to_value": 10, "panel_size": 3, "build_quality": 3}, "expected_rank_1": "BudgetScreen B4"},
-    {"id": "home_ergonomics", "name": "Home Office — Ergonomics & Eye Comfort", "tags": ["office", "ergonomics"], "weights": {"ergonomic_stand": 10, "color_accuracy": 7, "resolution_clarity": 7, "panel_brightness": 6}, "expected_rank_1": "ProPanel P7"},
-    {"id": "student_general", "name": "Student — General Use & Gaming", "tags": ["student", "general"], "weights": {"price_to_value": 8, "refresh_rate": 7, "resolution_clarity": 5, "panel_size": 3}, "expected_rank_1": "GamingDisplay G9"},
-    {"id": "high_refresh_priority", "name": "High-Refresh Rate Absolute Priority", "tags": ["gaming", "constraint"], "weights": {"refresh_rate": 10, "response_time": 9, "resolution_clarity": 5, "price_to_value": 3}, "expected_rank_1": "GamingDisplay G9", "expected_rank_1_not": ["ProPanel P7", "BudgetScreen B4"]}
+    {
+      "id": "photo_editor",
+      "name": "Professional Photo Editor / Color Grading",
+      "tags": [
+        "professional",
+        "color"
+      ],
+      "weights": {
+        "color_accuracy": 10,
+        "resolution_clarity": 9,
+        "panel_brightness": 7,
+        "build_quality": 6
+      },
+      "expected_rank_1": "ProPanel P7",
+      "expected_rank_1_not": [
+        "BudgetScreen B4",
+        "GamingDisplay G9"
+      ]
+    },
+    {
+      "id": "competitive_fps",
+      "name": "Competitive FPS Gamer",
+      "tags": [
+        "gaming",
+        "competitive"
+      ],
+      "weights": {
+        "refresh_rate": 10,
+        "response_time": 9,
+        "resolution_clarity": 6,
+        "price_to_value": 5
+      },
+      "expected_rank_1": "GamingDisplay G9",
+      "expected_rank_1_not": [
+        "ProPanel P7",
+        "BudgetScreen B4"
+      ]
+    },
+    {
+      "id": "developer_multiwindow",
+      "name": "Software Developer (Multi-Window Workflow)",
+      "tags": [
+        "developer",
+        "productivity"
+      ],
+      "weights": {
+        "panel_size": 10,
+        "resolution_clarity": 5,
+        "connectivity_ports": 4
+      },
+      "expected_rank_1": "UltraWide U5",
+      "expected_rank_1_not": [
+        "PortableView PV1"
+      ]
+    },
+    {
+      "id": "budget_office",
+      "name": "Budget Office Worker",
+      "tags": [
+        "office",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "ergonomic_stand": 3,
+        "build_quality": 3
+      },
+      "expected_rank_1": "BudgetScreen B4",
+      "expected_rank_1_not": [
+        "ProPanel P7"
+      ]
+    },
+    {
+      "id": "video_editor",
+      "name": "Freelance Video Editor",
+      "tags": [
+        "creative",
+        "video"
+      ],
+      "weights": {
+        "color_accuracy": 10,
+        "resolution_clarity": 9,
+        "panel_size": 7,
+        "panel_brightness": 7
+      },
+      "expected_rank_1": "ProPanel P7"
+    },
+    {
+      "id": "immersive_gaming",
+      "name": "Immersive Gaming (RPG / Open World)",
+      "tags": [
+        "gaming",
+        "immersive"
+      ],
+      "weights": {
+        "panel_size": 10,
+        "refresh_rate": 8,
+        "color_accuracy": 7,
+        "resolution_clarity": 7
+      },
+      "expected_rank_1": "UltraWide U5",
+      "expected_rank_1_not": [
+        "BudgetScreen B4"
+      ]
+    },
+    {
+      "id": "remote_travel",
+      "name": "Remote Worker Who Travels Frequently",
+      "tags": [
+        "portable",
+        "travel"
+      ],
+      "weights": {
+        "portability": 10,
+        "price_to_value": 7,
+        "build_quality": 4
+      },
+      "expected_rank_1": "PortableView PV1"
+    },
+    {
+      "id": "graphic_design",
+      "name": "In-House Graphic Designer",
+      "tags": [
+        "design",
+        "color"
+      ],
+      "weights": {
+        "color_accuracy": 10,
+        "resolution_clarity": 9,
+        "ergonomic_stand": 8,
+        "connectivity_ports": 7
+      },
+      "expected_rank_1": "ProPanel P7",
+      "expected_rank_1_not": [
+        "BudgetScreen B4",
+        "GamingDisplay G9"
+      ]
+    },
+    {
+      "id": "streamer_second",
+      "name": "Streamer (Second Monitor for Chat)",
+      "tags": [
+        "streaming",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "panel_size": 3,
+        "build_quality": 3
+      },
+      "expected_rank_1": "BudgetScreen B4"
+    },
+    {
+      "id": "home_ergonomics",
+      "name": "Home Office — Ergonomics & Eye Comfort",
+      "tags": [
+        "office",
+        "ergonomics"
+      ],
+      "weights": {
+        "ergonomic_stand": 10,
+        "color_accuracy": 7,
+        "resolution_clarity": 7,
+        "panel_brightness": 6
+      },
+      "expected_rank_1": "ProPanel P7"
+    },
+    {
+      "id": "student_general",
+      "name": "Student — General Use & Gaming",
+      "tags": [
+        "student",
+        "general"
+      ],
+      "weights": {
+        "price_to_value": 8,
+        "refresh_rate": 7,
+        "resolution_clarity": 5,
+        "panel_size": 3
+      },
+      "expected_rank_1": "GamingDisplay G9"
+    },
+    {
+      "id": "high_refresh_priority",
+      "name": "High-Refresh Rate Absolute Priority",
+      "tags": [
+        "gaming",
+        "constraint"
+      ],
+      "weights": {
+        "refresh_rate": 10,
+        "response_time": 9,
+        "resolution_clarity": 5,
+        "price_to_value": 3
+      },
+      "expected_rank_1": "GamingDisplay G9",
+      "expected_rank_1_not": [
+        "ProPanel P7",
+        "BudgetScreen B4"
+      ]
+    }
   ],
   "human_judgments": [
     {
-      "id": "hj_photo_editor", "name": "Expert — Commercial Photographer / Retoucher",
+      "id": "hj_photo_editor",
+      "name": "Expert — Commercial Photographer / Retoucher",
       "query": "best monitor for professional photo editing and color grading",
-      "expert_rank_1": "ProPanel P7", "expert_rank_2": "UltraWide U5", "expert_rank_3": "GamingDisplay G9",
+      "expert_rank_1": "ProPanel P7",
+      "expert_rank_2": "UltraWide U5",
+      "expert_rank_3": "GamingDisplay G9",
       "expert_rationale": "Color-critical work requires factory calibration and 4K resolution to see fine detail. ProPanel P7 with color_accuracy=10 and resolution=10 is the only professional choice. Gaming monitors with boosted saturation cause prints to look nothing like the screen.",
-      "weights": {"color_accuracy": 10, "resolution_clarity": 9, "panel_brightness": 7, "ergonomic_stand": 6, "build_quality": 6},
-      "key_tradeoffs": ["ProPanel's 60Hz refresh is irrelevant for photo editing", "GamingDisplay colour is good but not calibrated", "UltraWide adds real estate but slightly lower colour accuracy"]
+      "weights": {
+        "color_accuracy": 10,
+        "resolution_clarity": 9,
+        "panel_brightness": 7,
+        "ergonomic_stand": 6,
+        "build_quality": 6
+      },
+      "key_tradeoffs": [
+        "ProPanel's 60Hz refresh is irrelevant for photo editing",
+        "GamingDisplay colour is good but not calibrated",
+        "UltraWide adds real estate but slightly lower colour accuracy"
+      ]
     },
     {
-      "id": "hj_esports", "name": "Expert — Semi-Professional Esports Player",
+      "id": "hj_esports",
+      "name": "Expert — Semi-Professional Esports Player",
       "query": "best monitor for competitive gaming and esports",
-      "expert_rank_1": "GamingDisplay G9", "expert_rank_2": "UltraWide U5", "expert_rank_3": "BudgetScreen B4",
+      "expert_rank_1": "GamingDisplay G9",
+      "expert_rank_2": "UltraWide U5",
+      "expert_rank_3": "BudgetScreen B4",
       "expert_rationale": "Competitive gaming is won on response time and refresh rate. 165Hz at 1ms GTG gives a measurable advantage. 1440p provides enough resolution to spot distant enemies without 4K GPU overhead. ProPanel is disqualified — 60Hz at 3ms is competitively inferior.",
-      "weights": {"refresh_rate": 10, "response_time": 9, "resolution_clarity": 7, "price_to_value": 5, "build_quality": 4},
-      "key_tradeoffs": ["ProPanel's 4K is wasted where reaction speed matters more", "BudgetScreen at 60Hz disadvantages the player", "UltraWide aspect ratio is banned in some tournaments"]
+      "weights": {
+        "refresh_rate": 10,
+        "response_time": 9,
+        "resolution_clarity": 7,
+        "price_to_value": 5,
+        "build_quality": 4
+      },
+      "key_tradeoffs": [
+        "ProPanel's 4K is wasted where reaction speed matters more",
+        "BudgetScreen at 60Hz disadvantages the player",
+        "UltraWide aspect ratio is banned in some tournaments"
+      ]
     },
     {
-      "id": "hj_developer", "name": "Expert — Full-Stack Developer (8h daily)",
+      "id": "hj_developer",
+      "name": "Expert — Full-Stack Developer (8h daily)",
       "query": "best monitor for software development and productivity",
-      "expert_rank_1": "UltraWide U5", "expert_rank_2": "ProPanel P7", "expert_rank_3": "GamingDisplay G9",
+      "expert_rank_1": "UltraWide U5",
+      "expert_rank_2": "ProPanel P7",
+      "expert_rank_3": "GamingDisplay G9",
       "expert_rationale": "Development benefits from horizontal real estate: editor + terminal + browser side by side. UltraWide U5 eliminates the need for dual monitors — 3440 horizontal pixels exceed two 1080p screens. ProPanel's 4K is a strong second for those who prioritise text sharpness over width.",
-      "weights": {"panel_size": 10, "resolution_clarity": 8, "connectivity_ports": 7, "ergonomic_stand": 7, "color_accuracy": 5},
-      "key_tradeoffs": ["ProPanel has sharper 4K text but ultrawide width wins for coding", "Some developers prefer two separate monitors — personal preference", "BudgetScreen 1080p is noticeably less sharp for all-day reading"]
+      "weights": {
+        "panel_size": 10,
+        "resolution_clarity": 8,
+        "connectivity_ports": 7,
+        "ergonomic_stand": 7,
+        "color_accuracy": 5
+      },
+      "key_tradeoffs": [
+        "ProPanel has sharper 4K text but ultrawide width wins for coding",
+        "Some developers prefer two separate monitors — personal preference",
+        "BudgetScreen 1080p is noticeably less sharp for all-day reading"
+      ]
     }
   ]
 }

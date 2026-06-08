@@ -19,7 +19,7 @@ import json
 import re
 import sys
 import time
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 from evals.online import ONLINE_QUERIES, MAX_ONLINE_QUERIES
@@ -76,7 +76,7 @@ def _run_one(query: str, category_hint: str, region: str) -> dict | None:
             "query": query,
             "category": cat,
             "region": region,
-            "captured_at": date.today().isoformat(),
+            "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "note": "Auto-captured by `python -m evals.online.record`. Replayed deterministically in CI.",
             "source_excerpt": (analysis.get("summary") or "")[:1500],
             "expected_products": top_names[:4],

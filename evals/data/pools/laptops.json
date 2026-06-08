@@ -1,115 +1,657 @@
 {
+  "_meta": {
+    "captured_at": "2026-06-08T00:00:00+00:00",
+    "schema_version": "1.0",
+    "content_hash": "ecd373dbdeb0ae973ef22bbc76b54f34edb95f6ecea1dbc89402959864e59242",
+    "note": "Benchmark pool for laptops. Content hash covers criteria and products only."
+  },
   "category": "laptops",
   "description": "Laptop recommendation benchmarks across budget, business, creative, gaming and ultraportable use cases.",
   "criteria": [
-    {"name": "performance",        "label": "Processing & GPU Performance"},
-    {"name": "battery_life",       "label": "Battery Life"},
-    {"name": "display_quality",    "label": "Display Quality"},
-    {"name": "build_quality",      "label": "Build Quality & Durability"},
-    {"name": "portability",        "label": "Portability & Weight"},
-    {"name": "keyboard_quality",   "label": "Keyboard Quality"},
-    {"name": "thermal_management", "label": "Thermal Management"},
-    {"name": "price_to_value",     "label": "Price to Value"},
-    {"name": "storage_speed",      "label": "Storage Speed"},
-    {"name": "connectivity_ports", "label": "Ports & Connectivity"}
+    {
+      "name": "performance",
+      "label": "Processing & GPU Performance"
+    },
+    {
+      "name": "battery_life",
+      "label": "Battery Life"
+    },
+    {
+      "name": "display_quality",
+      "label": "Display Quality"
+    },
+    {
+      "name": "build_quality",
+      "label": "Build Quality & Durability"
+    },
+    {
+      "name": "portability",
+      "label": "Portability & Weight"
+    },
+    {
+      "name": "keyboard_quality",
+      "label": "Keyboard Quality"
+    },
+    {
+      "name": "thermal_management",
+      "label": "Thermal Management"
+    },
+    {
+      "name": "price_to_value",
+      "label": "Price to Value"
+    },
+    {
+      "name": "storage_speed",
+      "label": "Storage Speed"
+    },
+    {
+      "name": "connectivity_ports",
+      "label": "Ports & Connectivity"
+    }
   ],
   "products": [
     {
       "name": "BudgetBook L3",
-      "scores": {"performance": 5, "battery_life": 7, "display_quality": 5, "build_quality": 5, "portability": 8, "keyboard_quality": 6, "thermal_management": 6, "price_to_value": 9, "storage_speed": 5, "connectivity_ports": 6},
-      "signal_strength": "moderate", "mention_count": 28, "positive_mentions": 18, "negative_mentions": 10,
-      "praise": ["unbeatable price", "light enough to carry anywhere"],
-      "complaints": [{"text": "weak CPU for heavy tasks", "confidence": "high"}, {"text": "mediocre display", "confidence": "medium"}]
+      "scores": {
+        "performance": 5,
+        "battery_life": 7,
+        "display_quality": 5,
+        "build_quality": 5,
+        "portability": 8,
+        "keyboard_quality": 6,
+        "thermal_management": 6,
+        "price_to_value": 9,
+        "storage_speed": 5,
+        "connectivity_ports": 6
+      },
+      "signal_strength": "moderate",
+      "mention_count": 28,
+      "positive_mentions": 18,
+      "negative_mentions": 10,
+      "praise": [
+        "unbeatable price",
+        "light enough to carry anywhere"
+      ],
+      "complaints": [
+        {
+          "text": "weak CPU for heavy tasks",
+          "confidence": "high"
+        },
+        {
+          "text": "mediocre display",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "OfficeBook O5",
-      "scores": {"performance": 7, "battery_life": 9, "display_quality": 7, "build_quality": 9, "portability": 7, "keyboard_quality": 9, "thermal_management": 8, "price_to_value": 6, "storage_speed": 7, "connectivity_ports": 9},
-      "signal_strength": "strong", "mention_count": 55, "positive_mentions": 44, "negative_mentions": 11,
-      "praise": ["legendary keyboard", "all-day battery", "built like a tank", "tons of ports"],
-      "complaints": [{"text": "average display", "confidence": "medium"}, {"text": "not great for gaming", "confidence": "low"}]
+      "scores": {
+        "performance": 7,
+        "battery_life": 9,
+        "display_quality": 7,
+        "build_quality": 9,
+        "portability": 7,
+        "keyboard_quality": 9,
+        "thermal_management": 8,
+        "price_to_value": 6,
+        "storage_speed": 7,
+        "connectivity_ports": 9
+      },
+      "signal_strength": "strong",
+      "mention_count": 55,
+      "positive_mentions": 44,
+      "negative_mentions": 11,
+      "praise": [
+        "legendary keyboard",
+        "all-day battery",
+        "built like a tank",
+        "tons of ports"
+      ],
+      "complaints": [
+        {
+          "text": "average display",
+          "confidence": "medium"
+        },
+        {
+          "text": "not great for gaming",
+          "confidence": "low"
+        }
+      ]
     },
     {
       "name": "ProBook P8",
-      "scores": {"performance": 7, "battery_life": 7, "display_quality": 10, "build_quality": 9, "portability": 5, "keyboard_quality": 8, "thermal_management": 7, "price_to_value": 3, "storage_speed": 9, "connectivity_ports": 6},
-      "signal_strength": "strong", "mention_count": 82, "positive_mentions": 70, "negative_mentions": 12,
-      "praise": ["stunning color-accurate display", "best-in-class storage", "silent under load", "premium creative machine"],
-      "complaints": [{"text": "very expensive", "confidence": "high"}, {"text": "limited ports require dongle", "confidence": "high"}, {"text": "integrated graphics weak for AAA gaming", "confidence": "medium"}]
+      "scores": {
+        "performance": 7,
+        "battery_life": 7,
+        "display_quality": 10,
+        "build_quality": 9,
+        "portability": 5,
+        "keyboard_quality": 8,
+        "thermal_management": 7,
+        "price_to_value": 3,
+        "storage_speed": 9,
+        "connectivity_ports": 6
+      },
+      "signal_strength": "strong",
+      "mention_count": 82,
+      "positive_mentions": 70,
+      "negative_mentions": 12,
+      "praise": [
+        "stunning color-accurate display",
+        "best-in-class storage",
+        "silent under load",
+        "premium creative machine"
+      ],
+      "complaints": [
+        {
+          "text": "very expensive",
+          "confidence": "high"
+        },
+        {
+          "text": "limited ports require dongle",
+          "confidence": "high"
+        },
+        {
+          "text": "integrated graphics weak for AAA gaming",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "GameRig G7",
-      "scores": {"performance": 10, "battery_life": 3, "display_quality": 8, "build_quality": 6, "portability": 4, "keyboard_quality": 7, "thermal_management": 4, "price_to_value": 5, "storage_speed": 8, "connectivity_ports": 8},
-      "signal_strength": "strong", "mention_count": 61, "positive_mentions": 48, "negative_mentions": 13,
-      "praise": ["raw GPU power", "high-refresh display", "runs any game at max settings"],
-      "complaints": [{"text": "terrible battery life", "confidence": "high"}, {"text": "very hot and loud under load", "confidence": "high"}, {"text": "heavy to carry", "confidence": "high"}]
+      "scores": {
+        "performance": 10,
+        "battery_life": 3,
+        "display_quality": 8,
+        "build_quality": 6,
+        "portability": 4,
+        "keyboard_quality": 7,
+        "thermal_management": 4,
+        "price_to_value": 5,
+        "storage_speed": 8,
+        "connectivity_ports": 8
+      },
+      "signal_strength": "strong",
+      "mention_count": 61,
+      "positive_mentions": 48,
+      "negative_mentions": 13,
+      "praise": [
+        "raw GPU power",
+        "high-refresh display",
+        "runs any game at max settings"
+      ],
+      "complaints": [
+        {
+          "text": "terrible battery life",
+          "confidence": "high"
+        },
+        {
+          "text": "very hot and loud under load",
+          "confidence": "high"
+        },
+        {
+          "text": "heavy to carry",
+          "confidence": "high"
+        }
+      ]
     },
     {
       "name": "UltraSlim U4",
-      "scores": {"performance": 7, "battery_life": 8, "display_quality": 9, "build_quality": 8, "portability": 10, "keyboard_quality": 7, "thermal_management": 6, "price_to_value": 4, "storage_speed": 8, "connectivity_ports": 5},
-      "signal_strength": "moderate", "mention_count": 39, "positive_mentions": 30, "negative_mentions": 9,
-      "praise": ["featherlight", "gorgeous OLED display", "premium feel"],
-      "complaints": [{"text": "throttles under sustained load", "confidence": "medium"}, {"text": "limited port selection", "confidence": "medium"}, {"text": "expensive", "confidence": "low"}]
+      "scores": {
+        "performance": 7,
+        "battery_life": 8,
+        "display_quality": 9,
+        "build_quality": 8,
+        "portability": 10,
+        "keyboard_quality": 7,
+        "thermal_management": 6,
+        "price_to_value": 4,
+        "storage_speed": 8,
+        "connectivity_ports": 5
+      },
+      "signal_strength": "moderate",
+      "mention_count": 39,
+      "positive_mentions": 30,
+      "negative_mentions": 9,
+      "praise": [
+        "featherlight",
+        "gorgeous OLED display",
+        "premium feel"
+      ],
+      "complaints": [
+        {
+          "text": "throttles under sustained load",
+          "confidence": "medium"
+        },
+        {
+          "text": "limited port selection",
+          "confidence": "medium"
+        },
+        {
+          "text": "expensive",
+          "confidence": "low"
+        }
+      ]
     }
   ],
   "scenarios": [
-    {"id": "video_editor", "name": "Professional Video Editor", "tags": ["creative", "premium"], "weights": {"performance": 10, "display_quality": 9, "storage_speed": 8, "battery_life": 5}, "expected_rank_1": "ProBook P8", "expected_rank_1_not": ["BudgetBook L3"]},
-    {"id": "audio_producer", "name": "Home Studio Audio Producer", "tags": ["creative", "studio"], "weights": {"performance": 9, "storage_speed": 9, "build_quality": 6, "thermal_management": 5, "battery_life": 4}, "expected_rank_1": "ProBook P8", "expected_rank_1_not": ["BudgetBook L3"]},
-    {"id": "graphic_design", "name": "Graphic Design Freelancer", "tags": ["creative", "design"], "weights": {"display_quality": 10, "performance": 8, "build_quality": 7, "storage_speed": 6}, "expected_rank_1": "ProBook P8"},
-    {"id": "cad_architect", "name": "CAD / Architecture Workload", "tags": ["professional", "cad"], "weights": {"performance": 10, "storage_speed": 9, "display_quality": 8, "build_quality": 7}, "expected_rank_1": "ProBook P8", "expected_rank_1_not": ["BudgetBook L3"]},
-    {"id": "data_scientist", "name": "Data Scientist (heavy compute)", "tags": ["professional", "data"], "weights": {"performance": 10, "storage_speed": 9, "battery_life": 6, "display_quality": 5}, "expected_rank_1": "ProBook P8"},
-    {"id": "competitive_gamer", "name": "Competitive PC Gamer", "tags": ["gaming"], "weights": {"performance": 10, "display_quality": 8, "connectivity_ports": 7, "storage_speed": 6, "thermal_management": 3, "battery_life": 1}, "expected_rank_1": "GameRig G7", "expected_rank_1_not": ["BudgetBook L3", "UltraSlim U4"]},
-    {"id": "game_dev_student", "name": "Game Development Student", "tags": ["gaming", "student"], "weights": {"performance": 9, "price_to_value": 6, "storage_speed": 7, "display_quality": 6, "battery_life": 2}, "expected_rank_1": "GameRig G7", "expected_rank_1_not": ["BudgetBook L3"]},
-    {"id": "business_travel", "name": "Frequent Business Traveler", "tags": ["business", "travel"], "weights": {"battery_life": 10, "build_quality": 9, "portability": 8, "keyboard_quality": 7, "connectivity_ports": 7}, "expected_rank_1": "OfficeBook O5", "expected_rank_1_not": ["GameRig G7"]},
-    {"id": "developer_office", "name": "Software Developer (Office)", "tags": ["developer", "office"], "weights": {"keyboard_quality": 9, "performance": 8, "battery_life": 8, "connectivity_ports": 7}, "expected_rank_1": "OfficeBook O5"},
-    {"id": "remote_worker_battery", "name": "Remote Worker — Battery Priority", "tags": ["remote", "battery"], "weights": {"battery_life": 10, "keyboard_quality": 8, "build_quality": 7, "portability": 6}, "expected_rank_1": "OfficeBook O5", "expected_rank_1_not": ["GameRig G7"]},
-    {"id": "manager_light", "name": "Office Manager (Light Tasks)", "tags": ["office", "light"], "weights": {"price_to_value": 8, "keyboard_quality": 7, "battery_life": 7, "portability": 7, "build_quality": 6}, "expected_rank_1": "OfficeBook O5"},
-    {"id": "minimalist_writer", "name": "Minimalist Writer / UX Designer", "tags": ["ultrabook", "portable"], "weights": {"portability": 10, "display_quality": 9, "build_quality": 7, "battery_life": 7}, "expected_rank_1": "UltraSlim U4", "expected_rank_1_not": ["GameRig G7"]},
-    {"id": "digital_nomad", "name": "Digital Nomad / Backpacker", "tags": ["portable", "travel"], "weights": {"portability": 10, "battery_life": 7, "build_quality": 5, "price_to_value": 4}, "expected_rank_1": "UltraSlim U4"},
-    {"id": "executive_prestige", "name": "Business Executive — Status & Portability", "tags": ["premium", "executive"], "weights": {"build_quality": 9, "display_quality": 9, "portability": 9, "keyboard_quality": 7, "price_to_value": 1}, "expected_rank_1": "UltraSlim U4"},
-    {"id": "budget_student", "name": "Budget College Student", "tags": ["student", "budget"], "weights": {"price_to_value": 10, "battery_life": 8, "portability": 7, "performance": 4}, "expected_rank_1": "BudgetBook L3", "expected_rank_1_not": ["ProBook P8", "GameRig G7"]},
-    {"id": "parent_kids", "name": "Parent Buying for Child (Homework)", "tags": ["student", "budget"], "weights": {"price_to_value": 10, "battery_life": 6, "build_quality": 3}, "expected_rank_1": "BudgetBook L3"},
-    {"id": "travel_beater", "name": "Secondary 'Beater' Laptop for Travel", "tags": ["travel", "budget"], "weights": {"price_to_value": 10, "portability": 8, "battery_life": 7, "build_quality": 4}, "expected_rank_1": "BudgetBook L3"},
-    {"id": "long_battery_priority", "name": "Ultra-Long Battery (no compromise)", "tags": ["battery", "constraint"], "weights": {"battery_life": 10, "performance": 3, "portability": 3, "price_to_value": 2}, "expected_rank_1": "OfficeBook O5", "expected_rank_1_not": ["GameRig G7"]}
+    {
+      "id": "video_editor",
+      "name": "Professional Video Editor",
+      "tags": [
+        "creative",
+        "premium"
+      ],
+      "weights": {
+        "performance": 10,
+        "display_quality": 9,
+        "storage_speed": 8,
+        "battery_life": 5
+      },
+      "expected_rank_1": "ProBook P8",
+      "expected_rank_1_not": [
+        "BudgetBook L3"
+      ]
+    },
+    {
+      "id": "audio_producer",
+      "name": "Home Studio Audio Producer",
+      "tags": [
+        "creative",
+        "studio"
+      ],
+      "weights": {
+        "performance": 9,
+        "storage_speed": 9,
+        "build_quality": 6,
+        "thermal_management": 5,
+        "battery_life": 4
+      },
+      "expected_rank_1": "ProBook P8",
+      "expected_rank_1_not": [
+        "BudgetBook L3"
+      ]
+    },
+    {
+      "id": "graphic_design",
+      "name": "Graphic Design Freelancer",
+      "tags": [
+        "creative",
+        "design"
+      ],
+      "weights": {
+        "display_quality": 10,
+        "performance": 8,
+        "build_quality": 7,
+        "storage_speed": 6
+      },
+      "expected_rank_1": "ProBook P8"
+    },
+    {
+      "id": "cad_architect",
+      "name": "CAD / Architecture Workload",
+      "tags": [
+        "professional",
+        "cad"
+      ],
+      "weights": {
+        "performance": 10,
+        "storage_speed": 9,
+        "display_quality": 8,
+        "build_quality": 7
+      },
+      "expected_rank_1": "ProBook P8",
+      "expected_rank_1_not": [
+        "BudgetBook L3"
+      ]
+    },
+    {
+      "id": "data_scientist",
+      "name": "Data Scientist (heavy compute)",
+      "tags": [
+        "professional",
+        "data"
+      ],
+      "weights": {
+        "performance": 10,
+        "storage_speed": 9,
+        "battery_life": 6,
+        "display_quality": 5
+      },
+      "expected_rank_1": "ProBook P8"
+    },
+    {
+      "id": "competitive_gamer",
+      "name": "Competitive PC Gamer",
+      "tags": [
+        "gaming"
+      ],
+      "weights": {
+        "performance": 10,
+        "display_quality": 8,
+        "connectivity_ports": 7,
+        "storage_speed": 6,
+        "thermal_management": 3,
+        "battery_life": 1
+      },
+      "expected_rank_1": "GameRig G7",
+      "expected_rank_1_not": [
+        "BudgetBook L3",
+        "UltraSlim U4"
+      ]
+    },
+    {
+      "id": "game_dev_student",
+      "name": "Game Development Student",
+      "tags": [
+        "gaming",
+        "student"
+      ],
+      "weights": {
+        "performance": 9,
+        "price_to_value": 6,
+        "storage_speed": 7,
+        "display_quality": 6,
+        "battery_life": 2
+      },
+      "expected_rank_1": "GameRig G7",
+      "expected_rank_1_not": [
+        "BudgetBook L3"
+      ]
+    },
+    {
+      "id": "business_travel",
+      "name": "Frequent Business Traveler",
+      "tags": [
+        "business",
+        "travel"
+      ],
+      "weights": {
+        "battery_life": 10,
+        "build_quality": 9,
+        "portability": 8,
+        "keyboard_quality": 7,
+        "connectivity_ports": 7
+      },
+      "expected_rank_1": "OfficeBook O5",
+      "expected_rank_1_not": [
+        "GameRig G7"
+      ]
+    },
+    {
+      "id": "developer_office",
+      "name": "Software Developer (Office)",
+      "tags": [
+        "developer",
+        "office"
+      ],
+      "weights": {
+        "keyboard_quality": 9,
+        "performance": 8,
+        "battery_life": 8,
+        "connectivity_ports": 7
+      },
+      "expected_rank_1": "OfficeBook O5"
+    },
+    {
+      "id": "remote_worker_battery",
+      "name": "Remote Worker — Battery Priority",
+      "tags": [
+        "remote",
+        "battery"
+      ],
+      "weights": {
+        "battery_life": 10,
+        "keyboard_quality": 8,
+        "build_quality": 7,
+        "portability": 6
+      },
+      "expected_rank_1": "OfficeBook O5",
+      "expected_rank_1_not": [
+        "GameRig G7"
+      ]
+    },
+    {
+      "id": "manager_light",
+      "name": "Office Manager (Light Tasks)",
+      "tags": [
+        "office",
+        "light"
+      ],
+      "weights": {
+        "price_to_value": 8,
+        "keyboard_quality": 7,
+        "battery_life": 7,
+        "portability": 7,
+        "build_quality": 6
+      },
+      "expected_rank_1": "OfficeBook O5"
+    },
+    {
+      "id": "minimalist_writer",
+      "name": "Minimalist Writer / UX Designer",
+      "tags": [
+        "ultrabook",
+        "portable"
+      ],
+      "weights": {
+        "portability": 10,
+        "display_quality": 9,
+        "build_quality": 7,
+        "battery_life": 7
+      },
+      "expected_rank_1": "UltraSlim U4",
+      "expected_rank_1_not": [
+        "GameRig G7"
+      ]
+    },
+    {
+      "id": "digital_nomad",
+      "name": "Digital Nomad / Backpacker",
+      "tags": [
+        "portable",
+        "travel"
+      ],
+      "weights": {
+        "portability": 10,
+        "battery_life": 7,
+        "build_quality": 5,
+        "price_to_value": 4
+      },
+      "expected_rank_1": "UltraSlim U4"
+    },
+    {
+      "id": "executive_prestige",
+      "name": "Business Executive — Status & Portability",
+      "tags": [
+        "premium",
+        "executive"
+      ],
+      "weights": {
+        "build_quality": 9,
+        "display_quality": 9,
+        "portability": 9,
+        "keyboard_quality": 7,
+        "price_to_value": 1
+      },
+      "expected_rank_1": "UltraSlim U4"
+    },
+    {
+      "id": "budget_student",
+      "name": "Budget College Student",
+      "tags": [
+        "student",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "battery_life": 8,
+        "portability": 7,
+        "performance": 4
+      },
+      "expected_rank_1": "BudgetBook L3",
+      "expected_rank_1_not": [
+        "ProBook P8",
+        "GameRig G7"
+      ]
+    },
+    {
+      "id": "parent_kids",
+      "name": "Parent Buying for Child (Homework)",
+      "tags": [
+        "student",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "battery_life": 6,
+        "build_quality": 3
+      },
+      "expected_rank_1": "BudgetBook L3"
+    },
+    {
+      "id": "travel_beater",
+      "name": "Secondary 'Beater' Laptop for Travel",
+      "tags": [
+        "travel",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "portability": 8,
+        "battery_life": 7,
+        "build_quality": 4
+      },
+      "expected_rank_1": "BudgetBook L3"
+    },
+    {
+      "id": "long_battery_priority",
+      "name": "Ultra-Long Battery (no compromise)",
+      "tags": [
+        "battery",
+        "constraint"
+      ],
+      "weights": {
+        "battery_life": 10,
+        "performance": 3,
+        "portability": 3,
+        "price_to_value": 2
+      },
+      "expected_rank_1": "OfficeBook O5",
+      "expected_rank_1_not": [
+        "GameRig G7"
+      ]
+    }
   ],
   "human_judgments": [
     {
-      "id": "hj_video_editor", "name": "Expert — Professional Video Editor (4K, After Effects)",
+      "id": "hj_video_editor",
+      "name": "Expert — Professional Video Editor (4K, After Effects)",
       "query": "best laptop for professional video editing",
-      "expert_rank_1": "ProBook P8", "expert_rank_2": "GameRig G7", "expert_rank_3": "UltraSlim U4",
+      "expert_rank_1": "ProBook P8",
+      "expert_rank_2": "GameRig G7",
+      "expert_rank_3": "UltraSlim U4",
       "expert_rationale": "4K video editing demands a color-accurate display for grading, fast NVMe storage for smooth scrubbing, and strong sustained performance. ProBook P8 leads: display_quality=10, storage_speed=9, and silent thermals. GameRig has raw GPU power but its gaming-tuned display hurts grading accuracy. Budget options drop frames and overheat.",
-      "weights": {"performance": 10, "display_quality": 9, "storage_speed": 8, "thermal_management": 6, "battery_life": 4, "build_quality": 5},
-      "key_tradeoffs": ["GameRig has more raw GPU but its display is gaming-tuned, not color-accurate", "ProBook trades port variety for display excellence — dongle acceptable for pro use", "UltraSlim throttles under sustained rendering"]
+      "weights": {
+        "performance": 10,
+        "display_quality": 9,
+        "storage_speed": 8,
+        "thermal_management": 6,
+        "battery_life": 4,
+        "build_quality": 5
+      },
+      "key_tradeoffs": [
+        "GameRig has more raw GPU but its display is gaming-tuned, not color-accurate",
+        "ProBook trades port variety for display excellence — dongle acceptable for pro use",
+        "UltraSlim throttles under sustained rendering"
+      ]
     },
     {
-      "id": "hj_developer", "name": "Expert — Senior Software Developer (remote-first)",
+      "id": "hj_developer",
+      "name": "Expert — Senior Software Developer (remote-first)",
       "query": "best laptop for software developer working remotely",
-      "expert_rank_1": "OfficeBook O5", "expert_rank_2": "ProBook P8", "expert_rank_3": "UltraSlim U4",
+      "expert_rank_1": "OfficeBook O5",
+      "expert_rank_2": "ProBook P8",
+      "expert_rank_3": "UltraSlim U4",
       "expert_rationale": "8+ hours of coding demands the best keyboard (OfficeBook=9), all-day battery, and ports for multiple monitors. OfficeBook O5 wins on keyboard+battery+ports. ProBook is a strong second — great storage but pricier and port-limited.",
-      "weights": {"keyboard_quality": 9, "battery_life": 9, "performance": 8, "connectivity_ports": 8, "build_quality": 7, "portability": 5},
-      "key_tradeoffs": ["ProBook has better storage but keyboard+battery+ports favour OfficeBook", "GameRig's terrible battery kills remote use", "BudgetBook too slow for large codebases and Docker"]
+      "weights": {
+        "keyboard_quality": 9,
+        "battery_life": 9,
+        "performance": 8,
+        "connectivity_ports": 8,
+        "build_quality": 7,
+        "portability": 5
+      },
+      "key_tradeoffs": [
+        "ProBook has better storage but keyboard+battery+ports favour OfficeBook",
+        "GameRig's terrible battery kills remote use",
+        "BudgetBook too slow for large codebases and Docker"
+      ]
     },
     {
-      "id": "hj_student_budget", "name": "Expert — College Student, Strict Budget Under $500",
+      "id": "hj_student_budget",
+      "name": "Expert — College Student, Strict Budget Under $500",
       "query": "best laptop for college student on a tight budget",
-      "expert_rank_1": "BudgetBook L3", "expert_rank_2": "OfficeBook O5", "expert_rank_3": "UltraSlim U4",
+      "expert_rank_1": "BudgetBook L3",
+      "expert_rank_2": "OfficeBook O5",
+      "expert_rank_3": "UltraSlim U4",
       "expert_rationale": "Under $500 the only viable option is BudgetBook L3 — price/value=9, decent battery, light for campus. OfficeBook is better but 2x the price. Premium options are 3-5x and irrelevant for word processing and browsing.",
-      "weights": {"price_to_value": 10, "battery_life": 8, "portability": 7, "build_quality": 5, "performance": 5},
-      "key_tradeoffs": ["BudgetBook is slow for heavy multitasking", "OfficeBook is the ideal upgrade once budget allows", "Gaming laptop is the worst choice for a non-gamer student"]
+      "weights": {
+        "price_to_value": 10,
+        "battery_life": 8,
+        "portability": 7,
+        "build_quality": 5,
+        "performance": 5
+      },
+      "key_tradeoffs": [
+        "BudgetBook is slow for heavy multitasking",
+        "OfficeBook is the ideal upgrade once budget allows",
+        "Gaming laptop is the worst choice for a non-gamer student"
+      ]
     },
     {
-      "id": "hj_gamer", "name": "Expert — Hardcore PC Gamer (AAA titles, streaming)",
+      "id": "hj_gamer",
+      "name": "Expert — Hardcore PC Gamer (AAA titles, streaming)",
       "query": "best laptop for gaming and game streaming",
-      "expert_rank_1": "GameRig G7", "expert_rank_2": "ProBook P8", "expert_rank_3": "OfficeBook O5",
+      "expert_rank_1": "GameRig G7",
+      "expert_rank_2": "ProBook P8",
+      "expert_rank_3": "OfficeBook O5",
       "expert_rationale": "AAA gaming requires a dedicated GPU (GameRig=10 performance), a high-refresh display, and ports for peripherals. ProBook has integrated graphics that can't run modern games at high settings. Accept poor battery — gaming laptops stay plugged in.",
-      "weights": {"performance": 10, "display_quality": 8, "connectivity_ports": 7, "storage_speed": 6, "thermal_management": 3, "battery_life": 1},
-      "key_tradeoffs": ["GameRig thermals are a concern for long sessions — use a cooling pad", "ProBook is fine for CPU work but can't run GPU-intensive games at quality", "Battery irrelevant — gaming laptops live on AC power"]
+      "weights": {
+        "performance": 10,
+        "display_quality": 8,
+        "connectivity_ports": 7,
+        "storage_speed": 6,
+        "thermal_management": 3,
+        "battery_life": 1
+      },
+      "key_tradeoffs": [
+        "GameRig thermals are a concern for long sessions — use a cooling pad",
+        "ProBook is fine for CPU work but can't run GPU-intensive games at quality",
+        "Battery irrelevant — gaming laptops live on AC power"
+      ]
     },
     {
-      "id": "hj_business_travel", "name": "Expert — Management Consultant (200+ travel days/year)",
+      "id": "hj_business_travel",
+      "name": "Expert — Management Consultant (200+ travel days/year)",
       "query": "best laptop for frequent business travel and client meetings",
-      "expert_rank_1": "OfficeBook O5", "expert_rank_2": "UltraSlim U4", "expert_rank_3": "ProBook P8",
+      "expert_rank_1": "OfficeBook O5",
+      "expert_rank_2": "UltraSlim U4",
+      "expert_rank_3": "ProBook P8",
       "expert_rationale": "Frequent travel means battery that survives a transatlantic flight (OfficeBook=9), a fast keyboard for airport writing, MIL-spec build that survives bag drops, and ports for any hotel projector. OfficeBook O5 wins on every dimension. UltraSlim is lighter but fewer ports.",
-      "weights": {"battery_life": 10, "build_quality": 9, "keyboard_quality": 8, "portability": 8, "connectivity_ports": 7, "performance": 5},
-      "key_tradeoffs": ["UltraSlim is lighter but OfficeBook's battery matters more on long hauls", "GameRig unsuitable — too heavy, too hot, battery dead in 3 hours", "ProBook excellent but port dongle unacceptable on the road"]
+      "weights": {
+        "battery_life": 10,
+        "build_quality": 9,
+        "keyboard_quality": 8,
+        "portability": 8,
+        "connectivity_ports": 7,
+        "performance": 5
+      },
+      "key_tradeoffs": [
+        "UltraSlim is lighter but OfficeBook's battery matters more on long hauls",
+        "GameRig unsuitable — too heavy, too hot, battery dead in 3 hours",
+        "ProBook excellent but port dongle unacceptable on the road"
+      ]
     }
   ]
 }

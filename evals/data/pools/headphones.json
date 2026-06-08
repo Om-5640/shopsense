@@ -1,93 +1,502 @@
 {
+  "_meta": {
+    "captured_at": "2026-06-08T00:00:00+00:00",
+    "schema_version": "1.0",
+    "content_hash": "604771f1389976d9ab1da34693cfaa4b5ebbb95b2bed1731d2243b9606c7173b",
+    "note": "Benchmark pool for headphones. Content hash covers criteria and products only."
+  },
   "category": "headphones",
   "description": "Over-ear headphone benchmarks across studio, ANC, gaming, audiophile, bass and budget use cases.",
   "criteria": [
-    {"name": "sound_quality",        "label": "Sound Quality"},
-    {"name": "bass_response",        "label": "Bass Response"},
-    {"name": "noise_cancellation",   "label": "Noise Cancellation"},
-    {"name": "transparency_mode",    "label": "Transparency / Ambient Mode"},
-    {"name": "battery_life",         "label": "Battery Life"},
-    {"name": "comfort",              "label": "Comfort for Long Sessions"},
-    {"name": "microphone_quality",   "label": "Microphone Quality"},
-    {"name": "price_to_value",       "label": "Price to Value"},
-    {"name": "build_quality",        "label": "Build Quality"},
-    {"name": "wireless_flexibility", "label": "Wireless Freedom"}
+    {
+      "name": "sound_quality",
+      "label": "Sound Quality"
+    },
+    {
+      "name": "bass_response",
+      "label": "Bass Response"
+    },
+    {
+      "name": "noise_cancellation",
+      "label": "Noise Cancellation"
+    },
+    {
+      "name": "transparency_mode",
+      "label": "Transparency / Ambient Mode"
+    },
+    {
+      "name": "battery_life",
+      "label": "Battery Life"
+    },
+    {
+      "name": "comfort",
+      "label": "Comfort for Long Sessions"
+    },
+    {
+      "name": "microphone_quality",
+      "label": "Microphone Quality"
+    },
+    {
+      "name": "price_to_value",
+      "label": "Price to Value"
+    },
+    {
+      "name": "build_quality",
+      "label": "Build Quality"
+    },
+    {
+      "name": "wireless_flexibility",
+      "label": "Wireless Freedom"
+    }
   ],
   "products": [
     {
       "name": "BudgetCan B2",
-      "scores": {"sound_quality": 7, "bass_response": 6, "noise_cancellation": 2, "transparency_mode": 1, "battery_life": 10, "comfort": 5, "microphone_quality": 3, "price_to_value": 9, "build_quality": 7, "wireless_flexibility": 1},
-      "signal_strength": "moderate", "mention_count": 31, "positive_mentions": 22, "negative_mentions": 9,
-      "praise": ["industry standard for a reason", "affordable flat response", "wired reliability"],
-      "complaints": [{"text": "no ANC", "confidence": "high"}, {"text": "clamping force causes fatigue", "confidence": "medium"}, {"text": "wired only", "confidence": "high"}]
+      "scores": {
+        "sound_quality": 7,
+        "bass_response": 6,
+        "noise_cancellation": 2,
+        "transparency_mode": 1,
+        "battery_life": 10,
+        "comfort": 5,
+        "microphone_quality": 3,
+        "price_to_value": 9,
+        "build_quality": 7,
+        "wireless_flexibility": 1
+      },
+      "signal_strength": "moderate",
+      "mention_count": 31,
+      "positive_mentions": 22,
+      "negative_mentions": 9,
+      "praise": [
+        "industry standard for a reason",
+        "affordable flat response",
+        "wired reliability"
+      ],
+      "complaints": [
+        {
+          "text": "no ANC",
+          "confidence": "high"
+        },
+        {
+          "text": "clamping force causes fatigue",
+          "confidence": "medium"
+        },
+        {
+          "text": "wired only",
+          "confidence": "high"
+        }
+      ]
     },
     {
       "name": "WirelessComfort W6",
-      "scores": {"sound_quality": 8, "bass_response": 7, "noise_cancellation": 9, "transparency_mode": 8, "battery_life": 8, "comfort": 9, "microphone_quality": 7, "price_to_value": 5, "build_quality": 8, "wireless_flexibility": 9},
-      "signal_strength": "strong", "mention_count": 74, "positive_mentions": 61, "negative_mentions": 13,
-      "praise": ["best ANC on the market", "featherlight on head", "30h battery", "excellent transparency"],
-      "complaints": [{"text": "expensive", "confidence": "high"}, {"text": "mic mediocre for calls", "confidence": "medium"}]
+      "scores": {
+        "sound_quality": 8,
+        "bass_response": 7,
+        "noise_cancellation": 9,
+        "transparency_mode": 8,
+        "battery_life": 8,
+        "comfort": 9,
+        "microphone_quality": 7,
+        "price_to_value": 5,
+        "build_quality": 8,
+        "wireless_flexibility": 9
+      },
+      "signal_strength": "strong",
+      "mention_count": 74,
+      "positive_mentions": 61,
+      "negative_mentions": 13,
+      "praise": [
+        "best ANC on the market",
+        "featherlight on head",
+        "30h battery",
+        "excellent transparency"
+      ],
+      "complaints": [
+        {
+          "text": "expensive",
+          "confidence": "high"
+        },
+        {
+          "text": "mic mediocre for calls",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "GamingSet G3",
-      "scores": {"sound_quality": 7, "bass_response": 8, "noise_cancellation": 3, "transparency_mode": 2, "battery_life": 6, "comfort": 7, "microphone_quality": 9, "price_to_value": 7, "build_quality": 7, "wireless_flexibility": 7},
-      "signal_strength": "moderate", "mention_count": 45, "positive_mentions": 34, "negative_mentions": 11,
-      "praise": ["crystal-clear mic", "deep bass for gaming", "Discord-certified"],
-      "complaints": [{"text": "average battery", "confidence": "medium"}, {"text": "not great for music", "confidence": "medium"}]
+      "scores": {
+        "sound_quality": 7,
+        "bass_response": 8,
+        "noise_cancellation": 3,
+        "transparency_mode": 2,
+        "battery_life": 6,
+        "comfort": 7,
+        "microphone_quality": 9,
+        "price_to_value": 7,
+        "build_quality": 7,
+        "wireless_flexibility": 7
+      },
+      "signal_strength": "moderate",
+      "mention_count": 45,
+      "positive_mentions": 34,
+      "negative_mentions": 11,
+      "praise": [
+        "crystal-clear mic",
+        "deep bass for gaming",
+        "Discord-certified"
+      ],
+      "complaints": [
+        {
+          "text": "average battery",
+          "confidence": "medium"
+        },
+        {
+          "text": "not great for music",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "StudioCan S8",
-      "scores": {"sound_quality": 10, "bass_response": 8, "noise_cancellation": 1, "transparency_mode": 10, "battery_life": 10, "comfort": 8, "microphone_quality": 4, "price_to_value": 5, "build_quality": 9, "wireless_flexibility": 1},
-      "signal_strength": "moderate", "mention_count": 27, "positive_mentions": 24, "negative_mentions": 3,
-      "praise": ["reference-grade accuracy", "open soundstage", "built to last decades"],
-      "complaints": [{"text": "open-back leaks sound — no use in public", "confidence": "high"}, {"text": "wired only", "confidence": "high"}, {"text": "no mic", "confidence": "medium"}]
+      "scores": {
+        "sound_quality": 10,
+        "bass_response": 8,
+        "noise_cancellation": 1,
+        "transparency_mode": 10,
+        "battery_life": 10,
+        "comfort": 8,
+        "microphone_quality": 4,
+        "price_to_value": 5,
+        "build_quality": 9,
+        "wireless_flexibility": 1
+      },
+      "signal_strength": "moderate",
+      "mention_count": 27,
+      "positive_mentions": 24,
+      "negative_mentions": 3,
+      "praise": [
+        "reference-grade accuracy",
+        "open soundstage",
+        "built to last decades"
+      ],
+      "complaints": [
+        {
+          "text": "open-back leaks sound — no use in public",
+          "confidence": "high"
+        },
+        {
+          "text": "wired only",
+          "confidence": "high"
+        },
+        {
+          "text": "no mic",
+          "confidence": "medium"
+        }
+      ]
     },
     {
       "name": "UltraBass U1",
-      "scores": {"sound_quality": 6, "bass_response": 10, "noise_cancellation": 5, "transparency_mode": 4, "battery_life": 7, "comfort": 7, "microphone_quality": 6, "price_to_value": 4, "build_quality": 7, "wireless_flexibility": 8},
-      "signal_strength": "moderate", "mention_count": 38, "positive_mentions": 25, "negative_mentions": 13,
-      "praise": ["thunderous bass", "wireless convenience", "iconic look"],
-      "complaints": [{"text": "bass-heavy tuning not accurate", "confidence": "high"}, {"text": "overpriced for sound quality", "confidence": "high"}]
+      "scores": {
+        "sound_quality": 6,
+        "bass_response": 10,
+        "noise_cancellation": 5,
+        "transparency_mode": 4,
+        "battery_life": 7,
+        "comfort": 7,
+        "microphone_quality": 6,
+        "price_to_value": 4,
+        "build_quality": 7,
+        "wireless_flexibility": 8
+      },
+      "signal_strength": "moderate",
+      "mention_count": 38,
+      "positive_mentions": 25,
+      "negative_mentions": 13,
+      "praise": [
+        "thunderous bass",
+        "wireless convenience",
+        "iconic look"
+      ],
+      "complaints": [
+        {
+          "text": "bass-heavy tuning not accurate",
+          "confidence": "high"
+        },
+        {
+          "text": "overpriced for sound quality",
+          "confidence": "high"
+        }
+      ]
     }
   ],
   "scenarios": [
-    {"id": "studio_mixing", "name": "Home Studio Mixing Engineer", "tags": ["studio", "professional"], "weights": {"sound_quality": 10, "transparency_mode": 8, "build_quality": 7, "comfort": 7, "battery_life": 5}, "expected_rank_1": "StudioCan S8", "expected_rank_1_not": ["BudgetCan B2", "UltraBass U1"]},
-    {"id": "office_commuter_anc", "name": "Office Commuter (Noisy Transit)", "tags": ["commute", "anc"], "weights": {"noise_cancellation": 10, "comfort": 9, "battery_life": 8, "wireless_flexibility": 7}, "expected_rank_1": "WirelessComfort W6", "expected_rank_1_not": ["StudioCan S8", "BudgetCan B2"]},
-    {"id": "pc_gamer_discord", "name": "PC Gamer & Discord User", "tags": ["gaming"], "weights": {"microphone_quality": 10, "bass_response": 8, "wireless_flexibility": 7, "comfort": 6}, "expected_rank_1": "GamingSet G3", "expected_rank_1_not": ["StudioCan S8", "BudgetCan B2"]},
-    {"id": "budget_music", "name": "Budget Music Listener", "tags": ["budget"], "weights": {"price_to_value": 10, "sound_quality": 4, "comfort": 3}, "expected_rank_1": "BudgetCan B2", "expected_rank_1_not": ["WirelessComfort W6", "UltraBass U1"]},
-    {"id": "bass_enthusiast", "name": "Hip-Hop / EDM Bass Enthusiast", "tags": ["bass", "consumer"], "weights": {"bass_response": 10, "wireless_flexibility": 7, "sound_quality": 5, "comfort": 5}, "expected_rank_1": "UltraBass U1"},
-    {"id": "podcast_recorder", "name": "Podcast Host / Voice Recorder", "tags": ["podcast", "microphone"], "weights": {"microphone_quality": 10, "sound_quality": 4, "comfort": 4, "build_quality": 3, "price_to_value": 5}, "expected_rank_1": "GamingSet G3"},
-    {"id": "long_haul_flight", "name": "Long-Haul Flight Passenger", "tags": ["travel", "anc"], "weights": {"noise_cancellation": 10, "comfort": 10, "battery_life": 9, "wireless_flexibility": 8}, "expected_rank_1": "WirelessComfort W6", "expected_rank_1_not": ["BudgetCan B2", "StudioCan S8"]},
-    {"id": "classical_audiophile", "name": "Classical & Jazz Audiophile", "tags": ["audiophile", "accuracy"], "weights": {"sound_quality": 10, "transparency_mode": 8, "comfort": 7, "build_quality": 7}, "expected_rank_1": "StudioCan S8"},
-    {"id": "wfh_calls", "name": "Work-From-Home Video Calls All Day", "tags": ["work", "calls"], "weights": {"microphone_quality": 9, "noise_cancellation": 8, "comfort": 10, "wireless_flexibility": 7}, "expected_rank_1": "WirelessComfort W6"},
-    {"id": "budget_gaming", "name": "Budget Gaming Student", "tags": ["gaming", "budget"], "weights": {"price_to_value": 9, "microphone_quality": 8, "bass_response": 6, "comfort": 6}, "expected_rank_1": "GamingSet G3", "expected_rank_1_not": ["WirelessComfort W6"]},
-    {"id": "open_back_pref", "name": "Audiophile — Open-Back Preference", "tags": ["audiophile", "open-back"], "weights": {"transparency_mode": 10, "sound_quality": 9, "build_quality": 8, "comfort": 7}, "expected_rank_1": "StudioCan S8"},
-    {"id": "all_day_comfort", "name": "All-Day Office Wear (Comfort Priority)", "tags": ["office", "comfort"], "weights": {"comfort": 10, "noise_cancellation": 8, "wireless_flexibility": 8, "battery_life": 7}, "expected_rank_1": "WirelessComfort W6"}
+    {
+      "id": "studio_mixing",
+      "name": "Home Studio Mixing Engineer",
+      "tags": [
+        "studio",
+        "professional"
+      ],
+      "weights": {
+        "sound_quality": 10,
+        "transparency_mode": 8,
+        "build_quality": 7,
+        "comfort": 7,
+        "battery_life": 5
+      },
+      "expected_rank_1": "StudioCan S8",
+      "expected_rank_1_not": [
+        "BudgetCan B2",
+        "UltraBass U1"
+      ]
+    },
+    {
+      "id": "office_commuter_anc",
+      "name": "Office Commuter (Noisy Transit)",
+      "tags": [
+        "commute",
+        "anc"
+      ],
+      "weights": {
+        "noise_cancellation": 10,
+        "comfort": 9,
+        "battery_life": 8,
+        "wireless_flexibility": 7
+      },
+      "expected_rank_1": "WirelessComfort W6",
+      "expected_rank_1_not": [
+        "StudioCan S8",
+        "BudgetCan B2"
+      ]
+    },
+    {
+      "id": "pc_gamer_discord",
+      "name": "PC Gamer & Discord User",
+      "tags": [
+        "gaming"
+      ],
+      "weights": {
+        "microphone_quality": 10,
+        "bass_response": 8,
+        "wireless_flexibility": 7,
+        "comfort": 6
+      },
+      "expected_rank_1": "GamingSet G3",
+      "expected_rank_1_not": [
+        "StudioCan S8",
+        "BudgetCan B2"
+      ]
+    },
+    {
+      "id": "budget_music",
+      "name": "Budget Music Listener",
+      "tags": [
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 10,
+        "sound_quality": 4,
+        "comfort": 3
+      },
+      "expected_rank_1": "BudgetCan B2",
+      "expected_rank_1_not": [
+        "WirelessComfort W6",
+        "UltraBass U1"
+      ]
+    },
+    {
+      "id": "bass_enthusiast",
+      "name": "Hip-Hop / EDM Bass Enthusiast",
+      "tags": [
+        "bass",
+        "consumer"
+      ],
+      "weights": {
+        "bass_response": 10,
+        "wireless_flexibility": 7,
+        "sound_quality": 5,
+        "comfort": 5
+      },
+      "expected_rank_1": "UltraBass U1"
+    },
+    {
+      "id": "podcast_recorder",
+      "name": "Podcast Host / Voice Recorder",
+      "tags": [
+        "podcast",
+        "microphone"
+      ],
+      "weights": {
+        "microphone_quality": 10,
+        "sound_quality": 4,
+        "comfort": 4,
+        "build_quality": 3,
+        "price_to_value": 5
+      },
+      "expected_rank_1": "GamingSet G3"
+    },
+    {
+      "id": "long_haul_flight",
+      "name": "Long-Haul Flight Passenger",
+      "tags": [
+        "travel",
+        "anc"
+      ],
+      "weights": {
+        "noise_cancellation": 10,
+        "comfort": 10,
+        "battery_life": 9,
+        "wireless_flexibility": 8
+      },
+      "expected_rank_1": "WirelessComfort W6",
+      "expected_rank_1_not": [
+        "BudgetCan B2",
+        "StudioCan S8"
+      ]
+    },
+    {
+      "id": "classical_audiophile",
+      "name": "Classical & Jazz Audiophile",
+      "tags": [
+        "audiophile",
+        "accuracy"
+      ],
+      "weights": {
+        "sound_quality": 10,
+        "transparency_mode": 8,
+        "comfort": 7,
+        "build_quality": 7
+      },
+      "expected_rank_1": "StudioCan S8"
+    },
+    {
+      "id": "wfh_calls",
+      "name": "Work-From-Home Video Calls All Day",
+      "tags": [
+        "work",
+        "calls"
+      ],
+      "weights": {
+        "microphone_quality": 9,
+        "noise_cancellation": 8,
+        "comfort": 10,
+        "wireless_flexibility": 7
+      },
+      "expected_rank_1": "WirelessComfort W6"
+    },
+    {
+      "id": "budget_gaming",
+      "name": "Budget Gaming Student",
+      "tags": [
+        "gaming",
+        "budget"
+      ],
+      "weights": {
+        "price_to_value": 9,
+        "microphone_quality": 8,
+        "bass_response": 6,
+        "comfort": 6
+      },
+      "expected_rank_1": "GamingSet G3",
+      "expected_rank_1_not": [
+        "WirelessComfort W6"
+      ]
+    },
+    {
+      "id": "open_back_pref",
+      "name": "Audiophile — Open-Back Preference",
+      "tags": [
+        "audiophile",
+        "open-back"
+      ],
+      "weights": {
+        "transparency_mode": 10,
+        "sound_quality": 9,
+        "build_quality": 8,
+        "comfort": 7
+      },
+      "expected_rank_1": "StudioCan S8"
+    },
+    {
+      "id": "all_day_comfort",
+      "name": "All-Day Office Wear (Comfort Priority)",
+      "tags": [
+        "office",
+        "comfort"
+      ],
+      "weights": {
+        "comfort": 10,
+        "noise_cancellation": 8,
+        "wireless_flexibility": 8,
+        "battery_life": 7
+      },
+      "expected_rank_1": "WirelessComfort W6"
+    }
   ],
   "human_judgments": [
     {
-      "id": "hj_studio_engineer", "name": "Expert — Recording Studio Engineer",
+      "id": "hj_studio_engineer",
+      "name": "Expert — Recording Studio Engineer",
       "query": "best headphones for professional mixing and mastering",
-      "expert_rank_1": "StudioCan S8", "expert_rank_2": "BudgetCan B2", "expert_rank_3": "WirelessComfort W6",
+      "expert_rank_1": "StudioCan S8",
+      "expert_rank_2": "BudgetCan B2",
+      "expert_rank_3": "WirelessComfort W6",
       "expert_rationale": "Mixing requires a flat, uncoloured response. StudioCan S8's open-back design delivers the widest, most accurate soundstage. BudgetCan B2 is the classic industry-standard for tracking. Consumer headphones like UltraBass add artificial bass that causes mix translation failures.",
-      "weights": {"sound_quality": 10, "transparency_mode": 8, "build_quality": 7, "comfort": 7, "noise_cancellation": 1},
-      "key_tradeoffs": ["StudioCan leaks sound — unsuitable for tracking live instruments", "BudgetCan wins for tracking where leakage must be avoided", "ANC headphones add processing that colours the sound"]
+      "weights": {
+        "sound_quality": 10,
+        "transparency_mode": 8,
+        "build_quality": 7,
+        "comfort": 7,
+        "noise_cancellation": 1
+      },
+      "key_tradeoffs": [
+        "StudioCan leaks sound — unsuitable for tracking live instruments",
+        "BudgetCan wins for tracking where leakage must be avoided",
+        "ANC headphones add processing that colours the sound"
+      ]
     },
     {
-      "id": "hj_commuter", "name": "Expert — Daily Urban Commuter (subway/bus)",
+      "id": "hj_commuter",
+      "name": "Expert — Daily Urban Commuter (subway/bus)",
       "query": "best headphones for daily commute with noise cancellation",
-      "expert_rank_1": "WirelessComfort W6", "expert_rank_2": "UltraBass U1", "expert_rank_3": "GamingSet G3",
+      "expert_rank_1": "WirelessComfort W6",
+      "expert_rank_2": "UltraBass U1",
+      "expert_rank_3": "GamingSet G3",
       "expert_rationale": "Urban commuting demands class-leading ANC (WirelessComfort=9), all-day battery, and true wireless freedom. WirelessComfort W6 is the clear winner. Open-back headphones like StudioCan are unusable in public — they project sound to everyone around you.",
-      "weights": {"noise_cancellation": 10, "comfort": 9, "battery_life": 8, "wireless_flexibility": 8, "build_quality": 5},
-      "key_tradeoffs": ["StudioCan disqualified — open-back is publicly unusable", "BudgetCan has no wireless and no ANC", "WirelessComfort transparency mode is great for station announcements"]
+      "weights": {
+        "noise_cancellation": 10,
+        "comfort": 9,
+        "battery_life": 8,
+        "wireless_flexibility": 8,
+        "build_quality": 5
+      },
+      "key_tradeoffs": [
+        "StudioCan disqualified — open-back is publicly unusable",
+        "BudgetCan has no wireless and no ANC",
+        "WirelessComfort transparency mode is great for station announcements"
+      ]
     },
     {
-      "id": "hj_streamer", "name": "Expert — Twitch Streamer / Content Creator",
+      "id": "hj_streamer",
+      "name": "Expert — Twitch Streamer / Content Creator",
       "query": "best headphones for streaming and content creation",
-      "expert_rank_1": "GamingSet G3", "expert_rank_2": "WirelessComfort W6", "expert_rank_3": "UltraBass U1",
+      "expert_rank_1": "GamingSet G3",
+      "expert_rank_2": "WirelessComfort W6",
+      "expert_rank_3": "UltraBass U1",
       "expert_rationale": "Streaming requires a broadcast-quality microphone above all (GamingSet mic=9). Viewers notice bad mic immediately. GamingSet G3 also has bass that makes games feel impactful. WirelessComfort is second — great mic for a wireless option.",
-      "weights": {"microphone_quality": 10, "bass_response": 7, "comfort": 7, "wireless_flexibility": 6, "sound_quality": 5},
-      "key_tradeoffs": ["StudioCan has better sound but virtually no mic", "BudgetCan mic unsuitable for professional streaming", "WirelessComfort mic is decent but GamingSet's capsule is noticeably better"]
+      "weights": {
+        "microphone_quality": 10,
+        "bass_response": 7,
+        "comfort": 7,
+        "wireless_flexibility": 6,
+        "sound_quality": 5
+      },
+      "key_tradeoffs": [
+        "StudioCan has better sound but virtually no mic",
+        "BudgetCan mic unsuitable for professional streaming",
+        "WirelessComfort mic is decent but GamingSet's capsule is noticeably better"
+      ]
     }
   ]
 }

@@ -12,6 +12,7 @@ from .score_calibration import ScoreCalibrationMetric
 from .conflict_detection import ConflictDetectionMetric
 from .mention_popularity_bias import MentionPopularityBiasMetric
 from .nugget_alignment import NuggetAlignmentMetric
+from .fixture_staleness import FixtureStalenessMetric
 
 __all__ = [
     "RecommendationQualityMetric",
@@ -29,4 +30,5 @@ __all__ = [
     "ConflictDetectionMetric",
     "MentionPopularityBiasMetric",
     "NuggetAlignmentMetric",
+    "FixtureStalenessMetric",
 ]

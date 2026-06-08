@@ -19,6 +19,7 @@ from evals.benchmarks.score_calibration import all_calibration_suites
 from evals.benchmarks.conflict_detection import all_conflict_scenarios
 from evals.benchmarks.mention_popularity_bias import all_bias_scenarios
 from evals.benchmarks.nugget_alignment import all_nugget_judgments
+from evals.benchmarks.fixture_staleness import load_all_fixture_records
 from evals.metrics import (
     RecommendationQualityMetric,
     SemanticConsistencyMetric,
@@ -35,6 +36,7 @@ from evals.metrics import (
     ConflictDetectionMetric,
     MentionPopularityBiasMetric,
     NuggetAlignmentMetric,
+    FixtureStalenessMetric,
 )
 from evals.metrics.base import MetricResult
 from evals.index import compute_index, compute_index_breakdown
@@ -87,6 +89,7 @@ class EvalRunner:
         self.conflict_scenarios = all_conflict_scenarios()
         self.bias_scenarios = all_bias_scenarios()
         self.nugget_judgments = all_nugget_judgments()
+        self.fixture_records = load_all_fixture_records()
 
     def run(self) -> EvalRunResult:
         start = time.perf_counter()
@@ -159,6 +162,12 @@ class EvalRunner:
         print("  [Phase 15] Nugget Alignment...")
         result = NuggetAlignmentMetric().evaluate(self.nugget_judgments)
         metric_results["nugget_alignment"] = result
+        _print_metric_summary(result)
+
+        # Phase 16: Fixture Staleness Timestamps
+        print("  [Phase 16] Fixture Staleness...")
+        result = FixtureStalenessMetric().evaluate(self.fixture_records)
+        metric_results["fixture_staleness"] = result
         _print_metric_summary(result)
 
         if self.mode == "full":
