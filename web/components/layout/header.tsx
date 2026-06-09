@@ -86,27 +86,41 @@ function MobileSheet({
             </div>
           ) : session ? (
             <div className="flex items-center gap-3">
-              <div className="relative w-9 h-9 rounded-full overflow-hidden ring-1 ring-white/[0.12] flex-shrink-0">
-                {session.user.image ? (
-                  <Image
-                    src={session.user.image}
-                    alt={session.user.name ?? 'Avatar'}
-                    width={36} height={36}
-                    className="object-cover w-full h-full"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center">
-                    <span className="text-xs font-semibold text-white">
-                      {getInitials(session.user.name)}
-                    </span>
-                  </div>
-                )}
+              {/* Avatar with violet glow ring */}
+              <div className="relative flex-shrink-0">
+                <div
+                  className="w-10 h-10 rounded-full overflow-hidden"
+                  style={{ boxShadow: '0 0 0 2px rgba(167,139,250,0.45), 0 0 14px rgba(167,139,250,0.16)' }}
+                >
+                  {session.user.image ? (
+                    <Image
+                      src={session.user.image}
+                      alt={session.user.name ?? 'Avatar'}
+                      width={40} height={40}
+                      className="object-cover w-full h-full"
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full flex items-center justify-center select-none"
+                      style={{ background: 'linear-gradient(135deg, #6D28D9 0%, #7C3AED 35%, #A855F7 65%, #4F46E5 100%)' }}
+                    >
+                      <span className="text-xs font-bold text-white" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>
+                        {getInitials(session.user.name)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {/* Online dot */}
+                <div
+                  className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400"
+                  style={{ border: '2px solid #09090C' }}
+                />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[#FAFAFA] truncate leading-tight">
+                <p className="text-sm font-semibold text-[#FAFAFA] truncate leading-tight">
                   {session.user.name}
                 </p>
-                <p className="text-xs text-[#52525B] truncate mt-0.5">{session.user.email}</p>
+                <p className="text-xs text-[#6B7280] truncate mt-0.5">{session.user.email}</p>
               </div>
             </div>
           ) : (
@@ -192,10 +206,13 @@ function MobileSheet({
           {session && (
             <button
               onClick={() => { signOut({ callbackUrl: '/' }); onClose() }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-rose-400/70 hover:text-rose-300 hover:bg-rose-500/[0.07] transition-colors duration-150"
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/[0.08] transition-colors duration-150"
             >
-              <div className="w-8 h-8 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
-                <LogOut className="w-3.5 h-3.5" />
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.20)' }}
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400" />
               </div>
               <span>Sign out</span>
             </button>
