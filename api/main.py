@@ -577,7 +577,7 @@ def generate_rubric_endpoint(request: Request, body: dict) -> dict:
 @app.post("/api/search")
 @limiter.limit("10/minute")
 def start_search(request: Request, req: SearchRequest, _auth: None = Depends(_check_api_key)) -> dict:
-    user_id = _get_session_user_id(request)
+    user_id = _get_user_id(request)
     # Dedup: if an identical query is already in-flight, return its search_id instead of
     # launching a second full pipeline run (prevents double-click / rapid-retry cost duplication).
     existing = find_inflight_session(req.query)
@@ -586,7 +586,7 @@ def start_search(request: Request, req: SearchRequest, _auth: None = Depends(_ch
                      existing.search_id, req.query)
         return {"search_id": existing.search_id, "deduplicated": True}
     search_id = str(uuid.uuid4())
-    create_search(search_id, req.query, req.category, req.region)
+    create_search(search_id, req.query, req.category, req.region, user_id)
     update_search(search_id, profile=req.profile, rubric=req.rubric, status="running")
     session = create_session(search_id, req.query)
     options_with_qa = {
@@ -689,10 +689,12 @@ def _strip_profile_pii(search: dict) -> dict:
 
 @app.get("/api/searches")
 def list_all_searches(
+    request: Request,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    items = [_strip_profile_pii(s) for s in list_searches(limit=limit, offset=offset)]
+    user_id = _get_user_id(request)
+    items = [_strip_profile_pii(s) for s in list_searches(limit=limit, offset=offset, user_id=user_id)]
     return {"searches": items, "limit": limit, "offset": offset}
 
 

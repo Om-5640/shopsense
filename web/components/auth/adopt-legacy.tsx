@@ -15,6 +15,7 @@ import { useSession } from 'next-auth/react'
 import { getOrCreateSessionId } from '@/lib/api'
 
 const ADOPTED_KEY = 'shopsense_legacy_adopted'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 export function AdoptLegacy() {
   const { data: session, status } = useSession()
@@ -30,7 +31,7 @@ export function AdoptLegacy() {
     if (!legacyId.startsWith('ss_')) return
 
     fetch(
-      `/api/auth/adopt-legacy?legacy_session_id=${encodeURIComponent(legacyId)}`,
+      `${API_BASE}/api/auth/adopt-legacy?legacy_session_id=${encodeURIComponent(legacyId)}`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.accessToken}` },

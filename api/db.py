@@ -592,19 +592,19 @@ def _pg_fetchall_as_dict(cur) -> list[dict]:
 # Search CRUD
 # ---------------------------------------------------------------------------
 
-def create_search(search_id: str, query: str, category: str = "", region: str = "global") -> None:
+def create_search(search_id: str, query: str, category: str = "", region: str = "global", user_id: str = "default") -> None:
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
-                """INSERT INTO "Search" (id, query, category, region, status, "createdAt")
-                   VALUES (%s, %s, %s, %s, %s, now()) ON CONFLICT DO NOTHING""",
-                (search_id, query, category, region, "pending"),
+                """INSERT INTO "Search" (id, query, category, region, status, "userId", "createdAt")
+                   VALUES (%s, %s, %s, %s, %s, %s, now()) ON CONFLICT DO NOTHING""",
+                (search_id, query, category, region, "pending", user_id),
             )
     else:
         conn = _sqlite_connect()
         conn.execute(
-            "INSERT OR IGNORE INTO Search (id, query, category, region, status, createdAt) VALUES (?,?,?,?,?,?)",
-            (search_id, query, category, region, "pending", _now_iso()),
+            "INSERT OR IGNORE INTO Search (id, query, category, region, status, userId, createdAt) VALUES (?,?,?,?,?,?,?)",
+            (search_id, query, category, region, "pending", user_id, _now_iso()),
         )
         conn.commit()
 
@@ -649,20 +649,20 @@ def get_search(search_id: str) -> Optional[dict]:
         return _deserialize_search(_sqlite_row_to_dict(row)) if row else None
 
 
-def list_searches(limit: int = 50, offset: int = 0) -> list[dict]:
+def list_searches(limit: int = 50, offset: int = 0, user_id: str = "default") -> list[dict]:
     if _use_postgres():
         with _pg_transaction() as cur:
             cur.execute(
-                'SELECT * FROM "Search" ORDER BY "createdAt" DESC LIMIT %s OFFSET %s',
-                (limit, offset),
+                'SELECT * FROM "Search" WHERE "userId" = %s ORDER BY "createdAt" DESC LIMIT %s OFFSET %s',
+                (user_id, limit, offset),
             )
             rows = _pg_fetchall_as_dict(cur)
             return [_deserialize_search(r) for r in rows]
     else:
         conn = _sqlite_connect()
         rows = conn.execute(
-            "SELECT * FROM Search ORDER BY createdAt DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT * FROM Search WHERE userId = ? ORDER BY createdAt DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         ).fetchall()
         return [_deserialize_search(_sqlite_row_to_dict(r)) for r in rows]
 
@@ -1237,14 +1237,14 @@ def reassign_user_data(from_user_id: str, to_user_id: str) -> dict[str, int]:
     Migrate all data from one user ID to another (used by adopt-legacy flow).
     Returns count of rows moved per table.
     """
-    tables = ["UserSignal", "ProductMemory"]
+    tables = ["Search", "UserSignal", "ProductMemory"]
     counts: dict[str, int] = {}
     try:
         if _use_postgres():
             with _pg_transaction() as cur:
                 for table in tables:
                     cur.execute(
-                        f'UPDATE "{table}" SET user_id = %s WHERE user_id = %s',
+                        f'UPDATE "{table}" SET "userId" = %s WHERE "userId" = %s',
                         (to_user_id, from_user_id),
                     )
                     counts[table] = cur.rowcount or 0
@@ -1252,7 +1252,7 @@ def reassign_user_data(from_user_id: str, to_user_id: str) -> dict[str, int]:
             conn = _sqlite_connect()
             for table in tables:
                 cur = conn.execute(
-                    f"UPDATE {table} SET user_id = ? WHERE user_id = ?",
+                    f"UPDATE {table} SET userId = ? WHERE userId = ?",
                     (to_user_id, from_user_id),
                 )
                 counts[table] = cur.rowcount or 0
