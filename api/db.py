@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS Search (
     category    TEXT NOT NULL DEFAULT '',
     region      TEXT NOT NULL DEFAULT 'global',
     status      TEXT NOT NULL DEFAULT 'pending',
+    userId      TEXT NOT NULL DEFAULT 'default',
     createdAt   TEXT NOT NULL,
     profile     TEXT,
     rubric      TEXT,
@@ -234,6 +235,7 @@ CREATE TABLE IF NOT EXISTS "Search" (
     category    TEXT NOT NULL DEFAULT '',
     region      TEXT NOT NULL DEFAULT 'global',
     status      TEXT NOT NULL DEFAULT 'pending',
+    "userId"    TEXT NOT NULL DEFAULT 'default',
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
     profile     TEXT,
     rubric      TEXT,
@@ -329,6 +331,15 @@ def _m1_sqlite_add_canonical_name() -> None:
         pass  # Already exists — SQLite has no ADD COLUMN IF NOT EXISTS
 
 
+def _m3_sqlite_add_userid_to_search() -> None:
+    conn = _sqlite_connect()
+    try:
+        conn.execute("ALTER TABLE Search ADD COLUMN userId TEXT NOT NULL DEFAULT 'default'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Already exists (fresh DB created with this column in schema)
+
+
 def _m2_sqlite_add_fk_usersignal() -> None:
     """
     Recreate UserSignal with a real FK on sourceSearchId.
@@ -389,6 +400,12 @@ _MIGRATIONS: list[tuple[int, str, Optional[Callable], Optional[str]]] = [
             END IF;
         END $$
         """,
+    ),
+    (
+        3,
+        'Add userId column to Search table',
+        _m3_sqlite_add_userid_to_search,
+        'ALTER TABLE "Search" ADD COLUMN IF NOT EXISTS "userId" TEXT NOT NULL DEFAULT \'default\'',
     ),
 ]
 

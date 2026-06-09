@@ -1,11 +1,11 @@
-"""Add user_id columns to Search and Profile tables for multi-user auth.
+"""Add userId columns to Search and Profile tables for multi-user auth.
 
 Revision ID: 0002
 Revises: 0001
 Create Date: 2026-06-06
 
-Uses '__legacy__' as server_default (not 'guest') so pre-auth rows are clearly
-distinguishable from new guest rows.  Users can reclaim old data post-login via
+Uses 'default' as server_default so pre-auth rows are treated as the
+shared guest session.  Users can reclaim old data post-login via
 POST /api/auth/adopt-legacy.
 
 SQLite note: render_as_batch=True in env.py activates batch mode, which copies the
@@ -27,26 +27,23 @@ def upgrade() -> None:
     # ── Search table ──────────────────────────────────────────────────────────
     with op.batch_alter_table("Search") as batch_op:
         batch_op.add_column(
-            sa.Column("user_id", sa.Text, server_default="__legacy__", nullable=False)
+            sa.Column("userId", sa.Text, server_default="default", nullable=False)
         )
-    op.create_index("ix_search_user_id", "Search", ["user_id"])
+    op.create_index("ix_search_user_id", "Search", ["userId"])
 
     # ── Profile table ─────────────────────────────────────────────────────────
-    # Profile currently uses category as primary key.  We preserve that PK and
-    # add user_id as a regular column.  The save_profile_db / get_profile
-    # functions in db.py will be updated to filter by (user_id, category).
     with op.batch_alter_table("Profile") as batch_op:
         batch_op.add_column(
-            sa.Column("user_id", sa.Text, server_default="__legacy__", nullable=False)
+            sa.Column("userId", sa.Text, server_default="default", nullable=False)
         )
-    op.create_index("ix_profile_user_id", "Profile", ["user_id"])
+    op.create_index("ix_profile_user_id", "Profile", ["userId"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_search_user_id", table_name="Search")
     with op.batch_alter_table("Search") as batch_op:
-        batch_op.drop_column("user_id")
+        batch_op.drop_column("userId")
 
     op.drop_index("ix_profile_user_id", table_name="Profile")
     with op.batch_alter_table("Profile") as batch_op:
-        batch_op.drop_column("user_id")
+        batch_op.drop_column("userId")
