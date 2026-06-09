@@ -17,6 +17,8 @@ export interface SSEHandlers {
   /** Called when the pipeline finishes. `warnings` carries provider-fallback messages. */
   onDone: (searchId: string, fromCache?: boolean, warnings?: string[]) => void
   onWarning?: (message: string) => void
+  /** Called for every pipeline log message — use for live feed / source discovery. */
+  onLog?: (message: string) => void
   /** Called when the pipeline returned a cached result — all stages can be marked complete. */
   onCacheHit?: () => void
   /** Called on every successful SSE message — use to reset watchdog timers. */
@@ -85,6 +87,7 @@ export function connectSSE(searchId: string, handlers: SSEHandlers): () => void 
           handlers.onDone(searchId, event.data.from_cache === true, warnings)
         } else if (event.type === 'log') {
           const msg = (event.data.message as string) ?? ''
+          handlers.onLog?.(msg)
           if (msg.startsWith(TOKEN_BUDGET_WARNING_PREFIX) && msg.includes('exceeds') && handlers.onWarning) {
             handlers.onWarning(msg)
           }

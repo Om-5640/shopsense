@@ -233,13 +233,7 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 def _rate_limit_key(request: Request) -> str:
-    """
-    Auth users get per-user rate limits (independent buckets per account).
-    Guests get per-IP limits (existing behaviour preserved).
-    """
-    auth_user = _verify_auth_token(request)
-    if auth_user:
-        return auth_user
+    """Per-IP for everyone — harder to abuse than per-user (account farming)."""
     return get_remote_address(request)
 
 

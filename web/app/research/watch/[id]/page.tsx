@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
 import { PipelineTimeline, type PipelineStage, type StageStatus } from '@/components/research/pipeline-timeline'
-import { AnalyzerAnimation } from '@/components/research/analyzer-animation'
+import { ResearchLiveFeed, type ActivityEntry, type ActivityAccent } from '@/components/research/research-live-feed'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cancelSearch, getSearchResult } from '@/lib/api'
@@ -31,15 +31,28 @@ const SSE_TO_SIDEBAR: Record<string, string> = {
   summarize:        'summarizing',
   analyze:          'analyzing',
   cross_validate:   'analyzing',
-  mention_counting: 'analyzing',  // Aho-Corasick mention pipeline runs after main analyzer
+  mention_counting: 'analyzing',
   scoring:          'scoring',
   explanations:     'scoring',
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  reddit_fetch:     'Reddit Research',
+  review_fetch:     'Expert Reviews',
+  summarize:        'Thread Summarization',
+  analyze:          'Main Analysis',
+  cross_validate:   'Cross-validation',
+  mention_counting: 'Mention Analysis',
+  constraint_filter:'Constraint Filter',
+  scoring:          'Product Scoring',
+  explanations:     'Writing Explanations',
 }
 
 export default function WatchPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
 
+  // Pipeline timeline state
   const [stages, setStages] = useState<PipelineStage[]>(INIT_STAGES)
   const [elapsedTime, setElapsedTime] = useState(0)
   const [status, setStatus] = useState<'loading' | 'running' | 'done' | 'error' | 'cancelled' | 'already_done'>('loading')
@@ -47,15 +60,38 @@ export default function WatchPage() {
   const [query, setQuery] = useState('')
   const [stopping, setStopping] = useState(false)
 
+  // Live feed state
+  const [liveStageLabel, setLiveStageLabel] = useState('Initializing…')
+  const [liveSubreddits, setLiveSubreddits] = useState<Array<{ name: string; count: number }>>([])
+  const [liveReviewDomains, setLiveReviewDomains] = useState<string[]>([])
+  const [liveProgressItem, setLiveProgressItem] = useState('')
+  const [liveProgressFrac, setLiveProgressFrac] = useState(0)
+  const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([])
+
   const sseCleanupRef = useRef<(() => void) | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const elapsedRef = useRef(0)
+  const activityCounterRef = useRef(0)
+
+  const addActivity = useCallback((text: string, accent: ActivityAccent = 'dim') => {
+    const secs = elapsedRef.current
+    setLiveActivity((prev) => {
+      const entry: ActivityEntry = { id: activityCounterRef.current++, secs, text, accent }
+      return [...prev.slice(-99), entry]
+    })
+  }, [])
 
   const updateStage = useCallback((sid: string, st: StageStatus, description?: string) => {
     setStages((prev) => prev.map((s) => s.id === sid ? { ...s, status: st, description: description ?? s.description } : s))
   }, [])
 
   useEffect(() => {
-    timerRef.current = setInterval(() => setElapsedTime((t) => t + 1), 1000)
+    timerRef.current = setInterval(() => {
+      setElapsedTime((t) => {
+        elapsedRef.current = t + 1
+        return t + 1
+      })
+    }, 1000)
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [])
 
@@ -65,7 +101,6 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (!id) return
-    // Check current DB status first
     getSearchResult(id)
       .then((row) => {
         setQuery(row.query ?? '')
@@ -77,20 +112,59 @@ export default function WatchPage() {
           setStatus('cancelled')
           return
         }
-        // Connect SSE in reconnect mode to replay missed events
         setStatus('running')
         sseCleanupRef.current = connectSSE(id, {
-          onStageStart(stage) {
+          onStageStart(stage, label) {
             const s = SSE_TO_SIDEBAR[stage] ?? stage
             updateStage(s, 'running')
+            setLiveStageLabel(label || STAGE_LABELS[stage] || stage)
+            setLiveProgressItem('')
+            setLiveProgressFrac(0)
+            addActivity(`${label || STAGE_LABELS[stage] || stage}…`, 'amber')
           },
           onStageDone(stage, count) {
             const s = SSE_TO_SIDEBAR[stage] ?? stage
             updateStage(s, 'complete', count !== undefined ? `${count} found` : undefined)
+            const lbl = STAGE_LABELS[stage] ?? stage
+            if (count !== undefined) {
+              addActivity(`${lbl}: ${count} found`, 'emerald')
+            } else {
+              addActivity(`${lbl} complete`, 'emerald')
+            }
           },
-          onProgress(stage, current, total) {
+          onProgress(stage, current, total, detail) {
             const s = SSE_TO_SIDEBAR[stage] ?? stage
             updateStage(s, 'running', total ? `${current}/${total}` : undefined)
+            if (detail) setLiveProgressItem(detail)
+            if (total && total > 0) setLiveProgressFrac(current / total)
+          },
+          onLog(msg) {
+            if (msg.startsWith('[sources] ')) {
+              try {
+                const data = JSON.parse(msg.slice('[sources] '.length)) as Array<[string, number]>
+                const subs = data.map(([name, count]) => ({ name, count }))
+                setLiveSubreddits(subs)
+                const preview = subs.slice(0, 3).map((s) => `r/${s.name}`).join(', ')
+                addActivity(
+                  `${subs.length} subreddits: ${preview}${subs.length > 3 ? ` +${subs.length - 3} more` : ''}`,
+                  'orange',
+                )
+              } catch { /* ignore */ }
+            } else if (msg.startsWith('[reviews] ')) {
+              try {
+                const domains = JSON.parse(msg.slice('[reviews] '.length)) as string[]
+                setLiveReviewDomains(domains)
+                const preview = domains.slice(0, 3).join(', ')
+                addActivity(
+                  `${domains.length} review sites: ${preview}${domains.length > 3 ? ` +${domains.length - 3} more` : ''}`,
+                  'cyan',
+                )
+              } catch { /* ignore */ }
+            } else if (msg.startsWith('[dedup] ')) {
+              addActivity(msg.slice('[dedup] '.length), 'dim')
+            } else if (msg.startsWith('[retrieval] ')) {
+              addActivity(msg.slice('[retrieval] '.length), 'violet')
+            }
           },
           onCacheHit() {
             setStages((prev) => prev.map((s) =>
@@ -98,6 +172,8 @@ export default function WatchPage() {
                 ? { ...s, status: 'complete' }
                 : s
             ))
+            setLiveStageLabel('Loaded from cache')
+            addActivity('Results loaded from cache', 'emerald')
             toast.success('Loaded from cache', {
               description: 'Results are from a recent identical search.',
               duration: 3000,
@@ -106,18 +182,19 @@ export default function WatchPage() {
           onError(message) {
             setError(message)
             setStatus('error')
+            addActivity(`Error: ${message}`, 'dim')
             toast.error(message)
           },
           onDone(_sid, _fromCache, warnings) {
             setStatus('done')
+            setLiveStageLabel('Research complete')
+            setLiveProgressItem('')
+            addActivity('Research complete — loading results…', 'emerald')
             try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
             if (warnings && warnings.length > 0) {
               warnings.forEach((w, i) => {
                 setTimeout(() => {
-                  toast.warning(w, {
-                    duration: 12000,
-                    id: `provider-warning-${i}`,
-                  })
+                  toast.warning(w, { duration: 12000, id: `provider-warning-${i}` })
                 }, i * 300)
               })
             }
@@ -129,6 +206,9 @@ export default function WatchPage() {
               description: 'Some context was trimmed to fit AI token limits. Results may be slightly less comprehensive.',
               duration: 8000,
             })
+          },
+          onReconnecting(attempt) {
+            addActivity(`Reconnecting… (attempt ${attempt})`, 'dim')
           },
         })
       })
@@ -170,12 +250,12 @@ export default function WatchPage() {
                 {query}
               </Badge>
               <Badge variant="outline" className="border-white/[0.1] text-[#71717A]">
-                Live
+                {status === 'running' ? 'Live' : status === 'done' ? 'Complete' : status}
               </Badge>
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-[350px_1fr] gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
             {/* Left — Pipeline timeline */}
             <div className="lg:sticky lg:top-[76px] lg:h-[calc(100vh-108px)]">
               <PipelineTimeline
@@ -187,7 +267,7 @@ export default function WatchPage() {
               />
             </div>
 
-            {/* Right — Status content */}
+            {/* Right — Live research feed or status content */}
             <div className="min-h-[400px]">
               {status === 'loading' && (
                 <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-8 flex items-center gap-3">
@@ -196,42 +276,23 @@ export default function WatchPage() {
                 </div>
               )}
 
-              {status === 'running' && (
+              {(status === 'running' || status === 'done') && (
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="space-y-4"
+                  transition={{ duration: 0.3 }}
                 >
-                  <AnalyzerAnimation />
-                  <div className="flex justify-end pt-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleStop}
-                      disabled={stopping}
-                      className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 transition-all"
-                    >
-                      {stopping ? (
-                        <>
-                          <div className="w-3.5 h-3.5 border border-rose-400 border-t-transparent rounded-full animate-spin mr-2" />
-                          Stopping…
-                        </>
-                      ) : (
-                        'Stop Research'
-                      )}
-                    </Button>
-                  </div>
-                </motion.div>
-              )}
-
-              {status === 'done' && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-8 text-center"
-                >
-                  <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-                  <p className="text-[#FAFAFA] font-medium">Complete — loading results…</p>
+                  <ResearchLiveFeed
+                    stageLabel={liveStageLabel}
+                    subreddits={liveSubreddits}
+                    reviewDomains={liveReviewDomains}
+                    progressItem={liveProgressItem}
+                    progressFrac={liveProgressFrac}
+                    activity={liveActivity}
+                    elapsedTime={elapsedTime}
+                    onStop={handleStop}
+                    stopping={stopping}
+                  />
                 </motion.div>
               )}
 

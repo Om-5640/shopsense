@@ -908,6 +908,15 @@ def _execute_pipeline(
         "count": len(reddit_threads),
         "elapsed_s": _stage_timings["reddit_fetch"],
     })
+    if reddit_threads:
+        sub_counts: dict[str, int] = {}
+        for _t in reddit_threads:
+            _sub = _t.get("subreddit", "")
+            if _sub:
+                sub_counts[_sub] = sub_counts.get(_sub, 0) + 1
+        if sub_counts:
+            _top = sorted(sub_counts.items(), key=lambda x: -x[1])[:8]
+            session.emit_log(f"[sources] {json.dumps(_top)}")
     _check_cancelled(session)
 
     # ---- Stage 2: Review fetch ----
@@ -925,6 +934,16 @@ def _execute_pipeline(
             "count": len(review_pages),
             "elapsed_s": _stage_timings["review_fetch"],
         })
+        if review_pages:
+            _domains: list[str] = []
+            _seen_d: set[str] = set()
+            for _p in review_pages:
+                _d = _p.get("domain", "")
+                if _d and _d not in _seen_d:
+                    _seen_d.add(_d)
+                    _domains.append(_d)
+            if _domains:
+                session.emit_log(f"[reviews] {json.dumps(_domains[:10])}")
         _check_cancelled(session)
 
     if not reddit_threads and not review_pages:
