@@ -199,32 +199,41 @@ _DEAD_PROVIDER_TTL = 600  # seconds — 10 min covers any single search session 
 
 # Consecutive failure counter — auto-dead after _CONSEC_FAIL_THRESHOLD failures.
 _consec_failures: dict[str, tuple[int, float]] = {}  # provider → (count, last_failure_ts)
-_CONSEC_FAIL_THRESHOLD = 3
+# Threshold raised from 3 → 5: 3 was too low when N summarizers fire in parallel
+# and a provider returns 429 for the burst. 429 is a transient rate limit, not a
+# hard failure — a burst of 5 parallel rate limits before backing off is reasonable.
+_CONSEC_FAIL_THRESHOLD = 5
 _CONSEC_WINDOW = 300  # seconds; failures outside this window don't count
 
 
-def _record_provider_outcome(provider: str, success: bool) -> None:
-    """Track consecutive failures; auto-dead after _CONSEC_FAIL_THRESHOLD in a row."""
+def _record_provider_outcome(provider: str, success: bool, is_rate_limit: bool = False) -> None:
+    """Track consecutive failures; auto-dead after _CONSEC_FAIL_THRESHOLD in a row.
+
+    Rate-limit errors (429) count as 0.5 failures — they signal load, not a dead provider.
+    Auth / permanent errors (401, 403, 500) count as full failures.
+    """
     with _provider_state_lock:
         if success:
             _consec_failures.pop(provider, None)
         else:
             now = time.time()
-            count, last_ts = _consec_failures.get(provider, (0, 0.0))
+            count_f, last_ts = _consec_failures.get(provider, (0.0, 0.0))
             if now - last_ts > _CONSEC_WINDOW:
-                count = 0  # failures too old to count as consecutive
-            count += 1
-            if count >= _CONSEC_FAIL_THRESHOLD:
+                count_f = 0.0  # failures too old to count as consecutive
+            # 429 = rate limit; half-weight so bursts during parallel summarization
+            # don't kill a provider that is merely throttling, not broken.
+            count_f += 0.5 if is_rate_limit else 1.0
+            if count_f >= _CONSEC_FAIL_THRESHOLD:
                 # Mark dead inline (same lock already held — no nested lock needed)
                 if provider not in _dead_providers:
                     _dead_providers[provider] = now
                     _logger.warning(
-                        "[provider:%s] %d consecutive failures — auto-marking dead for this session",
-                        provider, count,
+                        "[provider:%s] %.1f consecutive failure-weight — auto-marking dead for this session",
+                        provider, count_f,
                     )
                 _consec_failures.pop(provider, None)
             else:
-                _consec_failures[provider] = (count, now)
+                _consec_failures[provider] = (count_f, now)
 
 
 def mark_provider_dead(provider: str) -> None:
@@ -357,10 +366,11 @@ def run_agent(agent_name: str, user_prompt: str, system: str = "") -> str:
             else:
                 _logger.warning("[%s] %s auth failed (no more providers)", agent_name, provider)
         except Exception as e:
-            _record_provider_outcome(provider, success=False)
-            last_err = e
             err_type = type(e).__name__
             err_str = str(e).lower()
+            _is_429 = "429" in err_str or "rate limit" in err_str or "ratelimit" in err_str or "too many requests" in err_str
+            _record_provider_outcome(provider, success=False, is_rate_limit=_is_429)
+            last_err = e
             if "quota" in err_str or "exhausted" in err_str:
                 mark_provider_dead(provider)
             if i < len(available) - 1:

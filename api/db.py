@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS "UserSignal" (
     "productName"   TEXT,
     category        TEXT,
     text            TEXT NOT NULL,
-    embedding       vector(768),
+    embedding       vector(3072),
     strength        TEXT NOT NULL DEFAULT 'moderate',
     "sourceSearchId" TEXT REFERENCES "Search"(id) ON DELETE SET NULL,
     "createdAt"     TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -329,6 +329,11 @@ def _m1_sqlite_add_canonical_name() -> None:
         conn.commit()
     except sqlite3.OperationalError:
         pass  # Already exists — SQLite has no ADD COLUMN IF NOT EXISTS
+
+
+def _m4_pg_resize_embedding_3072() -> None:
+    """SQLite stores embeddings as TEXT (no-op). Postgres column resized via pg_sql below."""
+    pass
 
 
 def _m3_sqlite_add_userid_to_search() -> None:
@@ -406,6 +411,19 @@ _MIGRATIONS: list[tuple[int, str, Optional[Callable], Optional[str]]] = [
         'Add userId column to Search table',
         _m3_sqlite_add_userid_to_search,
         'ALTER TABLE "Search" ADD COLUMN IF NOT EXISTS "userId" TEXT NOT NULL DEFAULT \'default\'',
+    ),
+    (
+        4,
+        'Resize UserSignal.embedding vector(768) → vector(3072) for gemini-embedding-001',
+        _m4_pg_resize_embedding_3072,
+        # DROP + re-ADD is the only way to change a pgvector column dimension.
+        # Existing 768-dim embeddings are lost; signals will be re-extracted on next search.
+        # The HNSW index is recreated automatically by _create_pg_vector_index() at startup.
+        """
+        DROP INDEX IF EXISTS usersignal_embedding_idx;
+        ALTER TABLE "UserSignal" DROP COLUMN IF EXISTS embedding;
+        ALTER TABLE "UserSignal" ADD COLUMN embedding vector(3072);
+        """,
     ),
 ]
 

@@ -577,32 +577,51 @@ def fetch_all_reviews(query: str, limit: int = 10, delay: float = 1.0) -> list[d
         print("[reviews] all URLs filtered as junk — check source_filter.py whitelist")
         return []
 
+    # ── Parallel scraping (8 workers) — replaces serial loop + delay ─────────
+    # Each URL is a different domain, so 8-way concurrency does not hammer any
+    # single server. Cuts review_fetch from ~200s to ~25–40s (dominated by the
+    # single slowest Jina render, not N × avg latency).
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
     results = []
-    for i, url in enumerate(urls, 1):
-        print(f"[scrape] {i}/{len(urls)}: {url}")
-        page = fetch_review_page(url)
-        if page:
-            # Phase 1: tag with discovery metadata (not cached — context-specific)
-            meta = url_metadata.get(url, {})
-            page["source_type"] = meta.get("source_type", page.get("source_type", "gemini_grounding"))
-            page["discovered_from"] = meta.get("discovered_from", "gemini")
-            page["retrieval_confidence"] = meta.get("retrieval_confidence", page.get("retrieval_confidence", 0.80))
+    _n = len(urls)
+    with ThreadPoolExecutor(max_workers=min(8, _n)) as _pool:
+        # Submit all at once and record submission order for the progress log
+        _futures: dict = {}
+        for _i, _url in enumerate(urls, 1):
+            print(f"[scrape] {_i}/{_n}: {_url}")
+            _futures[_pool.submit(fetch_review_page, _url)] = _url
 
-            # Phase 8: compute rank score now that retrieval_confidence is known
-            if _HAS_RANKER:
-                try:
-                    page["review_rank_score"] = _rank_score(
-                        trust_score=page.get("domain_trust_score", 0.5),
-                        freshness_score=page.get("freshness_score", 0.5),
-                        content=page.get("content", ""),
-                        retrieval_confidence=page["retrieval_confidence"],
-                    )
-                except Exception:
-                    pass
+        for _fut in _as_completed(_futures):
+            _url = _futures[_fut]
+            try:
+                page = _fut.result()
+            except Exception as _e:
+                print(f"[scrape] error for {_url}: {_e}")
+                page = None
 
-            results.append(page)
-        time.sleep(delay)
-    print(f"[scrape] {len(results)}/{len(urls)} succeeded")
+            if page:
+                # Phase 1: tag with discovery metadata (not cached — context-specific)
+                meta = url_metadata.get(_url, {})
+                page["source_type"] = meta.get("source_type", page.get("source_type", "gemini_grounding"))
+                page["discovered_from"] = meta.get("discovered_from", "gemini")
+                page["retrieval_confidence"] = meta.get("retrieval_confidence", page.get("retrieval_confidence", 0.80))
+
+                # Phase 8: compute rank score now that retrieval_confidence is known
+                if _HAS_RANKER:
+                    try:
+                        page["review_rank_score"] = _rank_score(
+                            trust_score=page.get("domain_trust_score", 0.5),
+                            freshness_score=page.get("freshness_score", 0.5),
+                            content=page.get("content", ""),
+                            retrieval_confidence=page["retrieval_confidence"],
+                        )
+                    except Exception:
+                        pass
+
+                results.append(page)
+
+    print(f"[scrape] {len(results)}/{_n} succeeded")
 
     # Phase 4: YouTube intelligence — supplementary evidence, appended after web reviews
     if _HAS_YOUTUBE:
