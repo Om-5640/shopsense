@@ -13,6 +13,7 @@ import { FeatureCards } from '@/components/home/feature-cards'
 import { LearnMoreSection } from '@/components/home/learn-more-section'
 import { StatsStrip } from '@/components/home/stats-strip'
 import { RecentSearches } from '@/components/home/recent-searches'
+import { WelcomeModal } from '@/components/home/welcome-modal'
 
 export default function HomePage() {
   const router = useRouter()
@@ -33,6 +34,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col bg-[#08080A]">
       <AnimatedBackground />
+      <WelcomeModal />
       <Header onOpenCommandPalette={() => setCommandOpen(true)} />
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
       
