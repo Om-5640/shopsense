@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'framer-motion'
 import { useTheme } from 'next-themes'
 
@@ -44,8 +44,8 @@ const DARK_BLOBS: BlobDef[] = [
     dur: 46, dx: [0, 130, 65, -80, 0], dy: [0, 70, 130, 65, 0],   blur: 170, op: 0.22, px: 0.05, py: 0.03 },
   { id: 'b2', color: '#3730A3', w: 580, h: 580, top: '40%', right: '2%',
     dur: 54, dx: [0,-115,-55,  75, 0], dy: [0,-80,  95,-55, 0],   blur: 160, op: 0.16, px:-0.06, py:-0.04 },
-  { id: 'b3', color: '#0E7490', w: 500, h: 500, bottom: '6%', left: '28%',
-    dur: 60, dx: [0,  90,-65, 110, 0], dy: [0,-100,-35,  80, 0],  blur: 155, op: 0.09, px: 0.04, py:-0.04 },
+  { id: 'b3', color: '#4C1D95', w: 500, h: 500, bottom: '6%', left: '28%',
+    dur: 60, dx: [0,  90,-65, 110, 0], dy: [0,-100,-35,  80, 0],  blur: 155, op: 0.12, px: 0.04, py:-0.04 },
   { id: 'b4', color: '#7C3AED', w: 620, h: 620, top: '16%', right: '16%',
     dur: 41, dx: [0, -90, 45, -50, 0], dy: [0,  60,-70,  90, 0],  blur: 155, op: 0.15, px:-0.05, py: 0.05 },
 ]
@@ -93,7 +93,10 @@ function PBlob({ blob, smoothX, smoothY }: {
 /* ── Main component ─────────────────────────────────────────────── */
 export function AnimatedBackground() {
   const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme !== 'light'
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  // Before hydration always render dark — no flash on theme switch
+  const isDark = !mounted || resolvedTheme !== 'light'
 
   const rawX    = useMotionValue(0.5)
   const rawY    = useMotionValue(0.5)
