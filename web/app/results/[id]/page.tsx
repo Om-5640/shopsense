@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity, Download, FileText, FileSpreadsheet, Link, Check } from 'lucide-react'
+import { Clock, MapPin, ArrowUpDown, Menu, RefreshCw, Activity, Download, FileText, FileSpreadsheet, Link, Check, Hash, MessageSquare, Globe } from 'lucide-react'
 import { AnimatedBackground } from '@/components/layout/animated-background'
 import { Header } from '@/components/layout/header'
 import { CommandPalette } from '@/components/layout/command-palette'
@@ -463,6 +463,21 @@ export default function ResultsPage() {
     })
   }, [products, sortBy])
 
+  // ── Trust stats — aggregate research breadth from product data ───────────
+  const trustStats = useMemo(() => {
+    const redditSources = new Set<string>()
+    const reviewSources = new Set<string>()
+    let totalMentions = 0
+    products.forEach((p) => {
+      totalMentions += p.mention_count ?? 0
+      ;(p.sources ?? []).forEach((s) => {
+        if (s.startsWith('reddit:')) redditSources.add(s)
+        else if (s.startsWith('review:')) reviewSources.add(s)
+      })
+    })
+    return { communities: redditSources.size, mentions: totalMentions, reviewSources: reviewSources.size }
+  }, [products])
+
   // ── Insights panel — derived from real backend data ──────────────────────
   // Must be here (before early returns) to satisfy Rules of Hooks
   const insightsProps = useMemo(() => {
@@ -688,6 +703,50 @@ export default function ResultsPage() {
                     </DropdownMenu>
                   </div>
                 </div>
+              )}
+
+              {/* Trust Stats Bar — research breadth at a glance */}
+              {trustStats.mentions > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, ease: 'easeOut' }}
+                  className="mb-5 px-5 py-3.5 rounded-xl border border-white/[0.07] bg-gradient-to-r from-violet-500/[0.04] via-white/[0.02] to-sky-500/[0.04]"
+                >
+                  <div className="flex items-center justify-center gap-6 flex-wrap">
+                    {trustStats.communities > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 text-sm">
+                          <div className="w-6 h-6 rounded-lg bg-violet-500/15 flex items-center justify-center shrink-0">
+                            <Hash className="w-3 h-3 text-violet-400" />
+                          </div>
+                          <span className="font-bold text-[#FAFAFA]">{trustStats.communities}</span>
+                          <span className="text-[#71717A]">{trustStats.communities === 1 ? 'community' : 'communities'} analyzed</span>
+                        </div>
+                        <div className="w-px h-4 bg-white/[0.1] hidden sm:block" />
+                      </>
+                    )}
+                    <div className="flex items-center gap-2 text-sm">
+                      <div className="w-6 h-6 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0">
+                        <MessageSquare className="w-3 h-3 text-indigo-400" />
+                      </div>
+                      <span className="font-bold text-[#FAFAFA]">{trustStats.mentions.toLocaleString()}</span>
+                      <span className="text-[#71717A]">community mentions</span>
+                    </div>
+                    {trustStats.reviewSources > 0 && (
+                      <>
+                        <div className="w-px h-4 bg-white/[0.1] hidden sm:block" />
+                        <div className="flex items-center gap-2 text-sm">
+                          <div className="w-6 h-6 rounded-lg bg-sky-500/15 flex items-center justify-center shrink-0">
+                            <Globe className="w-3 h-3 text-sky-400" />
+                          </div>
+                          <span className="font-bold text-[#FAFAFA]">{trustStats.reviewSources}</span>
+                          <span className="text-[#71717A]">{trustStats.reviewSources === 1 ? 'review site' : 'review sites'}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
               )}
 
               {/* Stale-scores banner — shown when weights differ from original rubric */}

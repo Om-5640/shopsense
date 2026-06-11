@@ -17,7 +17,6 @@ import {
   Users,
   AlertTriangle,
   Quote,
-  LayoutGrid,
   Minus,
   ShieldCheck,
 } from 'lucide-react'
@@ -193,6 +192,7 @@ export function ProductCard({
   const [showFitReason, setShowFitReason] = useState(false)
   const [showSentiment, setShowSentiment] = useState(false)
   const [showMoreSentiment, setShowMoreSentiment] = useState(false)
+  const [showDiscussions, setShowDiscussions] = useState(false)
 
   const discount =
     product.originalPrice && product.originalPrice > product.price && product.price > 0
@@ -235,12 +235,37 @@ export function ProductCard({
   const allRecords = product.sentimentRecords ?? []
   const visibleRecords = showMoreSentiment ? allRecords : allRecords.slice(0, 5)
 
-  // Format source labels (reddit:Bedding → r/Bedding, review:wirecutter.com → wirecutter.com)
-  const formattedSources = (product.sources ?? []).map((s) => {
-    if (s.startsWith('reddit:')) return `r/${s.slice(7)}`
-    if (s.startsWith('review:')) return s.slice(7)
-    return s
-  }).slice(0, 6)
+  // Recommend percentage (positive / total voiced opinions)
+  const recommendPct = total > 0 ? Math.round(posRatio * 100) : null
+
+  // One-line tagline: best praise + top complaint stitched together
+  const tagline = (() => {
+    const p = product.praise?.[0]
+    const c = product.complaints?.[0]?.text
+    if (!p && !c) return null
+    const trim = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s
+    if (p && c) return `${trim(p, 60)} · ${trim(c, 60)}`
+    return trim((p ?? c)!, 90)
+  })()
+
+  // Reddit discussion links (subreddit search for this product)
+  const redditDiscussions = (product.sources ?? [])
+    .filter((s) => s.startsWith('reddit:'))
+    .map((s) => {
+      const sub = s.slice(7)
+      return {
+        label: `r/${sub}`,
+        url: `https://www.reddit.com/r/${encodeURIComponent(sub)}/search?q=${encodeURIComponent(product.name)}&sort=top`,
+      }
+    })
+
+  // Review source links
+  const reviewLinks = (product.sources ?? [])
+    .filter((s) => s.startsWith('review:'))
+    .map((s) => {
+      const domain = s.slice(7)
+      return { label: domain, url: `https://www.${domain}` }
+    })
 
   return (
     <motion.div
@@ -299,7 +324,12 @@ export function ProductCard({
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <h3 className="text-xl font-semibold text-[#FAFAFA] mb-2">{product.name}</h3>
+            <h3 className="text-xl font-semibold text-[#FAFAFA] mb-1">{product.name}</h3>
+            {tagline && (
+              <p className="text-[12.5px] text-[#71717A] italic mb-2 leading-snug line-clamp-1 tracking-[0.01em]">
+                {tagline}
+              </p>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
               {product.highSignal && (
                 <Badge className="bg-violet-500/20 text-violet-300 border-violet-500/30">
@@ -349,8 +379,8 @@ export function ProductCard({
 
       {/* Score Bar */}
       <div className="ml-6 mb-4">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 h-3 bg-white/[0.06] rounded-full overflow-hidden">
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-3 bg-white/[0.06] rounded-full overflow-hidden min-w-0">
             <motion.div
               className={`h-full bg-gradient-to-r ${getScoreBarColor(product.score)} rounded-full`}
               initial={{ width: 0 }}
@@ -358,9 +388,29 @@ export function ProductCard({
               transition={{ duration: 0.8, ease: 'easeOut' }}
             />
           </div>
-          <span className={`font-mono text-2xl font-bold ${getScoreColor(product.score)}`}>
-            {product.score}%
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`font-mono text-2xl font-bold ${getScoreColor(product.score)}`}>
+              {product.score}%
+            </span>
+            {recommendPct !== null && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3, delay: 0.5 }}
+                className={cn(
+                  'flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border font-semibold whitespace-nowrap',
+                  recommendPct >= 70
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : recommendPct >= 40
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+                )}
+              >
+                <ThumbsUp className="w-2.5 h-2.5" />
+                {recommendPct}% recommend
+              </motion.div>
+            )}
+          </div>
         </div>
         {product.gapToLeader != null && product.gapToLeader > 0 && (
           <p className="text-xs text-[#52525B] mt-1">{product.gapToLeader.toFixed(1)} pts behind leader</p>
@@ -559,18 +609,85 @@ export function ProductCard({
         </div>
       )}
 
-      {/* Sources */}
-      {formattedSources.length > 0 && (
-        <div className="ml-6 mb-4 flex items-center gap-1.5 flex-wrap">
-          <LayoutGrid className="w-3 h-3 text-[#52525B] shrink-0" />
-          {formattedSources.map((src) => (
-            <span
-              key={src}
-              className="text-xs px-1.5 py-0.5 rounded-md bg-white/[0.05] text-[#71717A] border border-white/[0.06]"
-            >
-              {src}
+      {/* Community Discussions */}
+      {(redditDiscussions.length > 0 || reviewLinks.length > 0) && (
+        <div className="ml-6 mb-4">
+          <button
+            onClick={() => setShowDiscussions(!showDiscussions)}
+            className="flex items-center gap-2 text-sm text-[#71717A] hover:text-[#A1A1AA] transition-colors py-0.5 group"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-[#52525B] group-hover:text-violet-400 transition-colors" />
+            <span>
+              Discussed in{' '}
+              {redditDiscussions.length > 0 && (
+                <span className="text-[#A1A1AA] font-medium">
+                  {redditDiscussions.length} {redditDiscussions.length === 1 ? 'community' : 'communities'}
+                </span>
+              )}
+              {redditDiscussions.length > 0 && reviewLinks.length > 0 && (
+                <span className="text-[#3F3F46]"> · </span>
+              )}
+              {reviewLinks.length > 0 && (
+                <span className="text-[#A1A1AA] font-medium">
+                  {reviewLinks.length} {reviewLinks.length === 1 ? 'review site' : 'review sites'}
+                </span>
+              )}
             </span>
-          ))}
+            {showDiscussions
+              ? <ChevronUp className="w-3.5 h-3.5" />
+              : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <AnimatePresence>
+            {showDiscussions && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2.5 pl-5 space-y-3">
+                  {redditDiscussions.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase tracking-widest text-[#52525B] font-semibold">Reddit Communities</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {redditDiscussions.map((d) => (
+                          <a
+                            key={d.label}
+                            href={d.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-violet-500/[0.08] text-violet-300/90 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/40 hover:text-violet-200 transition-all duration-150"
+                          >
+                            {d.label}
+                            <ExternalLink className="w-2.5 h-2.5 opacity-50" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {reviewLinks.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase tracking-widest text-[#52525B] font-semibold">Review Sources</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {reviewLinks.map((r) => (
+                          <a
+                            key={r.label}
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-sky-500/[0.08] text-sky-300/90 border border-sky-500/20 hover:bg-sky-500/20 hover:border-sky-500/40 hover:text-sky-200 transition-all duration-150"
+                          >
+                            {r.label}
+                            <ExternalLink className="w-2.5 h-2.5 opacity-50" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
