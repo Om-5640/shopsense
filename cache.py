@@ -26,6 +26,7 @@ Public API (unchanged from old cache.py):
 import logging
 import os
 import json
+import threading
 import time
 import hashlib
 from pathlib import Path
@@ -85,6 +86,21 @@ def _redis_ttl(cache_type: str) -> int:
 
 # ── File-tier helpers ──────────────────────────────────────────────────────────
 
+# Per-path write locks prevent concurrent threads from racing on the same cache
+# file — critical on Windows where rename(src, dst) fails with WinError 32 when
+# dst is open by another thread.
+_write_locks: dict[str, threading.Lock] = {}
+_write_locks_mu = threading.Lock()
+
+
+def _write_lock(path: Path) -> threading.Lock:
+    key = str(path)
+    with _write_locks_mu:
+        if key not in _write_locks:
+            _write_locks[key] = threading.Lock()
+        return _write_locks[key]
+
+
 def _cache_path(cache_type: str, key: str) -> Path:
     h = hashlib.sha256(f"{cache_type}::{key}".encode()).hexdigest()[:16]
     return CACHE_DIR / f"{cache_type}_{h}.json"
@@ -115,16 +131,17 @@ def _file_get(cache_type: str, key: str):
 def _file_set(cache_type: str, key: str, value) -> None:
     path = _cache_path(cache_type, key)
     tmp = path.with_suffix(".tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"timestamp": time.time(), "value": value}, f)
-        tmp.replace(path)
-    except Exception as e:
-        _logger.warning("[cache] file write failed (non-fatal): %s", e)
+    with _write_lock(path):
         try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"timestamp": time.time(), "value": value}, f)
+            tmp.replace(path)
+        except Exception as e:
+            _logger.warning("[cache] file write failed (non-fatal): %s", e)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

@@ -514,12 +514,43 @@ def _create_pg_vector_index() -> None:
     Create HNSW cosine index on UserSignal.embedding.
     Must run outside a transaction (Postgres requirement for index methods).
     HNSW is preferred over IVFFlat: works on empty tables, no VACUUM/ANALYZE needed.
+
+    pgvector HNSW is limited to 2000 dimensions. With gemini-embedding-001 (3072 dims)
+    the index cannot be created — queries fall back to full table scan which is fast
+    enough for tables under ~100k rows.
     """
     conn = _pg_connect()
     prev_autocommit = getattr(conn, "autocommit", False)
     try:
         conn.autocommit = True
         cur = conn.cursor()
+
+        # Detect actual embedding dimension from the column definition before trying
+        # to create the index so we don't emit a noisy WARNING every startup.
+        cur.execute(
+            """
+            SELECT atttypmod
+            FROM pg_attribute
+            JOIN pg_class ON pg_attribute.attrelid = pg_class.oid
+            WHERE pg_class.relname = 'UserSignal'
+              AND pg_attribute.attname = 'embedding'
+              AND pg_attribute.attnum > 0
+            """
+        )
+        row = cur.fetchone()
+        # atttypmod for vector(N) is stored as N+1; -1 means unconstrained
+        actual_dims = (row[0] - 1) if (row and row[0] and row[0] > 0) else None
+
+        if actual_dims is not None and actual_dims > 2000:
+            _logger.info(
+                "[db] Skipping pgvector HNSW index: embedding is %d dims "
+                "(pgvector HNSW limit = 2000). Full-scan similarity in use — "
+                "fine for tables < 100k rows.",
+                actual_dims,
+            )
+            cur.close()
+            return
+
         cur.execute(
             'CREATE INDEX IF NOT EXISTS usersignal_embedding_idx '
             'ON "UserSignal" USING hnsw (embedding vector_cosine_ops)'
@@ -528,7 +559,7 @@ def _create_pg_vector_index() -> None:
         _logger.info("[db] pgvector HNSW index ensured on UserSignal.embedding")
     except Exception as exc:
         _logger.warning(
-            "[db] Could not create pgvector HNSW index (non-fatal — queries will still work via full scan): %s", exc
+            "[db] Could not create pgvector HNSW index (non-fatal — full scan in use): %s", exc
         )
     finally:
         conn.autocommit = prev_autocommit

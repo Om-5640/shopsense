@@ -295,14 +295,28 @@ Rules:
 - Use the EXACT product names as given
 - JSON only, no markdown, no explanation"""
 
-_MAX_COMMENTS_PER_BATCH = 40   # cap per-thread batch to bound prompt size
-_MAX_COMMENT_CHARS_IN_BATCH = 400  # truncate each comment in the batch for token efficiency
+_MAX_COMMENTS_PER_BATCH = 12   # keep batches small to avoid LLM truncation
+_MAX_COMMENT_CHARS_IN_BATCH = 300  # truncate each comment for token efficiency
+
+# Regex that extracts complete index-block pairs from a truncated batch response.
+# Matches "0": { ... } where the inner object only contains completed k:v pairs.
+_BATCH_ENTRY_RE = re.compile(
+    r'"(\d+)"\s*:\s*(\{[^{}]*\})',
+    re.DOTALL,
+)
+# Inner pair extractor for recovered blocks
+_INNER_PAIR_RE = re.compile(
+    r'"([^"]+)"\s*:\s*"(positive|negative|neutral)"',
+    re.IGNORECASE,
+)
 
 
 def _parse_sentiment_response_batch(raw: str) -> dict:
     """
     Parse the thread-level batch response: {"index": {"Product": "sentiment"}, ...}
-    Returns {} on failure — never raises.
+
+    Two-stage: full JSON parse first, then regex partial recovery for truncated responses.
+    Returns {} only on total failure — never raises.
     """
     cleaned = re.sub(r"^```(?:json|JSON)?\s*\n?", "", raw.strip(), flags=re.IGNORECASE | re.MULTILINE)
     cleaned = re.sub(r"\n?```\s*$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
@@ -312,6 +326,26 @@ def _parse_sentiment_response_batch(raw: str) -> dict:
             return result
     except json.JSONDecodeError:
         pass
+
+    # Partial recovery: extract every complete {"index": {...}} block even when
+    # the overall JSON is truncated (LLM hit max_tokens mid-response).
+    recovered: dict[str, dict] = {}
+    for m in _BATCH_ENTRY_RE.finditer(cleaned):
+        idx = m.group(1)
+        inner_pairs = {
+            p.group(1): p.group(2).lower()
+            for p in _INNER_PAIR_RE.finditer(m.group(2))
+        }
+        if inner_pairs:
+            recovered[idx] = inner_pairs
+
+    if recovered:
+        logger.debug(
+            "[sentiment_analyser] partial batch recovery: %d/%s index blocks rescued",
+            len(recovered), cleaned.count('"') // 4,
+        )
+        return recovered
+
     logger.warning("[sentiment_analyser] batch JSON parse failed, raw: %.200s", raw)
     return {}
 
@@ -369,42 +403,47 @@ def analyse_thread_comments(
     if not ambiguous_idx:
         return per_comment
 
-    # ── Stage 2: one batched LLM call for all ambiguous comments ─────────────
-    blocks: list[str] = []
-    for j, (text, products) in enumerate(zip(ambiguous_texts, ambiguous_products)):
-        products_str = ", ".join(products)
-        blocks.append(f"[{j}]\nProducts: {products_str}\n{text}")
-
-    prompt = (
-        "Classify purchase sentiment for each comment below.\n\n"
-        + "\n\n".join(blocks)
-        + '\n\nReturn JSON: {"0": {"Product": "positive|negative|neutral"}, ...}'
-    )
-
-    try:
+    # ── Stage 2: batched LLM calls (split into sub-batches to avoid truncation) ──
+    # _MAX_COMMENTS_PER_BATCH is already small (12), but we chunk here anyway so
+    # any future increase doesn't silently regress.
+    def _run_sub_batch(sub_idx: list[int], sub_texts: list[str], sub_prods: list[list[str]]) -> dict:
+        """Call LLM for one sub-batch. Returns parsed {str(j): {product: sentiment}}."""
+        blocks = []
+        for j, (text, products) in enumerate(zip(sub_texts, sub_prods)):
+            blocks.append(f"[{j}]\nProducts: {', '.join(products)}\n{text}")
+        prompt = (
+            "Classify purchase sentiment for each comment below.\n\n"
+            + "\n\n".join(blocks)
+            + '\n\nReturn JSON: {"0": {"Product": "positive|negative|neutral"}, ...}'
+        )
         raw = llm_client("sentiment_analyser", user_prompt=prompt, system=THREAD_BATCH_SYSTEM)
-        parsed = _parse_sentiment_response_batch(raw)
+        return _parse_sentiment_response_batch(raw)
 
-        for j, i in enumerate(ambiguous_idx):
-            batch_entry = parsed.get(str(j), {})
-            for product in ambiguous_products[j]:
-                entry = batch_entry.get(product)
-                if entry is None:
-                    # Case-insensitive fallback for LLMs that alter capitalisation
-                    for k, v in batch_entry.items():
-                        if k.lower() == product.lower():
-                            entry = v
-                            break
-                per_comment[i][product] = (
-                    _coerce_score(entry, product) if entry is not None else _NEUTRAL_FALLBACK
-                )
-
-    except Exception as exc:
-        logger.warning("[sentiment_analyser] thread batch LLM call failed: %s", exc)
-        for j, i in enumerate(ambiguous_idx):
-            for product in ambiguous_products[j]:
-                if product not in per_comment[i]:
-                    per_comment[i][product] = _NEUTRAL_FALLBACK
+    chunk = _MAX_COMMENTS_PER_BATCH
+    for start in range(0, len(ambiguous_idx), chunk):
+        sub_ambiguous_idx  = ambiguous_idx[start:start + chunk]
+        sub_ambiguous_texts = ambiguous_texts[start:start + chunk]
+        sub_ambiguous_prods = ambiguous_products[start:start + chunk]
+        try:
+            parsed = _run_sub_batch(sub_ambiguous_idx, sub_ambiguous_texts, sub_ambiguous_prods)
+            for j, i in enumerate(sub_ambiguous_idx):
+                batch_entry = parsed.get(str(j), {})
+                for product in sub_ambiguous_prods[j]:
+                    entry = batch_entry.get(product)
+                    if entry is None:
+                        for k, v in batch_entry.items():
+                            if k.lower() == product.lower():
+                                entry = v
+                                break
+                    per_comment[i][product] = (
+                        _coerce_score(entry, product) if entry is not None else _NEUTRAL_FALLBACK
+                    )
+        except Exception as exc:
+            logger.warning("[sentiment_analyser] sub-batch LLM call failed: %s", exc)
+            for i in sub_ambiguous_idx:
+                for product in sub_ambiguous_prods[sub_ambiguous_idx.index(i)]:
+                    if product not in per_comment[i]:
+                        per_comment[i][product] = _NEUTRAL_FALLBACK
 
     rule_count = sum(
         1 for i, (_, products) in enumerate(comment_product_pairs)
