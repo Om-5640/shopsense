@@ -861,16 +861,17 @@ def score_all_products(
                 progress_callback(i, n, p.get("name", "?"))
         return _finalize_scoring(scored, rubric)
 
-    # ---- hybrid mode: LLM for actual top 10, fast for rest ----
+    # ---- hybrid mode: LLM for actual top 15, fast for rest ----
     if SCORING_MODE == "hybrid":
         # Bug fix: pre-sort by fast score so LLM budget goes to the best candidates,
-        # not blindly to products[:10] which may not be the highest-scoring ones.
-        print(f"[scorer] HYBRID mode: fast pre-scoring {n} products to identify top 10")
+        # not blindly to products[:15] which may not be the highest-scoring ones.
+        _hybrid_top_n = min(15, n)  # Score up to 15 with LLM, rest with fast heuristic
+        print(f"[scorer] HYBRID mode: fast pre-scoring {n} products to identify top {_hybrid_top_n}")
         fast_all = [_fast_score(p, rubric, full_research_text) for p in products]
         sorted_by_fast = sorted(
             range(n), key=lambda i: fast_all[i]["weighted_total"], reverse=True
         )
-        llm_indices = set(sorted_by_fast[:10])
+        llm_indices = set(sorted_by_fast[:_hybrid_top_n])
         llm_products = [products[i] for i in range(n) if i in llm_indices]
         # Products NOT getting LLM treatment keep their fast scores
         fast_keep = [fast_all[i] for i in range(n) if i not in llm_indices]

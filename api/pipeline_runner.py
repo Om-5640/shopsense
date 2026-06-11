@@ -1152,6 +1152,40 @@ def _execute_pipeline(
         session.emit_log(
             f"[mention_pipeline] precise counts applied to {overwritten}/{len(products)} products"
         )
+
+        # Augment products list with any products the mention counter found that the
+        # main_analyzer missed (LLM fallback chains sometimes extract only 2-3 products
+        # from summaries that contain 15-20 distinct brand+model names).
+        _existing_lower = {p.get("name", "").lower() for p in products}
+        _augmented = 0
+        for _cname, _mr in mention_results.items():
+            if _cname.lower() not in _existing_lower and _mr.total_mentions >= 2:
+                products.append({
+                    "name": _mr.canonical_name,
+                    "mention_count": _mr.total_mentions,
+                    "distinct_recommenders": _mr.distinct_threads,
+                    "positive_mentions": _mr.positive,
+                    "negative_mentions": _mr.negative,
+                    "sentiment_score": round(_mr.sentiment_score, 3),
+                    "dominant_sentiment": _mr.dominant_sentiment,
+                    "sentiment_records": _mr.sentiment_records[:20],
+                    "recency_weighted_mentions": round(_mr.recency_weighted_mentions, 2),
+                    "sources": [],
+                    "praise": [],
+                    "complaints": [],
+                    "signal_strength": (
+                        "high" if _mr.total_mentions >= 5 else
+                        "medium" if _mr.total_mentions >= 3 else "low"
+                    ),
+                    "representative_quote": "",
+                })
+                _existing_lower.add(_cname.lower())
+                _augmented += 1
+        if _augmented:
+            session.emit_log(
+                f"[mention_pipeline] augmented product list with {_augmented} additional "
+                f"products found by mention counter (not extracted by main analyzer)"
+            )
     except Exception as mp_err:
         session.emit_log(f"[mention_pipeline] non-fatal: {mp_err}")
         # Products keep their LLM-estimated counts — pipeline continues unaffected

@@ -155,9 +155,11 @@ CREATE TABLE IF NOT EXISTS Search (
     profile     TEXT,
     rubric      TEXT,
     analysis    TEXT,
-    scoredProducts TEXT,
-    explanations   TEXT,
-    shoppingLinks  TEXT
+    scoredProducts       TEXT,
+    explanations         TEXT,
+    shoppingLinks        TEXT,
+    constraintViolations TEXT,
+    qualityMetadata      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ShareToken (
@@ -240,9 +242,11 @@ CREATE TABLE IF NOT EXISTS "Search" (
     profile     TEXT,
     rubric      TEXT,
     analysis    TEXT,
-    "scoredProducts" TEXT,
-    explanations     TEXT,
-    "shoppingLinks"  TEXT
+    "scoredProducts"       TEXT,
+    explanations           TEXT,
+    "shoppingLinks"        TEXT,
+    "constraintViolations" TEXT,
+    "qualityMetadata"      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS "Profile" (
@@ -336,6 +340,17 @@ def _m4_pg_resize_embedding_3072() -> None:
     pass
 
 
+def _m5_sqlite_add_result_columns() -> None:
+    """Add constraintViolations + qualityMetadata to Search table (SQLite)."""
+    conn = _sqlite_connect()
+    for col in ("constraintViolations TEXT", "qualityMetadata TEXT"):
+        try:
+            conn.execute(f"ALTER TABLE Search ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass  # Already exists
+    conn.commit()
+
+
 def _m3_sqlite_add_userid_to_search() -> None:
     conn = _sqlite_connect()
     try:
@@ -423,6 +438,15 @@ _MIGRATIONS: list[tuple[int, str, Optional[Callable], Optional[str]]] = [
         DROP INDEX IF EXISTS usersignal_embedding_idx;
         ALTER TABLE "UserSignal" DROP COLUMN IF EXISTS embedding;
         ALTER TABLE "UserSignal" ADD COLUMN embedding vector(3072);
+        """,
+    ),
+    (
+        5,
+        'Add constraintViolations + qualityMetadata columns to Search table',
+        _m5_sqlite_add_result_columns,
+        """
+        ALTER TABLE "Search" ADD COLUMN IF NOT EXISTS "constraintViolations" TEXT;
+        ALTER TABLE "Search" ADD COLUMN IF NOT EXISTS "qualityMetadata" TEXT;
         """,
     ),
 ]
@@ -568,7 +592,7 @@ def _cuid() -> str:
     return "c" + uuid.uuid4().hex[:24]
 
 
-_JSON_SEARCH_FIELDS = {"profile", "rubric", "analysis", "scoredProducts", "explanations", "shoppingLinks"}
+_JSON_SEARCH_FIELDS = {"profile", "rubric", "analysis", "scoredProducts", "explanations", "shoppingLinks", "constraintViolations", "qualityMetadata"}
 
 
 def _serialize(k: str, v: Any) -> Any:
@@ -653,7 +677,7 @@ def update_search(search_id: str, **fields) -> None:
             values = []
             for k, v in fields.items():
                 # Map camelCase to quoted column names
-                col = f'"{k}"' if k in ("scoredProducts", "shoppingLinks", "createdAt") else k
+                col = f'"{k}"' if k in ("scoredProducts", "shoppingLinks", "createdAt", "constraintViolations", "qualityMetadata") else k
                 parts.append(f"{col} = %s")
                 values.append(_serialize(k, v))
             values.append(search_id)

@@ -182,6 +182,13 @@ SEPARATION:
 - "products" = specific buyable items: "Buffy Breeze Comforter" (never generic types)
 - For each material, include 2-3 example_products drawn from the actual research
 - Never mix them in the same list
+
+COMPLETENESS — THIS IS CRITICAL:
+- Include EVERY distinct brand+model product mentioned across all threads and reviews
+- Do NOT stop at 2-3 products. If 15 products appear across the research, list all 15.
+- A product needs only 1 mention to be listed (mention_count=1, signal_strength="low")
+- Better to over-include than under-include — downstream filters will handle quality
+- Scan every thread summary's products_mentioned list and include each unique product
 """ + _SHARED_ANALYSIS_RULES
 
 
