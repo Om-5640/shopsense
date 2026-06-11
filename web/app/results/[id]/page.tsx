@@ -318,7 +318,7 @@ export default function ResultsPage() {
               }),
             }))
           } else {
-            fetchPrices(result.scoredProducts.slice(0, 8).map((p) => p.name), result.region)
+            fetchPrices(result.scoredProducts.slice(0, 15).map((p) => p.name), result.region)
               .then(({ prices }) => {
                 if (!mountedRef.current) return  // Bug 2 fix: skip stale update after unmount
                 _cachePricesSession(_priceKey, prices)   // Bug 4 fix: LRU eviction on quota error

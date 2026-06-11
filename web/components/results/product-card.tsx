@@ -109,7 +109,10 @@ const SPEC_FALLBACK: SpecStyle = { bg: 'bg-white/[0.05]', text: 'text-[#A1A1AA]'
 
 interface SpecRow { label: string; value: string; highlight: boolean }
 
-function extractSpecTable(criteriaScores: Record<string, { score: number; evidence?: string }>): SpecRow[] {
+function extractSpecTable(
+  criteriaScores: Record<string, { score: number; evidence?: string }>,
+  supplementText?: string,
+): SpecRow[] {
   const rows: SpecRow[] = []
   const seen = new Set<string>()
 
@@ -207,6 +210,54 @@ function extractSpecTable(criteriaScores: Record<string, { score: number; eviden
         seen.add(def.label)
       }
       break
+    }
+  }
+
+  // Supplement pass: scan praise/complaints/quote text for specs not found in evidence
+  if (supplementText) {
+    const supplementDefs: Array<{ label: string; extract: (ev: string) => string | null }> = [
+      {
+        label: 'Battery',
+        extract: (ev) => {
+          const m = ev.match(/(\d+(?:\.\d+)?)\s*(?:hrs?|hours?)\s*(?:battery|playtime|playback|life)?/i)
+              ?? ev.match(/battery.*?(\d+(?:\.\d+)?)\s*(?:hrs?|hours?)/i)
+          return m ? `${m[1]} hrs` : null
+        },
+      },
+      {
+        label: 'ANC',
+        extract: (ev) => {
+          if (/\b(anc|active noise cancel|noise cancel)\b/i.test(ev)) {
+            const m = ev.match(/(\d+)\s*dB/i)
+            return m ? `${m[1]} dB` : 'Yes'
+          }
+          return null
+        },
+      },
+      {
+        label: 'Codec',
+        extract: (ev) => {
+          for (const kw of ['LDAC', 'aptX HD', 'aptX Adaptive', 'aptX Lossless', 'aptX', 'LC3plus', 'LC3', 'AAC']) {
+            if (ev.includes(kw)) return kw
+          }
+          return null
+        },
+      },
+      {
+        label: 'IP Rating',
+        extract: (ev) => {
+          const m = ev.match(/\b(ip[x]?\s*\d+[a-z]?)\b/i)
+          return m ? m[1].replace(/\s+/g, '').toUpperCase() : null
+        },
+      },
+    ]
+    for (const def of supplementDefs) {
+      if (seen.has(def.label)) continue
+      const val = def.extract(supplementText)
+      if (val) {
+        rows.push({ label: def.label, value: val, highlight: false })
+        seen.add(def.label)
+      }
     }
   }
 
@@ -349,6 +400,59 @@ function getBestQuote(product: Product): CommentItem | null {
   return null
 }
 
+// ─── Product image with brand-initial fallback ────────────────────────────────
+
+const _BRAND_GRADIENTS = [
+  'from-violet-600 to-indigo-600',
+  'from-rose-600 to-pink-600',
+  'from-amber-600 to-orange-600',
+  'from-emerald-600 to-teal-600',
+  'from-sky-600 to-cyan-600',
+  'from-purple-600 to-violet-600',
+  'from-fuchsia-600 to-purple-600',
+  'from-teal-600 to-emerald-600',
+]
+
+function _brandGradient(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0
+  return _BRAND_GRADIENTS[Math.abs(hash) % _BRAND_GRADIENTS.length]
+}
+
+function _brandInitials(name: string): string {
+  const words = name.trim().split(/\s+/)
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  // Brand = first word, model letters from second word
+  return (words[0][0] + words[1][0]).toUpperCase()
+}
+
+function ProductImage({ name, imageUrl, rank }: { name: string; imageUrl?: string; rank: number }) {
+  const [imgFailed, setImgFailed] = useState(false)
+  const showFallback = !imageUrl || imgFailed
+
+  if (!showFallback) {
+    return (
+      <img
+        src={imageUrl} alt={name}
+        className="w-16 h-16 rounded-xl object-contain bg-white/[0.04] border border-white/[0.07] shrink-0"
+        onError={() => setImgFailed(true)}
+      />
+    )
+  }
+
+  return (
+    <div className={cn(
+      'w-16 h-16 rounded-xl flex items-center justify-center shrink-0 border select-none',
+      `bg-gradient-to-br ${_brandGradient(name)}`,
+      rank === 1 ? 'border-amber-500/30 shadow-md shadow-amber-500/20' : 'border-white/[0.08]',
+    )}>
+      <span className="text-[17px] font-black text-white/90 tracking-tight">
+        {_brandInitials(name)}
+      </span>
+    </div>
+  )
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export function ProductCard({ product, isSelected, onToggleSelect, onTogglePurchased }: ProductCardProps) {
@@ -374,7 +478,14 @@ export function ProductCard({ product, isSelected, onToggleSelect, onTogglePurch
     : null
 
   // ── Memoised derived data ─────────────────────────────────────────────────
-  const specs         = useMemo(() => extractSpecTable(product.criteriaScores), [product.criteriaScores])
+  const specs         = useMemo(() => {
+    const supplement = [
+      ...(product.praise ?? []),
+      ...(product.complaints ?? []).map(c => typeof c === 'string' ? c : c.text ?? ''),
+      product.representativeQuote ?? '',
+    ].join(' ')
+    return extractSpecTable(product.criteriaScores, supplement || undefined)
+  }, [product.criteriaScores, product.praise, product.complaints, product.representativeQuote])
   const allComments   = useMemo(() => buildAllComments(product), [product])
   const threadSources = useMemo(() => getThreadSources(product), [product])
   const bestQuote     = useMemo(() => getBestQuote(product), [product])
@@ -460,17 +571,7 @@ export function ProductCard({ product, isSelected, onToggleSelect, onTogglePurch
 
         {/* Image + name + price */}
         <div className="flex items-start gap-3.5">
-          {product.imageUrl ? (
-            <img
-              src={product.imageUrl} alt={product.name}
-              className="w-16 h-16 rounded-xl object-contain bg-white/[0.04] border border-white/[0.07] shrink-0"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-            />
-          ) : (
-            <div className="w-16 h-16 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center shrink-0">
-              <ImageOff className="w-5 h-5 text-[#52525B]" />
-            </div>
-          )}
+          <ProductImage name={product.name} imageUrl={product.imageUrl} rank={product.rank} />
           <div className="flex-1 min-w-0">
             <h3 className="text-[17px] font-bold text-[#FAFAFA] leading-tight mb-1.5">{product.name}</h3>
             <div className="flex items-baseline gap-2 flex-wrap">
