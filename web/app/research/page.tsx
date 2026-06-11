@@ -45,6 +45,7 @@ import {
 import { connectSSE } from '@/lib/sse'
 import { ResearchLiveFeed, type ActivityEntry, type ActivityAccent } from '@/components/research/research-live-feed'
 import { extractWeights } from '@/lib/rerank'
+import { cn } from '@/lib/utils'
 import dynamic from 'next/dynamic'
 
 // ─── Lazy-loaded heavy components (O3 — only rendered in specific phases) ─────
@@ -269,6 +270,7 @@ function ResearchPageContent() {
     Array<{ id: string; label: string; weight: number; rationale: string }>
   >([])
   const [capturedIntent, setCapturedIntent] = useState<UserIntent | undefined>(undefined)
+  const [includeReviews, setIncludeReviews] = useState(true)
 
   // Pipeline stages
   const [stages, setStages] = useState<PipelineStage[]>(INIT_STAGES)
@@ -711,6 +713,7 @@ function ResearchPageContent() {
         rubric: adjustedRubric,
         qa_history: qaHistory,
         primary_noun: primaryNoun || category.split('/').pop() || '',
+        no_reviews: !includeReviews,
       })
       if (deduplicated) {
         toast.info('Joining existing research session…', {
@@ -1234,14 +1237,45 @@ function ResearchPageContent() {
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -20 }}
           transition={{ duration: 0.2 }}
-          className="h-[calc(100vh-180px)]"
+          className="h-[calc(100vh-180px)] flex flex-col"
         >
-          <RubricConfirmation
-            criteria={rubricCriteria}
-            onWeightChange={handleRubricWeightChange}
-            onApprove={handleRubricApprove}
-            intent={capturedIntent}
-          />
+          {/* Review sites toggle — shown above rubric confirmation */}
+          <div className="mb-3 px-1">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <button
+                type="button"
+                onClick={() => setIncludeReviews(v => !v)}
+                className={cn(
+                  'relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0',
+                  includeReviews ? 'bg-violet-600' : 'bg-white/[0.12]',
+                )}
+                aria-checked={includeReviews}
+                role="switch"
+              >
+                <span className={cn(
+                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                  includeReviews ? 'translate-x-4' : 'translate-x-0',
+                )} />
+              </button>
+              <div>
+                <p className="text-sm font-medium text-[#FAFAFA]">Include expert review sites</p>
+                <p className="text-xs text-[#71717A]">
+                  {includeReviews
+                    ? 'Expert reviews (rtings.com, soundguys.com…) will be scraped for specs & ratings'
+                    : 'Reddit-only research — faster results, no review site data'}
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div className="flex-1 overflow-hidden">
+            <RubricConfirmation
+              criteria={rubricCriteria}
+              onWeightChange={handleRubricWeightChange}
+              onApprove={handleRubricApprove}
+              intent={capturedIntent}
+            />
+          </div>
         </motion.div>
       )
     }

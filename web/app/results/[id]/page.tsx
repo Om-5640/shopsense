@@ -495,7 +495,7 @@ export default function ResultsPage() {
       .slice(0, 4)
       .map(([name, prods]) => ({ name, products: prods }))
 
-    // Signal: one dot per product, sentiment from signal_strength + cross-subreddit
+    // Signal: one entry per product, with richer data for the redesigned Signal tab
     const communitySignal = products.map((p, i) => {
       let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral'
       if (p.signal_strength === 'high' || p.cross_subreddit_signal?.signal === 'consistent') {
@@ -503,7 +503,22 @@ export default function ResultsPage() {
       } else if (p.signal_strength === 'low') {
         sentiment = 'negative'
       }
-      return { threadId: String(i), sentiment }
+      const pos = (p as { positive_mentions?: number }).positive_mentions ?? 0
+      const neg = (p as { negative_mentions?: number }).negative_mentions ?? 0
+      const total = pos + neg
+      const recommendPct = total > 0 ? Math.round((pos / total) * 100) : null
+      const sources = ((p as { sources?: string[] }).sources ?? [])
+        .filter((s: string) => s.startsWith('reddit:'))
+        .map((s: string) => s.slice(7))
+      return {
+        threadId: p.name,
+        sentiment,
+        productName: p.name,
+        rank: i + 1,
+        mentionCount: (p as { mention_count?: number }).mention_count ?? 0,
+        recommendPct,
+        subreddits: sources.slice(0, 3),
+      }
     })
 
     // Avoid: low signal or very low score

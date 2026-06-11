@@ -30,9 +30,19 @@ import {
 import { cn } from '@/lib/utils'
 import type { ReviewIntelligence, ReviewSource, ReviewConflict } from '@/lib/types'
 
+interface CommunitySignalEntry {
+  threadId: string
+  sentiment: 'positive' | 'neutral' | 'negative'
+  productName?: string
+  rank?: number
+  mentionCount?: number
+  recommendPct?: number | null
+  subreddits?: string[]
+}
+
 interface InsightsPanelProps {
   categories: Array<{ name: string; products: string[] }>
-  communitySignal: Array<{ threadId: string; sentiment: 'positive' | 'neutral' | 'negative' }>
+  communitySignal: CommunitySignalEntry[]
   toAvoid: Array<{ product: string; reason: string }>
   warnings: Array<{ product: string; warning: string }>
   reviewIntelligence?: ReviewIntelligence | null
@@ -351,14 +361,6 @@ export function InsightsPanel({
   warnings,
   reviewIntelligence,
 }: InsightsPanelProps) {
-  const getSentimentColor = (sentiment: 'positive' | 'neutral' | 'negative') => {
-    switch (sentiment) {
-      case 'positive': return 'bg-emerald-500'
-      case 'neutral': return 'bg-amber-500'
-      case 'negative': return 'bg-rose-500'
-    }
-  }
-
   const hasReviewData = reviewIntelligence && (reviewIntelligence.stats?.total ?? 0) > 0
 
   return (
@@ -428,66 +430,112 @@ export function InsightsPanel({
           </div>
         </TabsContent>
 
-        <TabsContent value="signal" className="flex-1 mt-0">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles className="w-4 h-4 text-violet-400" />
-              <span className="text-sm font-medium text-[#FAFAFA]">Reddit community sentiment</span>
-            </div>
-            <p className="text-xs text-[#71717A] mb-3">
-              How Reddit users feel about each product in the results
-            </p>
+        <TabsContent value="signal" className="flex-1 mt-0 space-y-4">
+          {/* Summary stats */}
+          {(() => {
+            const pos = communitySignal.filter(s => s.sentiment === 'positive').length
+            const neu = communitySignal.filter(s => s.sentiment === 'neutral').length
+            const neg = communitySignal.filter(s => s.sentiment === 'negative').length
+            const total = communitySignal.length
+            const posRate = total > 0 ? Math.round((pos / total) * 100) : 0
+            const totalThreads = communitySignal.reduce((acc, s) => acc + (s.mentionCount ?? 0), 0)
+            return (
+              <div className="space-y-3">
+                {/* Headline */}
+                <div>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                    <span className="text-sm font-semibold text-[#FAFAFA]">Community Intelligence</span>
+                  </div>
+                  <p className="text-[11px] text-[#71717A]">
+                    {totalThreads > 0
+                      ? `${totalThreads} Reddit threads across ${total} product${total !== 1 ? 's' : ''}`
+                      : `${total} product${total !== 1 ? 's' : ''} analyzed`}
+                  </p>
+                </div>
 
-            {(() => {
-              const pos = communitySignal.filter(s => s.sentiment === 'positive').length
-              const neu = communitySignal.filter(s => s.sentiment === 'neutral').length
-              const neg = communitySignal.filter(s => s.sentiment === 'negative').length
+                {/* Overall consensus bar */}
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] text-[#71717A] uppercase tracking-wide">Overall consensus</span>
+                    <span className={cn(
+                      'text-sm font-bold tabular-nums',
+                      posRate >= 70 ? 'text-emerald-400' : posRate >= 40 ? 'text-amber-400' : 'text-rose-400',
+                    )}>{posRate}% positive</span>
+                  </div>
+                  <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden">
+                    <motion.div
+                      className={cn(
+                        'h-full rounded-full',
+                        posRate >= 70 ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                          : posRate >= 40 ? 'bg-gradient-to-r from-amber-500 to-orange-400'
+                          : 'bg-gradient-to-r from-rose-500 to-red-400',
+                      )}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${posRate}%` }}
+                      transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 text-[10px]">
+                    <span className="flex items-center gap-1 text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{pos} recommended</span>
+                    <span className="flex items-center gap-1 text-[#71717A]"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />{neu} mixed</span>
+                    <span className="flex items-center gap-1 text-rose-400"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />{neg} weak</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Per-product sentiment bars */}
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-wide text-[#52525B] font-semibold">Per product</p>
+            {communitySignal.map((signal, index) => {
+              const pct = signal.recommendPct
+              const name = signal.productName || signal.threadId
+              const barCls = signal.sentiment === 'positive'
+                ? 'bg-emerald-500' : signal.sentiment === 'negative'
+                ? 'bg-rose-500' : 'bg-amber-500'
+              const textCls = signal.sentiment === 'positive'
+                ? 'text-emerald-400' : signal.sentiment === 'negative'
+                ? 'text-rose-400' : 'text-amber-400'
               return (
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                  <div className="text-center p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                    <div className="text-lg font-bold text-emerald-400">{pos}</div>
-                    <div className="text-[10px] text-[#71717A] mt-0.5">Highly recommended</div>
+                <div key={index} className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.08] transition-colors">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {signal.rank && (
+                        <span className="text-[9px] text-[#52525B] font-mono shrink-0">#{signal.rank}</span>
+                      )}
+                      <span className="text-xs text-[#FAFAFA] font-medium truncate">{name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {pct !== null && pct !== undefined && (
+                        <span className={cn('text-xs font-bold tabular-nums', textCls)}>{pct}%</span>
+                      )}
+                      {(signal.mentionCount ?? 0) > 0 && (
+                        <span className="text-[9px] text-[#52525B]">{signal.mentionCount}t</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                    <div className="text-lg font-bold text-amber-400">{neu}</div>
-                    <div className="text-[10px] text-[#71717A] mt-0.5">Mixed opinions</div>
-                  </div>
-                  <div className="text-center p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
-                    <div className="text-lg font-bold text-rose-400">{neg}</div>
-                    <div className="text-[10px] text-[#71717A] mt-0.5">Weak signal</div>
-                  </div>
+                  {pct !== null && pct !== undefined ? (
+                    <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
+                      <motion.div
+                        className={cn('h-full rounded-full', barCls)}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.6, delay: index * 0.04, ease: 'easeOut' }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="h-1 bg-white/[0.04] rounded-full" />
+                  )}
+                  {signal.subreddits && signal.subreddits.length > 0 && (
+                    <p className="text-[9px] text-[#3F3F46] mt-1">
+                      {signal.subreddits.map(s => `r/${s}`).join(' · ')}
+                    </p>
+                  )}
                 </div>
               )
-            })()}
-
-            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <p className="text-[10px] text-[#52525B] mb-2 uppercase tracking-wide">
-                One dot per product
-              </p>
-              <TooltipProvider>
-                <div className="flex flex-wrap gap-1.5">
-                  {communitySignal.map((signal, index) => (
-                    <Tooltip key={index}>
-                      <TooltipTrigger asChild>
-                        <motion.div
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ delay: index * 0.04 }}
-                          className={`w-3.5 h-3.5 rounded-full cursor-default ${getSentimentColor(signal.sentiment)}`}
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent side="top">
-                        <p className="text-xs capitalize">
-                          {signal.sentiment === 'positive' ? 'Highly recommended on Reddit'
-                            : signal.sentiment === 'negative' ? 'Weak or negative signal'
-                            : 'Mixed community opinions'}
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ))}
-                </div>
-              </TooltipProvider>
-            </div>
+            })}
           </div>
         </TabsContent>
 

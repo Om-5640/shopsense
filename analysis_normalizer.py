@@ -169,10 +169,21 @@ def _normalize_complaint(item) -> dict | None:
 
 def _canonical_key(name: str) -> str:
     """
-    Bug 5 & 6: stable dedup key — strip all punctuation/spaces, lowercase.
+    Primary dedup key: strip all punctuation/spaces, lowercase.
     "Sony WF-1000XM5", "Sony WF1000XM5", "SONY WF-1000XM5" → "sonywf1000xm5"
     """
     return re.sub(r"[\W_]", "", name.lower())
+
+
+def _token_set_key(name: str) -> str:
+    """
+    Secondary dedup key: sorted unique word tokens, joined.
+    Catches word-order variants: "Realme Buds Air 7" = "Realme Air Buds 7"
+    → sorted tokens: ["7","air","buds","realme"] → "7|air|buds|realme"
+    Returns "" for single-token names (avoids false matches).
+    """
+    tokens = sorted(set(re.findall(r'[a-z0-9]+', name.lower())))
+    return "|".join(tokens) if len(tokens) >= 2 else ""
 
 
 _SIG_RANK = {"high": 2, "medium": 1, "low": 0}
@@ -223,22 +234,40 @@ def _merge_products(base: dict, dup: dict) -> dict:
 
 def _dedup_products(products: list[dict]) -> list[dict]:
     """
-    Bug 5 & 6: deduplicate products whose canonical names are equivalent.
-    First occurrence wins; subsequent occurrences are merged into it so counts
-    and lists are accumulated rather than discarded.
+    Deduplicate products using two complementary keys:
+    1. Primary (exact): strips all punctuation — handles "WF-1000XM5" == "WF1000XM5"
+    2. Token-set: sorted word tokens — handles "Buds Air 7" == "Air Buds 7"
+    First occurrence wins; duplicates are merged so counts accumulate.
     """
-    seen: dict[str, int] = {}   # canonical_key → index in result
+    seen_exact: dict[str, int] = {}   # canonical_key → index
+    seen_tokens: dict[str, int] = {}  # token_set_key → index
     result: list[dict] = []
     for p in products:
-        key = _canonical_key(p.get("name", ""))
-        if not key:
-            result.append(p)
+        name = p.get("name", "")
+        exact = _canonical_key(name)
+        tokens = _token_set_key(name)
+
+        # 1. Exact key match
+        if exact and exact in seen_exact:
+            result[seen_exact[exact]] = _merge_products(result[seen_exact[exact]], p)
             continue
-        if key in seen:
-            result[seen[key]] = _merge_products(result[seen[key]], p)
-        else:
-            seen[key] = len(result)
-            result.append(p)
+
+        # 2. Token-set match (word-order variant)
+        if tokens and tokens in seen_tokens:
+            idx = seen_tokens[tokens]
+            result[idx] = _merge_products(result[idx], p)
+            # Register exact key for faster future lookups
+            if exact:
+                seen_exact[exact] = idx
+            continue
+
+        # New product
+        idx = len(result)
+        result.append(p)
+        if exact:
+            seen_exact[exact] = idx
+        if tokens:
+            seen_tokens[tokens] = idx
     return result
 
 

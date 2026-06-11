@@ -529,6 +529,84 @@ def _dedup_research_paragraphs(text: str) -> str:
     return "\n\n".join(unique)
 
 
+# ── Comment quality filter ────────────────────────────────────────────────────
+# Filters out low-value "I will buy" comments; retains feature-specific content.
+
+_INTENT_PHRASES_RE = _re.compile(
+    r'\b(will buy|going to buy|planning to buy|about to buy|just ordered|gonna buy'
+    r'|want to buy|thinking to buy|planning on buying|ordering soon|considering buying'
+    r'|thinking of buying|looking to buy|might buy|should i buy|is it worth buying)\b',
+    _re.IGNORECASE,
+)
+
+_QUALITY_TERMS_RE = _re.compile(
+    r'\b(anc|noise cancel|noise reduc|battery|hours|hrs|sound quality|call quality'
+    r'|driver|codec|ldac|aptx|bluetooth|connectivity|ipx|bass|treble|mids|soundstage'
+    r'|lows|highs|aac|transparency|latency|range|build quality|comfort|fit|isolation'
+    r'|seal|worth|recommend|better than|compared|vs\.|versus|beats|excellent|amazing'
+    r'|great|terrible|disappointed|surprised|impressive|best|worst|overrated|underrated'
+    r'|value|budget|premium|expensive|cheap|price|rupees|dollars|pounds)\b',
+    _re.IGNORECASE,
+)
+
+def _comment_quality_score(text: str) -> float:
+    """Score a comment 0–1. Intent-to-buy → 0.05; feature-rich comments → 0.8+."""
+    if not text or len(text) < 15:
+        return 0.0
+    # Strong penalty for pure intent-to-buy
+    if _INTENT_PHRASES_RE.search(text) and len(text) < 120:
+        return 0.05
+    quality_hits = len(_QUALITY_TERMS_RE.findall(text))
+    length_bonus = min(len(text) / 200, 1.0) * 0.35
+    return min(quality_hits * 0.15 + length_bonus + 0.10, 1.0)
+
+
+def _filter_thread_comments(threads: list[dict]) -> list[dict]:
+    """Re-rank each thread's discussions by quality score; drop pure intent-to-buy."""
+    for thread in threads:
+        discussions = thread.get("discussions", [])
+        if not discussions:
+            continue
+        scored = sorted(
+            [(d, _comment_quality_score(d.get("text", ""))) for d in discussions],
+            key=lambda x: -x[1],
+        )
+        # Keep up to 20 comments, drop anything below quality threshold 0.05
+        thread["discussions"] = [d for d, s in scored if s >= 0.05][:20]
+    return threads
+
+
+# ── Cross-category rejection map ──────────────────────────────────────────────
+# Maps a search noun to keywords that mark a product as WRONG category.
+# E.g. searching "earbuds" → any product name containing "headphone" is excluded.
+
+_CROSS_CATEGORY_REJECT: dict[str, list[str]] = {
+    "earbuds": ["headphone", "over-ear", "on-ear"],
+    "earbud":  ["headphone", "over-ear", "on-ear"],
+    "tws":     ["headphone", "over-ear", "on-ear"],
+    "earphone":["headphone", "over-ear", "on-ear"],
+    "headphone":["earbuds", "earbud", "tws"],
+    "headphones":["earbuds", "earbud", "tws"],
+    "speaker": ["earbuds", "headphone", "earphone"],
+    "speakers":["earbuds", "headphone", "earphone"],
+    "laptop":  ["phone", "smartwatch", "tablet"],
+    "phone":   ["laptop", "smartwatch"],
+    "smartwatch":["phone", "laptop", "earbuds"],
+    "tablet":  ["phone", "laptop", "smartwatch"],
+}
+
+
+def _is_wrong_category(product_name: str, noun_lower: str) -> bool:
+    """Return True if product_name is EXPLICITLY in a conflicting category."""
+    name_lc = product_name.lower()
+    for noun_kw, reject_kws in _CROSS_CATEGORY_REJECT.items():
+        if noun_kw in noun_lower:
+            for rk in reject_kws:
+                if _re.search(r'\b' + _re.escape(rk) + r'\b', name_lc):
+                    return True
+    return False
+
+
 def _build_research_text(analysis: dict, sources: list) -> str:
     """Reconstruct the full research context for the scorer (mirrors run.py)."""
     parts = [f"=== COMMUNITY CONSENSUS ===\n{analysis.get('summary', '')}\n"]
@@ -985,6 +1063,9 @@ def _execute_pipeline(
         "total": len(reddit_threads),
     })
 
+    # Filter low-quality (intent-to-buy) comments before summarization
+    reddit_threads = _filter_thread_comments(reddit_threads)
+
     # Dedup near-identical threads before summarization to avoid wasting API budget
     deduped_threads = _dedup_threads(reddit_threads)
     _dedup_removed = len(reddit_threads) - len(deduped_threads)
@@ -1035,12 +1116,10 @@ def _execute_pipeline(
     session.stats["stage_timings"]["analyze"] = _stage_timings["analyze"]
     session.stats["llm_calls_estimated"] += 1  # one main_analyzer call
 
-    # W-03: Detect and filter products that don't match primary_noun.
-    # Fixes from audit:
-    #   - Lower minimum word length to 2 so "AC", "TV", "PC" are not skipped.
-    #   - Use word-boundary regex instead of substring containment to reduce false positives.
-    #   - Actually filter (not just log) when confidence is high: <40% of products flagged,
-    #     at least 3 survivors, and noun is specific enough (≥3 chars).
+    # W-03: Category relevance filtering.
+    # Step A — always drop products explicitly in a conflicting category
+    # (e.g. "headphones" when searching "earbuds").
+    # Step B — soft filter on name/noun mismatch when confident.
     _noun_lower = (primary_noun or "").strip().lower()
     _w03_stop = {'best', 'good', 'most', 'with', 'that', 'this', 'from', 'the', 'and', 'for'}
     _noun_words = {w for w in _re.findall(r'[a-z0-9]{2,}', _noun_lower) if w not in _w03_stop}
@@ -1050,6 +1129,16 @@ def _execute_pipeline(
         nl = name.lower()
         return any(p.search(nl) for p in _noun_pats)
 
+    if _noun_lower and products:
+        # Step A: hard remove cross-category products regardless of count
+        _wrong_cat = [p for p in products if _is_wrong_category(p.get("name", ""), _noun_lower)]
+        if _wrong_cat:
+            products = [p for p in products if not _is_wrong_category(p.get("name", ""), _noun_lower)]
+            session.emit_log(
+                f"[W03] removed {len(_wrong_cat)} wrong-category products: "
+                f"{[p.get('name', '?') for p in _wrong_cat[:4]]}"
+            )
+
     if _noun_pats and len(products) > 3:
         _off = [p for p in products if not _name_matches_noun(p.get("name", ""))]
         if _off and len(_off) < len(products):
@@ -1057,9 +1146,9 @@ def _execute_pipeline(
                 f"[W03] {len(_off)} products may be off-category for '{primary_noun}': "
                 f"{[p.get('name', '?') for p in _off[:3]]}"
             )
-            # Filter only when confident: <40% flagged, ≥3 survivors, noun specific enough
+            # Step B: soft filter — raised threshold to 60% (was 40%)
             _on = [p for p in products if _name_matches_noun(p.get("name", ""))]
-            if len(_on) >= 3 and len(_off) / len(products) < 0.4 and len(_noun_lower) >= 3:
+            if len(_on) >= 3 and len(_off) / len(products) < 0.60 and len(_noun_lower) >= 3:
                 products = _on
                 session.emit_log(f"[W03] filtered to {len(products)} on-category products")
     session.emit("stage_done", {
