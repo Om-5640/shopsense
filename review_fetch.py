@@ -299,8 +299,8 @@ def _fetch_via_jina(url: str) -> str | None:
         client_timeout = 40
         server_timeout = "30"   # X-Timeout sent to Jina
     else:
-        client_timeout = 25
-        server_timeout = "15"
+        client_timeout = 18
+        server_timeout = "12"
 
     headers = {**_JINA_HEADERS, "X-Timeout": server_timeout}
     try:
@@ -339,7 +339,7 @@ def fetch_review_page(url: str) -> dict | None:
     html = ""
     if raw_html_ok:
         try:
-            resp = requests.get(url, headers=_scraper_headers(), timeout=15)
+            resp = requests.get(url, headers=_scraper_headers(), timeout=8)
             if resp.status_code == 403 or resp.status_code == 401:
                 print(f"[scrape] {resp.status_code} for {url}, trying Jina Reader...")
                 raw_html_ok = False

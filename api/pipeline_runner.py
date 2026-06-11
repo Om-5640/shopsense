@@ -886,7 +886,37 @@ def _execute_pipeline(
             pass
         return
 
-    # ---- Stage 1: Reddit fetch ----
+    # ---- Stage 2 (pre-fire): launch review fetch NOW, concurrent with Reddit ----
+    # fetch_all_reviews only needs the query string — it is completely independent of
+    # Reddit data.  Running both stages in parallel cuts total fetch time from
+    # (reddit_time + review_time) down to max(reddit_time, review_time), typically
+    # saving 25–40 s on a cold-cache run.
+    _review_pages_buf: list = []
+    _review_done_evt = threading.Event()
+    _t_review_start = time.time()
+
+    def _run_review_fetch() -> None:
+        try:
+            if not session._cancelled:
+                pages = fetch_all_reviews(query, limit=options.get("reviews", 8))
+                _review_pages_buf.extend(pages)
+        except Exception as _exc:
+            _logger.warning("[pipeline] review fetch error (non-fatal): %s", _exc)
+        finally:
+            _review_done_evt.set()
+
+    if not no_reviews:
+        session.emit("stage_start", {
+            "stage": "review_fetch",
+            "label": "Scraping Expert Reviews",
+        })
+        threading.Thread(
+            target=_run_review_fetch,
+            daemon=True,
+            name=f"review-{session.search_id[:8]}",
+        ).start()
+
+    # ---- Stage 1: Reddit fetch (runs concurrently with review fetch above) ----
     _t0 = time.time()
     session.emit("stage_start", {
         "stage": "reddit_fetch",
@@ -919,16 +949,13 @@ def _execute_pipeline(
             session.emit_log(f"[sources] {json.dumps(_top)}")
     _check_cancelled(session)
 
-    # ---- Stage 2: Review fetch ----
+    # ---- Stage 2: Collect review results (thread is usually done by now) ----
     review_pages: list = []
     if not no_reviews:
-        _t0 = time.time()
-        session.emit("stage_start", {
-            "stage": "review_fetch",
-            "label": "Scraping Expert Reviews",
-        })
-        review_pages = fetch_all_reviews(query, limit=options.get("reviews", 8))
-        _stage_timings["review_fetch"] = round(time.time() - _t0, 1)
+        _review_done_evt.wait()  # near-instant when review finishes before Reddit does
+        _stage_timings["review_fetch"] = round(time.time() - _t_review_start, 1)
+        review_pages = list(_review_pages_buf)
+        session.stats["stage_timings"]["review_fetch"] = _stage_timings["review_fetch"]
         session.emit("stage_done", {
             "stage": "review_fetch",
             "count": len(review_pages),
