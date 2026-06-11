@@ -43,6 +43,7 @@ import {
   getOrCreateSessionId,
 } from '@/lib/api'
 import { connectSSE } from '@/lib/sse'
+import { ResearchLiveFeed, type ActivityEntry, type ActivityAccent } from '@/components/research/research-live-feed'
 import { extractWeights } from '@/lib/rerank'
 import dynamic from 'next/dynamic'
 
@@ -61,14 +62,6 @@ const InterviewChat = dynamic(
 const RubricConfirmation = dynamic(
   () => import('@/components/research/rubric-confirmation').then(m => ({ default: m.RubricConfirmation })),
   { ssr: false, loading: _DynSpinner },
-)
-const AnalyzerAnimation = dynamic(
-  () => import('@/components/research/analyzer-animation').then(m => ({ default: m.AnalyzerAnimation })),
-  { ssr: false },
-)
-const RedditFetchGrid = dynamic(
-  () => import('@/components/research/reddit-fetch-grid').then(m => ({ default: m.RedditFetchGrid })),
-  { ssr: false },
 )
 
 // ─── Pipeline stage config ────────────────────────────────────────────────────
@@ -94,6 +87,18 @@ const SSE_TO_SIDEBAR: Record<string, string> = {
   mention_counting: 'analyzing',  // Aho-Corasick mention pipeline runs after main analyzer
   scoring:          'scoring',
   explanations:     'scoring',
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  reddit_fetch:      'Reddit Research',
+  review_fetch:      'Expert Reviews',
+  summarize:         'Thread Summarization',
+  analyze:           'Main Analysis',
+  cross_validate:    'Cross-validation',
+  mention_counting:  'Mention Analysis',
+  constraint_filter: 'Constraint Filter',
+  scoring:           'Product Scoring',
+  explanations:      'Writing Explanations',
 }
 
 // ─── Phase type ───────────────────────────────────────────────────────────────
@@ -267,9 +272,6 @@ function ResearchPageContent() {
 
   // Pipeline stages
   const [stages, setStages] = useState<PipelineStage[]>(INIT_STAGES)
-  const [redditThreads, setRedditThreads] = useState<
-    Array<{ id: string; subreddit: string; title: string; score: number; status: 'pending' | 'fetching' | 'complete'; commentCount?: number }>
-  >([])
 
   const [activeSearchId, setActiveSearchId] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
@@ -291,9 +293,15 @@ function ResearchPageContent() {
   // Bug 1: reconnection indicator (ref avoids stale closure in SSE callbacks)
   const reconnectingRef = useRef(false)
   const [reconnecting, setReconnecting] = useState(false)
-  // O2: batch rapid SSE reddit-grid progress events to reduce re-renders
-  const redditBatchRef = useRef<{ current: number; total: number } | null>(null)
-  const redditTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Live feed state
+  const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([])
+  const [liveStageLabel, setLiveStageLabel] = useState('Initializing…')
+  const [liveSubreddits, setLiveSubreddits] = useState<Array<{ name: string; count: number }>>([])
+  const [liveReviewDomains, setLiveReviewDomains] = useState<string[]>([])
+  const [liveProgressItem, setLiveProgressItem] = useState('')
+  const [liveProgressFrac, setLiveProgressFrac] = useState(0)
+  const elapsedRef = useRef(0)
+  const activityCounterRef = useRef(0)
 
   // UI-02: Reset the init guard when the pathname changes (user navigated away and back).
   // The guard exists to stop React StrictMode double-fires (same mount), but it must not
@@ -310,16 +318,20 @@ function ResearchPageContent() {
 
   // Elapsed timer
   useEffect(() => {
-    timerRef.current = setInterval(() => setElapsedTime((t) => t + 1), 1000)
+    timerRef.current = setInterval(() => setElapsedTime((t) => { elapsedRef.current = t + 1; return t + 1 }), 1000)
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [])
 
-  // Cleanup SSE and debounce timers on unmount
+  // Cleanup SSE on unmount
   useEffect(() => {
-    return () => {
-      sseCleanupRef.current?.()
-      if (redditTimerRef.current) clearTimeout(redditTimerRef.current)
-    }
+    return () => { sseCleanupRef.current?.() }
+  }, [])
+
+  const addActivity = useCallback((text: string, accent: ActivityAccent = 'dim') => {
+    setLiveActivity((prev) => {
+      const entry: ActivityEntry = { id: activityCounterRef.current++, secs: elapsedRef.current, text, accent }
+      return [...prev.slice(-99), entry]
+    })
   }, [])
 
   // ── Update a sidebar stage status ──────────────────────────────────────────
@@ -347,7 +359,6 @@ function ResearchPageContent() {
     const timer = setInterval(() => {
       if (Date.now() - lastEventRef.current > WATCHDOG_MS) {
         sseCleanupRef.current?.()
-        if (redditTimerRef.current) { clearTimeout(redditTimerRef.current); redditTimerRef.current = null }
         setPhase('error')
         setError('Research is taking too long — the pipeline may have stalled. Try again or check the server.')
         toast.error('Research timed out', { duration: 8000 })
@@ -715,47 +726,53 @@ function ResearchPageContent() {
           lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'running')
-          if (sid === 'reddit') {
-            setRedditThreads(
-              Array.from({ length: 9 }, (_, i) => ({
-                id: String(i + 1),
-                subreddit: 'loading…',
-                title: 'Fetching thread…',
-                score: 0,
-                status: i < 3 ? 'fetching' : 'pending',
-              })),
-            )
-          }
+          const label = STAGE_LABELS[stage] ?? stage
+          setLiveStageLabel(label)
+          setLiveProgressItem('')
+          setLiveProgressFrac(0)
+          addActivity(`${label}…`, 'amber')
         },
         onStageDone(stage, count) {
           lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'complete', count !== undefined ? `${count} found` : undefined)
-          if (sid === 'reddit') {
-            setRedditThreads((prev) => prev.map((t) => ({ ...t, status: 'complete' })))
-          }
+          const label = STAGE_LABELS[stage] ?? stage
+          addActivity(count !== undefined ? `${label}: ${count} found` : `${label} complete`, 'emerald')
         },
-        onProgress(stage, current, total) {
+        onProgress(stage, current, total, detail) {
           lastEventRef.current = Date.now()
           const sid = SSE_TO_SIDEBAR[stage] ?? stage
           updateStage(sid, 'running', total ? `${current}/${total}` : undefined)
-          if (sid === 'reddit' || stage === 'reddit_fetch') {
-            // O2: debounce grid updates — batch rapid SSE progress events into one render per 150ms
-            redditBatchRef.current = { current, total: total ?? 0 }
-            if (!redditTimerRef.current) {
-              redditTimerRef.current = setTimeout(() => {
-                redditTimerRef.current = null
-                const batch = redditBatchRef.current
-                if (batch) {
-                  setRedditThreads((prev) =>
-                    prev.map((t, i) => ({
-                      ...t,
-                      status: i < batch.current ? 'complete' : i === batch.current ? 'fetching' : 'pending',
-                    })),
-                  )
-                }
-              }, 150)
-            }
+          if (detail) setLiveProgressItem(detail)
+          if (total && total > 0) setLiveProgressFrac(current / total)
+        },
+        onLog(msg) {
+          lastEventRef.current = Date.now()
+          if (msg.startsWith('[sources] ')) {
+            try {
+              const data = JSON.parse(msg.slice('[sources] '.length)) as Array<[string, number]>
+              const subs = data.map(([name, count]) => ({ name, count }))
+              setLiveSubreddits(subs)
+              const preview = subs.slice(0, 3).map((s) => `r/${s.name}`).join(', ')
+              addActivity(
+                `${subs.length} subreddits: ${preview}${subs.length > 3 ? ` +${subs.length - 3} more` : ''}`,
+                'orange',
+              )
+            } catch { /* ignore */ }
+          } else if (msg.startsWith('[reviews] ')) {
+            try {
+              const domains = JSON.parse(msg.slice('[reviews] '.length)) as string[]
+              setLiveReviewDomains(domains)
+              const preview = domains.slice(0, 3).join(', ')
+              addActivity(
+                `${domains.length} review sites: ${preview}${domains.length > 3 ? ` +${domains.length - 3} more` : ''}`,
+                'cyan',
+              )
+            } catch { /* ignore */ }
+          } else if (msg.startsWith('[dedup] ')) {
+            addActivity(msg.slice('[dedup] '.length), 'dim')
+          } else if (msg.startsWith('[retrieval] ')) {
+            addActivity(msg.slice('[retrieval] '.length), 'violet')
           }
         },
         onCacheHit() {
@@ -796,6 +813,7 @@ function ResearchPageContent() {
           reconnectingRef.current = false
           setReconnecting(false)
           toast.dismiss('sse-reconnecting')
+          addActivity('Research complete — loading results…', 'emerald')
           setPhase('done')
           try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
           if (warnings && warnings.length > 0) {
@@ -832,7 +850,6 @@ function ResearchPageContent() {
       reconnectingRef.current = false
       setReconnecting(false)
       toast.dismiss('sse-reconnecting')
-      if (redditTimerRef.current) { clearTimeout(redditTimerRef.current); redditTimerRef.current = null }
       await cancelSearch(activeSearchId)
       try { localStorage.removeItem('shopsense_active_search') } catch { /* ignore */ }
       toast.info('Research stopped.')
@@ -880,7 +897,6 @@ function ResearchPageContent() {
     setRubric(null)
     setRubricCriteria([])
     setCapturedIntent(undefined)
-    setRedditThreads([])
     setActiveSearchId(null)
     setStopping(false)
     setStages(INIT_STAGES)
@@ -1231,38 +1247,24 @@ function ResearchPageContent() {
     }
 
     if (phase === 'running') {
-      const showReddit = stages.find((s) => s.id === 'reddit')?.status === 'running'
       return (
         <motion.div
           key="running"
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.2 }}
-          className="space-y-4"
         >
-          {showReddit && redditThreads.length > 0 ? (
-            <RedditFetchGrid threads={redditThreads} />
-          ) : (
-            <AnalyzerAnimation />
-          )}
-          <div className="flex justify-end pt-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleStop}
-              disabled={stopping}
-              className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 transition-all"
-            >
-              {stopping ? (
-                <>
-                  <div className="w-3.5 h-3.5 border border-rose-400 border-t-transparent rounded-full animate-spin mr-2" />
-                  Stopping…
-                </>
-              ) : (
-                'Stop Research'
-              )}
-            </Button>
-          </div>
+          <ResearchLiveFeed
+            stageLabel={liveStageLabel}
+            subreddits={liveSubreddits}
+            reviewDomains={liveReviewDomains}
+            progressItem={liveProgressItem}
+            progressFrac={liveProgressFrac}
+            activity={liveActivity}
+            elapsedTime={elapsedTime}
+            onStop={handleStop}
+            stopping={stopping}
+          />
         </motion.div>
       )
     }
