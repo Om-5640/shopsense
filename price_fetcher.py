@@ -255,12 +255,28 @@ def _apply_affiliate_tag(url: str) -> str:
 # Per-retailer fetchers
 # ---------------------------------------------------------------------------
 
+def _scrape_product_image(product_name: str) -> str | None:
+    """
+    One cheap Shopping search (no site filter) to get a product image URL.
+    Used only when the site-specific Shopping search returned no results (fell back
+    to Google web search which never includes imageUrl).
+    """
+    results = _serper_shopping_search(product_name, num=3)
+    for r in results:
+        img = r.get("imageUrl") or r.get("thumbnailUrl")
+        if img:
+            return img
+    return None
+
+
 def _fetch_amazon_india(product_name: str) -> dict | None:
     """Search Amazon.in via Serper Shopping — collect top-5 candidates for intelligence."""
     query = f"{product_name} site:amazon.in"
     results = _serper_shopping_search(query, num=5)
+    used_google_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} amazon.in buy", num=5)
+        used_google_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -295,6 +311,7 @@ def _fetch_amazon_india(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        _promote_image(first_result, candidates, product_name, used_google_fallback)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -303,8 +320,10 @@ def _fetch_flipkart(product_name: str) -> dict | None:
     """Search Flipkart via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:flipkart.com"
     results = _serper_shopping_search(query, num=5)
+    used_google_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} flipkart.com buy online", num=5)
+        used_google_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -337,6 +356,13 @@ def _fetch_flipkart(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        if not first_result.get("image_url"):
+            for cand in candidates:
+                if cand.get("image_url"):
+                    first_result["image_url"] = cand["image_url"]
+                    break
+        if not first_result.get("image_url") and used_google_fallback:
+            first_result["image_url"] = _scrape_product_image(product_name)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -377,12 +403,25 @@ def _fetch_croma(product_name: str) -> dict | None:
     return first_result
 
 
+def _promote_image(first_result: dict, candidates: list[dict], product_name: str, used_fallback: bool) -> None:
+    """Scan candidates for best image and promote to first_result if it has none."""
+    if not first_result.get("image_url"):
+        for cand in candidates:
+            if cand.get("image_url"):
+                first_result["image_url"] = cand["image_url"]
+                return
+    if not first_result.get("image_url") and used_fallback:
+        first_result["image_url"] = _scrape_product_image(product_name)
+
+
 def _fetch_amazon_usa(product_name: str) -> dict | None:
     """Search Amazon.com via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:amazon.com"
     results = _serper_shopping_search(query, num=5)
+    used_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} amazon.com buy", num=5)
+        used_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -411,6 +450,7 @@ def _fetch_amazon_usa(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        _promote_image(first_result, candidates, product_name, used_fallback)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -419,8 +459,10 @@ def _fetch_bestbuy(product_name: str) -> dict | None:
     """Search Best Buy via Serper Shopping — collect top-5 candidates."""
     query = f"{product_name} site:bestbuy.com"
     results = _serper_shopping_search(query, num=5)
+    used_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} bestbuy.com buy", num=5)
+        used_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -449,6 +491,7 @@ def _fetch_bestbuy(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        _promote_image(first_result, candidates, product_name, used_fallback)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -466,8 +509,10 @@ def _parse_aud(text: str | None) -> int | None:
 def _fetch_amazon_uk(product_name: str) -> dict | None:
     """Search Amazon.co.uk via Serper Shopping — collect top-5 candidates."""
     results = _serper_shopping_search(f"{product_name} site:amazon.co.uk", num=5)
+    used_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} amazon.co.uk buy", num=5)
+        used_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -496,6 +541,7 @@ def _fetch_amazon_uk(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        _promote_image(first_result, candidates, product_name, used_fallback)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -536,8 +582,10 @@ def _fetch_argos(product_name: str) -> dict | None:
 def _fetch_amazon_au(product_name: str) -> dict | None:
     """Search Amazon.com.au via Serper Shopping — collect top-5 candidates."""
     results = _serper_shopping_search(f"{product_name} site:amazon.com.au", num=5)
+    used_fallback = False
     if not results:
         results = _serper_google_search(f"{product_name} amazon.com.au buy", num=5)
+        used_fallback = True
 
     candidates: list[dict] = []
     first_result: dict | None = None
@@ -566,6 +614,7 @@ def _fetch_amazon_au(product_name: str) -> dict | None:
             first_result = entry
 
     if first_result:
+        _promote_image(first_result, candidates, product_name, used_fallback)
         first_result["_candidates"] = candidates
     return first_result
 
@@ -750,10 +799,27 @@ def _fetch_one_product(product_name: str, region: str) -> dict:
         best_price = None
         price_range = None
 
+    # Promote best image from candidates to each retailer entry before stripping
+    # (first_result may have been the cheapest but not the one with an imageUrl)
+    for r in retailers:
+        if not r.get("image_url"):
+            for cand in r.get("_candidates", []):
+                if cand.get("image_url"):
+                    r["image_url"] = cand["image_url"]
+                    break
+
     # Compute discounts where we have both price and MRP
     for r in retailers:
         if r.get("price_inr") and r.get("mrp_inr") and r["mrp_inr"] > r["price_inr"]:
             r["discount_pct"] = round((r["mrp_inr"] - r["price_inr"]) / r["mrp_inr"] * 100)
+
+    # Cross-retailer image promotion: if any retailer has an image, propagate it to
+    # retailers that don't (e.g. Flipkart image used for Amazon India display).
+    best_image = next((r.get("image_url") for r in retailers if r.get("image_url")), None)
+    if best_image:
+        for r in retailers:
+            if not r.get("image_url"):
+                r["image_url"] = best_image
 
     # Strip internal _candidates lists before storing (not needed downstream)
     for r in retailers:
